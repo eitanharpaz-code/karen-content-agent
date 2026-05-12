@@ -25,6 +25,13 @@ type Sprint7EdgeCaseTest = {
   expectedOutcome: "ambiguous" | "no_match";
 };
 
+type Sprint8MatchTest = {
+  description: string;
+  message: string;
+  expectedStatusType: string;
+  expectedContentName: string;
+};
+
 const TEST_CASES: Sprint7Test[] = [
   {
     description: "Filming status update",
@@ -65,6 +72,21 @@ const EDGE_CASE_TESTS: Sprint7EdgeCaseTest[] = [
     message: "צילמתי סרטון על חד קרן מעופף",
     expectedStatusType: "filmed",
     expectedOutcome: "no_match",
+  },
+];
+
+const SPRINT_8_MATCH_TESTS: Sprint8MatchTest[] = [
+  {
+    description: "Natural cover match for קפריסין",
+    message: "הקאבר של הלוקים שלי לקפריסין מוכן",
+    expectedStatusType: "cover_ready",
+    expectedContentName: "הלוקים שלי לקפריסין",
+  },
+  {
+    description: "Natural edit match for חליפה",
+    message: "ערכתי את הסרטון עם החליפה",
+    expectedStatusType: "edited",
+    expectedContentName: "הלך לבחור חליפה עם החברה הכי טובה שלו - ואת לא משחררת",
   },
 ];
 
@@ -166,6 +188,42 @@ const runEdgeCaseTest = async (test: Sprint7EdgeCaseTest) => {
 
   return { passed: false, reason: "Unknown expected outcome." };
 };
+
+const runSprint8MatchTest = async (test: Sprint8MatchTest) => {
+  console.log("\n" + "-".repeat(60));
+  console.log(`Sprint 8 match test: ${test.description}`);
+  console.log(`Message: ${test.message}\n`);
+
+  const statusUpdate = detectStatusUpdate(test.message);
+  if (!statusUpdate) {
+    console.error(`❌ Detection failed for message: ${test.message}`);
+    return { passed: false, reason: "No status update detected." };
+  }
+
+  console.log(`Detected statusType: ${statusUpdate.statusType}`);
+  console.log(`Extracted content name: "${statusUpdate.contentName}"`);
+
+  if (statusUpdate.statusType !== test.expectedStatusType) {
+    console.error(`❌ Expected statusType ${test.expectedStatusType} but got ${statusUpdate.statusType}`);
+    return { passed: false, reason: "Wrong status type." };
+  }
+
+  const matchResult = await findProductionTaskByName(spreadsheetId, statusUpdate.contentName);
+  if (!matchResult || "ambiguous" in matchResult) {
+    console.error(`❌ Expected a unique Sprint 8 match, but got ${matchResult ? JSON.stringify(matchResult) : "no match"}`);
+    return { passed: false, reason: "Did not resolve to a unique task match." };
+  }
+
+  const actualContentName = matchResult.row[1] || "";
+  if (actualContentName !== test.expectedContentName) {
+    console.error(`❌ Expected content name '${test.expectedContentName}' but got '${actualContentName}'`);
+    return { passed: false, reason: "Matched wrong task name." };
+  }
+
+  console.log(`✅ Sprint 8 resolved to unique task: ${actualContentName}`);
+  console.log("No sheet update was performed in this test.");
+  return { passed: true };
+};
 const main = async () => {
   console.log("Sprint 7 QA: Direct production status update validation");
   console.log("This script uses the Sprint 7 production status service and updates משימות הפקה directly.\n");
@@ -190,6 +248,17 @@ const main = async () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`❌ Edge case test failed unexpectedly: ${message}`);
+      results.push({ test: { description: test.description, message: test.message, expectedStatusType: test.expectedStatusType }, passed: false, reason: message });
+    }
+  }
+
+  for (const test of SPRINT_8_MATCH_TESTS) {
+    try {
+      const result = await runSprint8MatchTest(test);
+      results.push({ test: { description: test.description, message: test.message, expectedStatusType: test.expectedStatusType }, passed: result.passed, reason: result.reason });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Sprint 8 test failed unexpectedly: ${message}`);
       results.push({ test: { description: test.description, message: test.message, expectedStatusType: test.expectedStatusType }, passed: false, reason: message });
     }
   }

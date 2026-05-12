@@ -1,5 +1,5 @@
 import { google, sheets_v4 } from "googleapis";
-import { normalizeHebrewText } from "./production-status.service";
+import { normalizeHebrewText, getTokenOverlapScore } from "./production-status.service";
 
 // Sheet name mapping: English reference names to actual Hebrew sheet names
 const SHEET_NAMES = {
@@ -218,36 +218,75 @@ export const findProductionTaskByName = async (
     console.log(`[Sprint 7] Searching for content: "${contentName}"`);
     console.log(`[Sprint 7] Normalized search term: "${normalizedSearchName}"`);
     
-    // Skip header row (row 0)
-    const matches: Array<{ rowIndex: number; row: string[] }> = [];
+    const exactMatches: Array<{ rowIndex: number; row: string[] }> = [];
+    const includesMatches: Array<{ rowIndex: number; row: string[] }> = [];
+    const scoredMatches: Array<{ rowIndex: number; row: string[]; score: number }> = [];
     
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       const sheetRowNumber = i + 1; // Google Sheets rows are 1-indexed, header occupies row 1
-      if (row && row[1]) { // Check if content name column exists
+      if (row && row[1]) {
         const sheetContentName = row[1].toString();
         const normalizedTaskName = normalizeHebrewText(sheetContentName);
         
         console.log(`[Sprint 7] Array index ${i} → Google Sheets row ${sheetRowNumber}: "${sheetContentName}" → normalized: "${normalizedTaskName}"`);
-        
-        // Deterministic includes matching on normalized text
-        if (normalizedTaskName.includes(normalizedSearchName) || 
-            normalizedSearchName.includes(normalizedTaskName) ||
-            normalizedTaskName === normalizedSearchName) {
-          console.log(`[Sprint 7] ✓ Match found at array index ${i} (Google Sheets row ${sheetRowNumber})`);
-          matches.push({ rowIndex: sheetRowNumber, row: row });
+
+        if (normalizedTaskName === normalizedSearchName) {
+          console.log(`[Sprint 7] ✓ Exact normalized match at row ${sheetRowNumber}`);
+          exactMatches.push({ rowIndex: sheetRowNumber, row });
+          continue;
+        }
+
+        if (normalizedTaskName.includes(normalizedSearchName) || normalizedSearchName.includes(normalizedTaskName)) {
+          console.log(`[Sprint 7] ✓ Includes match at row ${sheetRowNumber}`);
+          includesMatches.push({ rowIndex: sheetRowNumber, row });
+          continue;
+        }
+
+        const score = getTokenOverlapScore(normalizedSearchName, normalizedTaskName);
+        if (score > 0) {
+          console.log(`[Sprint 8] Token overlap score ${score} for row ${sheetRowNumber}: "${sheetContentName}"`);
+          scoredMatches.push({ rowIndex: sheetRowNumber, row, score });
         }
       }
     }
 
-    if (matches.length === 1) {
-      console.log(`[Sprint 7] Found exactly one match`);
-      return matches[0];
+    if (exactMatches.length === 1) {
+      console.log(`[Sprint 7] Found exactly one exact match`);
+      return exactMatches[0];
     }
 
-    if (matches.length > 1) {
-      console.log(`[Sprint 7] Multiple matches found for content name: ${contentName}`);
-      return { ambiguous: true, matches };
+    if (exactMatches.length > 1) {
+      console.log(`[Sprint 7] Multiple exact matches found for content name: ${contentName}`);
+      return { ambiguous: true, matches: exactMatches };
+    }
+
+    if (includesMatches.length === 1) {
+      console.log(`[Sprint 7] Found exactly one includes match`);
+      return includesMatches[0];
+    }
+
+    if (includesMatches.length > 1) {
+      console.log(`[Sprint 7] Multiple includes matches found for content name: ${contentName}`);
+      return { ambiguous: true, matches: includesMatches };
+    }
+
+    if (scoredMatches.length > 0) {
+      const highestScore = Math.max(...scoredMatches.map((match) => match.score));
+      const bestMatches = scoredMatches.filter((match) => match.score === highestScore);
+
+      if (highestScore < 1) {
+        console.log(`[Sprint 8] Highest score ${highestScore} below threshold; no match`);
+        return null;
+      }
+
+      if (bestMatches.length === 1) {
+        console.log(`[Sprint 8] Best token match at row ${bestMatches[0].rowIndex} with score ${highestScore}`);
+        return bestMatches[0];
+      }
+
+      console.log(`[Sprint 8] Multiple best token matches found with score ${highestScore}`);
+      return { ambiguous: true, matches: bestMatches };
     }
 
     console.log(`[Sprint 7] No production task found for content name: ${contentName}`);
