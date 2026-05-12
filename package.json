@@ -9,7 +9,11 @@
     "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "test:claude": "ts-node src/test/claude-test.ts",
     "test:sheets": "ts-node src/test/sheets-test.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:draft": "ts-node src/test/content-draft-test.ts",
+    "test:whatsapp": "ts-node src/test/whatsapp-controller-test.ts",
+    "test:sprint-6": "ts-node src/test/sprint-6-qa.ts",
+    "test:draft-edit": "ts-node src/test/draft-edit-qa.ts",
+    "test:natural-hebrew": "ts-node src/test/natural-hebrew-edit-qa.ts"
   },
   "repository": {
     "type": "git",
