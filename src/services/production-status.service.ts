@@ -139,12 +139,31 @@ const STATUS_MAPPINGS: ProductionStatusMapping[] = [
   {
     statusType: "cover_ready",
     columnName: "קאבר מוכן",
-    detectionPatterns: ["הקאבר מוכן", "סיימתי קאבר", "קאבר סיים", "טייטל מוכן"],
+    detectionPatterns: [
+      "הקאבר והקופי מוכנים",
+      "הקאבר והקופי",
+      "הקאבר מוכנים",
+      "הקאבר מוכן",
+      "סיימתי קאבר",
+      "קאבר סיים",
+      "טייטל מוכן",
+      "הקאבר",
+    ],
   },
   {
     statusType: "copy_ready",
     columnName: "קופי מוכן",
-    detectionPatterns: ["הקופי מוכן", "סיימתי לכתוב", "טקסט מוכן", "הטקסט מוכן", "קופי סיים"],
+    detectionPatterns: [
+      "הקאבר והקופי מוכנים",
+      "הקאבר והקופי",
+      "הקופי מוכנים",
+      "הקופי מוכן",
+      "סיימתי לכתוב",
+      "טקסט מוכן",
+      "הטקסט מוכן",
+      "קופי סיים",
+      "הקופי",
+    ],
   },
   {
     statusType: "uploaded",
@@ -157,10 +176,24 @@ const STATUS_MAPPINGS: ProductionStatusMapping[] = [
  * Detect if a message contains production status update intent
  * Returns the detected status type and extracted content name, or null if no status detected
  */
-const findOrderedPatternIndexes = (message: string, pattern: string): { firstTokenEnd: number; lastTokenStart: number; lastTokenEnd: number } | null => {
+type StatusPatternMatch = {
+  statusType: ProductionStatusType;
+  columnName: string;
+  pattern: string;
+  firstTokenStart: number;
+  firstTokenEnd: number;
+  lastTokenStart: number;
+  lastTokenEnd: number;
+};
+
+const findOrderedPatternIndexes = (
+  message: string,
+  pattern: string
+): { firstTokenStart: number; firstTokenEnd: number; lastTokenStart: number; lastTokenEnd: number } | null => {
   const normalizedMessage = message.toLowerCase();
   const tokens = pattern.toLowerCase().split(/\s+/).filter(Boolean);
 
+  let firstTokenStart = -1;
   let firstTokenEnd = -1;
   let lastTokenStart = -1;
   let lastTokenEnd = -1;
@@ -172,7 +205,8 @@ const findOrderedPatternIndexes = (message: string, pattern: string): { firstTok
       return null;
     }
 
-    if (firstTokenEnd === -1) {
+    if (firstTokenStart === -1) {
+      firstTokenStart = tokenIndex;
       firstTokenEnd = tokenIndex + token.length;
     }
 
@@ -181,52 +215,77 @@ const findOrderedPatternIndexes = (message: string, pattern: string): { firstTok
     searchIndex = lastTokenEnd;
   }
 
-  return { firstTokenEnd, lastTokenStart, lastTokenEnd };
+  return { firstTokenStart, firstTokenEnd, lastTokenStart, lastTokenEnd };
 };
 
-export const detectStatusUpdate = (message: string): StatusUpdateRequest | null => {
-  const normalized = message.trim().toLowerCase();
+const findAllProductionStatusMatches = (message: string): StatusPatternMatch[] => {
+  const normalizedMessage = message.trim().toLowerCase();
+  const matches: StatusPatternMatch[] = [];
 
   for (const mapping of STATUS_MAPPINGS) {
     for (const pattern of mapping.detectionPatterns) {
-      const patternIndexes = findOrderedPatternIndexes(normalized, pattern);
+      const patternIndexes = findOrderedPatternIndexes(normalizedMessage, pattern);
       if (!patternIndexes) {
         continue;
       }
 
-      const contentName = extractContentName(message, pattern, patternIndexes);
-
-      return {
+      matches.push({
         statusType: mapping.statusType,
-        contentName,
-        rawMessage: message,
-      };
+        columnName: mapping.columnName,
+        pattern,
+        ...patternIndexes,
+      });
+      break;
     }
   }
 
-  return null;
+  return matches;
 };
 
-/**
- * Extract content name from message with normalization
- * Tries to find meaningful content names like "שמלה שלישית", "קפריסין", etc.
- */
-const extractContentName = (
-  message: string,
-  pattern: string,
-  patternIndexes: { firstTokenEnd: number; lastTokenStart: number; lastTokenEnd: number }
-): string => {
-  const { firstTokenEnd, lastTokenStart, lastTokenEnd } = patternIndexes;
+const STATUS_PREFIX_CLEANUP = /^(?:מוכן|מוכנים|סיימתי|סיימנו|סיימת|סיימתם|סיימתן)\s*/i;
 
-  const betweenPatternText = lastTokenStart > firstTokenEnd ? message.substring(firstTokenEnd, lastTokenStart).trim() : "";
-  const afterPatternText = message.substring(lastTokenEnd).trim();
+export const detectStatusUpdate = (message: string): StatusUpdateRequest | null => {
+  const trimmedMessage = message.trim();
+  const statusMatches = findAllProductionStatusMatches(trimmedMessage);
 
-  let cleaned = betweenPatternText || afterPatternText;
+  if (statusMatches.length === 0) {
+    return null;
+  }
+
+  const uniqueStatusMatches = Array.from(
+    statusMatches.reduce<Map<ProductionStatusType, StatusPatternMatch>>((map, match) => {
+      const existing = map.get(match.statusType);
+      if (!existing || match.firstTokenStart < existing.firstTokenStart) {
+        map.set(match.statusType, match);
+      }
+      return map;
+    }, new Map()).values()
+  );
+
+  uniqueStatusMatches.sort((a, b) => a.firstTokenStart - b.firstTokenStart);
+
+  const statusTypes = uniqueStatusMatches.map((match) => match.statusType);
+  const lastMatch = uniqueStatusMatches.reduce((best, match) => {
+    return match.lastTokenEnd > best.lastTokenEnd ? match : best;
+  }, uniqueStatusMatches[0]);
+
+  return {
+    statusType: statusTypes[0],
+    statusTypes,
+    contentName: extractContentName(trimmedMessage, lastMatch.lastTokenEnd),
+    rawMessage: message,
+  };
+};
+
+const extractContentName = (message: string, afterIndex: number): string => {
+  const afterStatusText = message.substring(afterIndex).trim();
+  let cleaned = afterStatusText;
 
   if (!cleaned) {
     return normalizeHebrewText(message.trim());
   }
 
+  cleaned = cleaned.replace(STATUS_PREFIX_CLEANUP, "").trim();
   cleaned = cleaned.replace(/^(?:ל(?:־)?|עבור|בשביל|על|את)\s*/i, "").trim();
   cleaned = cleaned.replace(/^(?:ה|את|על|של|שלי|שלך)\s+/i, "").trim();
   cleaned = cleaned.replace(/^['"]|['"]$/g, "").trim();

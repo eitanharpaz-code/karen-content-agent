@@ -186,7 +186,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
           }
 
-          console.log(`\n[Sprint 7 Workflow] Status update detected: ${statusUpdate.statusType}`);
+          console.log(`\n[Sprint 7 Workflow] Status update detected: ${statusUpdate.statusTypes.join(", ")}`);
           console.log(`[Sprint 7 Workflow] Looking for content: "${statusUpdate.contentName}"`);
 
           // Find matching production task
@@ -214,23 +214,31 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             });
           }
 
-          // Found exactly one match - update the status
+          // Found exactly one match - update all detected statuses
           const exactMatch = matchResult as ProductionTaskMatch;
-          const columnName = getColumnName(statusUpdate.statusType);
-          const columnIndex = getProductionStatusColumnIndex(columnName);
+          const statusUpdates = statusUpdate.statusTypes.map((statusType) => {
+            const columnName = getColumnName(statusType);
+            const columnIndex = getProductionStatusColumnIndex(columnName);
+            if (!columnIndex) {
+              throw new Error(`Invalid column name: ${columnName}`);
+            }
+            return { statusType, columnName, columnIndex };
+          });
 
-          if (!columnIndex) {
-            throw new Error(`Invalid column name: ${columnName}`);
-          }
+          const uniqueUpdates = Array.from(
+            new Map(statusUpdates.map((update) => [update.columnIndex, update])).values()
+          );
 
           console.log(`[Sprint 7 Workflow] Found match: "${exactMatch.row[1]}" at row ${exactMatch.rowIndex}`);
-          console.log(`[Sprint 7 Workflow] Updating column "${columnName}" (index ${columnIndex}) to "כן"`);
+          console.log(`[Sprint 7 Workflow] Updating status columns: ${uniqueUpdates.map((update) => update.columnName).join(", ")}`);
 
-          // Update the production status
-          await updateProductionStatus(spreadsheetId, exactMatch.rowIndex, columnIndex);
+          for (const update of uniqueUpdates) {
+            await updateProductionStatus(spreadsheetId, exactMatch.rowIndex, update.columnIndex);
+          }
 
           const contentNameDisplay = exactMatch.row[1] || statusUpdate.contentName;
-          const replyText = `עודכן בהצלחה - הסרטון "${contentNameDisplay}" סומן כ${columnName}`;
+          const columnList = uniqueUpdates.map((update) => update.columnName).join(", ");
+          const replyText = `עודכן בהצלחה - "${contentNameDisplay}" סומן כ: ${columnList}`;
           await safeSendWhatsAppMessage(sender, replyText);
 
           console.log(`[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}\n`);
@@ -239,8 +247,8 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             status: "status_updated",
             sender,
             contentName: contentNameDisplay,
-            statusType: statusUpdate.statusType,
-            columnName,
+            statusTypes: statusUpdate.statusTypes,
+            columnNames: uniqueUpdates.map((update) => update.columnName),
           });
         } catch (statusError) {
           const errorMessage =

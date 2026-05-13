@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import {
   detectStatusUpdate,
   getColumnName,
+  normalizeHebrewText,
 } from "../services/production-status.service";
 import {
   findProductionTaskByName,
@@ -23,6 +24,15 @@ type Sprint7EdgeCaseTest = {
   message: string;
   expectedStatusType: string;
   expectedOutcome: "ambiguous" | "no_match";
+};
+
+type Sprint7MultiStatusTest = {
+  description: string;
+  message: string;
+  expectedStatusTypes: string[];
+  expectedContentName: string;
+  expectedMatchedTaskName?: string;
+  allowAmbiguous?: boolean;
 };
 
 type Sprint8MatchTest = {
@@ -72,6 +82,29 @@ const EDGE_CASE_TESTS: Sprint7EdgeCaseTest[] = [
     message: "צילמתי סרטון על חד קרן מעופף",
     expectedStatusType: "filmed",
     expectedOutcome: "no_match",
+  },
+];
+
+const MULTI_STATUS_TESTS: Sprint7MultiStatusTest[] = [
+  {
+    description: "Filmed and edited in one message",
+    message: "צילמתי וערכתי קונספט טעימות חדש לחתונה",
+    expectedStatusTypes: ["filmed", "edited"],
+    expectedContentName: "קונספט טעימות חדש לחתונה",
+  },
+  {
+    description: "Filmed, edited and uploaded in one message",
+    message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
+    expectedStatusTypes: ["filmed", "edited", "uploaded"],
+    expectedContentName: "שמלה שלישית",
+    expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
+  },
+  {
+    description: "Cover and copy ready in one message",
+    message: "הקאבר והקופי מוכנים לקפריסין",
+    expectedStatusTypes: ["cover_ready", "copy_ready"],
+    expectedContentName: "לקפריסין",
+    allowAmbiguous: true,
   },
 ];
 
@@ -189,6 +222,74 @@ const runEdgeCaseTest = async (test: Sprint7EdgeCaseTest) => {
   return { passed: false, reason: "Unknown expected outcome." };
 };
 
+const runMultiStatusTest = async (test: Sprint7MultiStatusTest) => {
+  console.log("\n" + "-".repeat(60));
+  console.log(`Multi-status test: ${test.description}`);
+  console.log(`Message: ${test.message}\n`);
+
+  const statusUpdate = detectStatusUpdate(test.message);
+  if (!statusUpdate) {
+    console.error(`❌ Detection failed for message: ${test.message}`);
+    return { passed: false, reason: "No status update detected." };
+  }
+
+  console.log(`Detected statusTypes: ${statusUpdate.statusTypes.join(", ")}`);
+  console.log(`Extracted content name: "${statusUpdate.contentName}"`);
+
+  const missingTypes = test.expectedStatusTypes.filter(
+    (expected) => !statusUpdate.statusTypes.includes(expected as any)
+  );
+  if (missingTypes.length > 0) {
+    console.error(`❌ Expected statusTypes ${test.expectedStatusTypes.join(", ")} but got ${statusUpdate.statusTypes.join(", ")}`);
+    return { passed: false, reason: "Missing detected status types." };
+  }
+
+  if (statusUpdate.contentName !== normalizeHebrewText(test.expectedContentName)) {
+    console.error(`❌ Expected content name '${test.expectedContentName}' but extracted '${statusUpdate.contentName}'`);
+    return { passed: false, reason: "Wrong extracted content name." };
+  }
+
+  const matchResult = await findProductionTaskByName(spreadsheetId, statusUpdate.contentName);
+  if (!matchResult) {
+    if (test.allowAmbiguous) {
+      console.log(`✅ No unique match found and ambiguity is allowed for this test.`);
+      return { passed: true };
+    }
+    console.error(`❌ Expected a production task match for content name: ${statusUpdate.contentName}`);
+    return { passed: false, reason: "No production task match." };
+  }
+
+  if ("ambiguous" in matchResult && matchResult.ambiguous) {
+    if (test.allowAmbiguous) {
+      console.log(`✅ Ambiguous result detected for content name: ${statusUpdate.contentName}`);
+      console.log("No sheet update was performed for ambiguous multi-status message.");
+      return { passed: true };
+    }
+
+    console.error(`❌ Expected a unique match but got ambiguous result for content name: ${statusUpdate.contentName}`);
+    return { passed: false, reason: "Ambiguous production task match." };
+  }
+
+  const exactMatch = matchResult as ProductionTaskMatch;
+  console.log(`Found production task on row ${exactMatch.rowIndex}: ${exactMatch.row[1]}`);
+
+  for (const statusType of statusUpdate.statusTypes) {
+    const columnName = getColumnName(statusType);
+    const columnIndex = getProductionStatusColumnIndex(columnName);
+
+    if (!columnIndex) {
+      console.error(`❌ Invalid column mapping for ${columnName}`);
+      return { passed: false, reason: "Invalid column mapping." };
+    }
+
+    console.log(`Updating column ${columnName} (index ${columnIndex}) to "כן"...`);
+    await updateProductionStatus(spreadsheetId, exactMatch.rowIndex, columnIndex);
+  }
+
+  console.log(`✅ Updated row ${exactMatch.rowIndex} columns ${statusUpdate.statusTypes.map((statusType) => getColumnName(statusType)).join(", ")} successfully`);
+  return { passed: true };
+};
+
 const runSprint8MatchTest = async (test: Sprint8MatchTest) => {
   console.log("\n" + "-".repeat(60));
   console.log(`Sprint 8 match test: ${test.description}`);
@@ -228,7 +329,7 @@ const main = async () => {
   console.log("Sprint 7 QA: Direct production status update validation");
   console.log("This script uses the Sprint 7 production status service and updates משימות הפקה directly.\n");
 
-  const results = [] as Array<{ test: Sprint7Test; passed: boolean; reason?: string }>;
+  const results = [] as Array<{ test: Record<string, unknown>; passed: boolean; reason?: string }>;
 
   for (const test of TEST_CASES) {
     try {
@@ -244,11 +345,22 @@ const main = async () => {
   for (const test of EDGE_CASE_TESTS) {
     try {
       const result = await runEdgeCaseTest(test);
-      results.push({ test: { description: test.description, message: test.message, expectedStatusType: test.expectedStatusType }, passed: result.passed, reason: result.reason });
+      results.push({ test: { description: test.description }, passed: result.passed, reason: result.reason });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`❌ Edge case test failed unexpectedly: ${message}`);
-      results.push({ test: { description: test.description, message: test.message, expectedStatusType: test.expectedStatusType }, passed: false, reason: message });
+      results.push({ test: { description: test.description }, passed: false, reason: message });
+    }
+  }
+
+  for (const test of MULTI_STATUS_TESTS) {
+    try {
+      const result = await runMultiStatusTest(test);
+      results.push({ test: { description: test.description }, passed: result.passed, reason: result.reason });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Multi-status test failed unexpectedly: ${message}`);
+      results.push({ test: { description: test.description }, passed: false, reason: message });
     }
   }
 

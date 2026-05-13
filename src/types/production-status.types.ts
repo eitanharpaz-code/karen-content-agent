@@ -7,7 +7,8 @@ export type ProductionStatusType =
   | "uploaded";
 
 export interface StatusUpdateRequest {
-  statusType: ProductionStatusType;
+  statusType: ProductionStatusType; // primary or first detected status
+  statusTypes: ProductionStatusType[]; // all detected statuses
   contentName: string; // Hebrew content name extracted from message
   rawMessage: string; // Original user message
 }
