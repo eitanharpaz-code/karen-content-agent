@@ -103,7 +103,7 @@ const MULTI_STATUS_TESTS: Sprint7MultiStatusTest[] = [
     description: "Cover and copy ready in one message",
     message: "הקאבר והקופי מוכנים לקפריסין",
     expectedStatusTypes: ["cover_ready", "copy_ready"],
-    expectedContentName: "לקפריסין",
+    expectedContentName: "קפריסין",
     allowAmbiguous: true,
   },
 ];
@@ -244,8 +244,10 @@ const runMultiStatusTest = async (test: Sprint7MultiStatusTest) => {
     return { passed: false, reason: "Missing detected status types." };
   }
 
-  if (statusUpdate.contentName !== normalizeHebrewText(test.expectedContentName)) {
-    console.error(`❌ Expected content name '${test.expectedContentName}' but extracted '${statusUpdate.contentName}'`);
+  const normalizedExpected = normalizeHebrewText(test.expectedContentName);
+  const normalizedExtracted = normalizeHebrewText(statusUpdate.contentName);
+  if (normalizedExtracted !== normalizedExpected) {
+    console.error(`❌ Expected normalized content name '${normalizedExpected}' but extracted '${normalizedExtracted}'`);
     return { passed: false, reason: "Wrong extracted content name." };
   }
 

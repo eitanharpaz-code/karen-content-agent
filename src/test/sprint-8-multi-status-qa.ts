@@ -68,8 +68,10 @@ const runMultiStatusTest = async (test: MultiStatusTest) => {
     return { passed: false, reason: "Missing detected status types." };
   }
 
-  if (normalizeHebrewText(statusUpdate.contentName) !== normalizeHebrewText(test.expectedContentName)) {
-    console.error(`❌ Expected content name '${test.expectedContentName}' but extracted '${statusUpdate.contentName}'`);
+  const normalizedExpected = normalizeHebrewText(test.expectedContentName);
+  const normalizedExtracted = normalizeHebrewText(statusUpdate.contentName);
+  if (normalizedExtracted !== normalizedExpected) {
+    console.error(`❌ Expected normalized content name '${normalizedExpected}' but extracted '${normalizedExtracted}'`);
     return { passed: false, reason: "Wrong extracted content name." };
   }
 

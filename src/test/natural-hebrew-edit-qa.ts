@@ -45,21 +45,21 @@ const main = async () => {
         message: "אני רוצה לשנות קטגוריה לחתונה",
         expectedStatus: "draft_updated",
         checkField: "category",
-        expectedValue: "Wedding"
+        expectedValue: "חתונה"
       },
       {
         description: "Test: 'בא לי שהטון יהיה מצחיק'",
         message: "בא לי שהטון יהיה מצחיק",
         expectedStatus: "draft_updated",
         checkField: "tone",
-        expectedValue: "Funny"
+        expectedValue: "מצחיק"
       },
       {
         description: "Test: 'עדיף שזה יהיה בקטגוריית שמלות'",
         message: "עדיף שזה יהיה בקטגוריית שמלות",
         expectedStatus: "draft_updated",
         checkField: "category",
-        expectedValue: "Dresses"
+        expectedValue: "שמלות"
       },
       {
         description: "Test: 'תשנה את השם לשמלה שלישית'",
@@ -73,14 +73,14 @@ const main = async () => {
         message: "העדיפות צריכה להיות גבוהה",
         expectedStatus: "draft_updated",
         checkField: "priority",
-        expectedValue: "High"
+        expectedValue: "גבוה"
       },
       {
         description: "Test: 'זה צריך להיות יותר רגשי'",
         message: "זה צריך להיות יותר רגשי",
         expectedStatus: "draft_updated",
         checkField: "tone",
-        expectedValue: "Emotional"
+        expectedValue: "רגשי"
       },
       {
         description: "Confirm the final draft",

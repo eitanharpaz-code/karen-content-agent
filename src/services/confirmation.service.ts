@@ -18,6 +18,8 @@ const TONE_HEBREW_VALUES: Record<string, string> = {
   "השראתי": "השראתי",
   "טרנדי": "טרנדי",
   "רגשי": "רגשי",
+  "הומוריסטי": "הומוריסטי",
+  "דרמטי": "דרמטי",
 };
 
 const CATEGORY_HEBREW_VALUES: Record<string, string> = {
@@ -70,7 +72,8 @@ export const isConfirmationMessage = (text: string): boolean => {
 export const isEditRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
   const editIndicators = [
-    "תשנה", "שנה", "תעדכן", "עדכן", "תקרא", "קרא", "הטון", "העדיפות",
+    "תשנה", "שנה", "תשני", "שני", "תעדכן", "עדכן", "תעדכני", "עדכני",
+    "תקרא", "קרא", "הטון", "העדיפות",
     "הקטגוריה", "הסיכום", "זה לא", "לא נכון", "טעות",
     "אני רוצה", "בא לי", "עדיף", "צריך", "יהיה", "שיהיה",
     "לשנות", "לעדכן", "לקרוא", "change", "update", "edit"
@@ -103,9 +106,20 @@ export const parseEditRequest = (text: string): { field: string; value: string }
   // Tone edits - more natural patterns
   if (normalized.includes("טון") || normalized.includes("tone") ||
       normalized.includes("רגשי") || normalized.includes("מצחיק") ||
-      normalized.includes("השראתי") || normalized.includes("הסברתי") ||
-      normalized.includes("אותנטי") || normalized.includes("טרנדי") ||
-      normalized.includes("רגשי")) {
+      normalized.includes("הומוריסטי") || normalized.includes("השראתי") ||
+      normalized.includes("הסברתי") || normalized.includes("אותנטי") ||
+      normalized.includes("טרנדי") || normalized.includes("דרמטי")) {
+    // Handle common natural phrases first
+    if (normalized.includes("תעשי את זה יותר רגשי") || normalized.includes("יותר רגשי")) {
+      return { field: "tone", value: "רגשי" };
+    }
+    if (normalized.includes("יותר מצחיק") || normalized.includes("יותר מצחיק")) {
+      return { field: "tone", value: "מצחיק" };
+    }
+    if (normalized.includes("פחות דרמטי")) {
+      return { field: "tone", value: "רגשי" };
+    }
+
     const toneValue = findHebrewValue(normalized, TONE_HEBREW_VALUES);
     if (toneValue) {
       return { field: "tone", value: toneValue };

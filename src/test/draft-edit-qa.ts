@@ -48,47 +48,79 @@ const main = async () => {
     console.log(`Step 1 Result: ${res1.responseData.status}`);
     console.log(`Draft created: ${!!res1.responseData.draft}\n`);
 
-    // Test 2: User requests an edit
-    console.log("Step 2 - User requests edit: 'תשנה עדיפות לבינונית'");
+    // Test 2: User requests an unsupported edit phrase first
+    console.log("Step 2 - User requests a fuzzy edit: 'תשני את זה' (should keep draft session alive)");
 
     const req2 = createMockRequest({
       From: "whatsapp:+1234567890",
-      Body: "תשנה עדיפות לבינונית",
+      Body: "תשני את זה",
     });
     const res2 = createMockResponse();
 
     await handleWhatsAppWebhook(req2, res2);
 
     console.log(`Step 2 Result: ${res2.responseData.status}`);
-    console.log(`Draft updated: ${!!res2.responseData.draft}`);
-    if (res2.responseData.draft) {
-      console.log(`Updated priority: ${res2.responseData.draft.priority}\n`);
-    }
+    console.log(`Draft still exists after failed edit: ${!!res2.responseData.draft}`);
+    console.log(`Message: ${res2.responseData.status === "edit_not_understood" ? "failed edit prompt returned" : "unexpected"}\n`);
 
-    // Test 3: User confirms the updated draft
-    console.log("Step 3 - User confirms: 'כן'");
+    // Test 3: User retries with a supported tone edit phrase
+    console.log("Step 3 - User requests edit: 'תשני את הטון להומוריסטי'");
 
     const req3 = createMockRequest({
       From: "whatsapp:+1234567890",
-      Body: "כן",
+      Body: "תשני את הטון להומוריסטי",
     });
     const res3 = createMockResponse();
 
     await handleWhatsAppWebhook(req3, res3);
 
     console.log(`Step 3 Result: ${res3.responseData.status}`);
-    console.log(`Content ID: ${res3.responseData.contentId}`);
-    console.log(`Task creation failed: ${res3.responseData.taskCreationFailed}\n`);
+    console.log(`Draft updated: ${!!res3.responseData.draft}`);
+    if (res3.responseData.draft) {
+      console.log(`Updated tone: ${res3.responseData.draft.tone}\n`);
+    }
+
+    // Test 4: User applies another edit in the same session
+    console.log("Step 4 - User requests edit: 'תשנה את הקטגוריה לחתונה'");
+
+    const req4 = createMockRequest({
+      From: "whatsapp:+1234567890",
+      Body: "תשנה את הקטגוריה לחתונה",
+    });
+    const res4 = createMockResponse();
+
+    await handleWhatsAppWebhook(req4, res4);
+
+    console.log(`Step 4 Result: ${res4.responseData.status}`);
+    console.log(`Draft updated: ${!!res4.responseData.draft}`);
+    if (res4.responseData.draft) {
+      console.log(`Updated category: ${res4.responseData.draft.category}\n`);
+    }
+
+    // Test 5: User confirms the updated draft
+    console.log("Step 5 - User confirms: 'כן'");
+
+    const req5 = createMockRequest({
+      From: "whatsapp:+1234567890",
+      Body: "כן",
+    });
+    const res5 = createMockResponse();
+
+    await handleWhatsAppWebhook(req5, res5);
+
+    console.log(`Step 5 Result: ${res5.responseData.status}`);
+    console.log(`Content ID: ${res5.responseData.contentId}`);
+    console.log(`Task creation failed: ${res5.responseData.taskCreationFailed}\n`);
 
     // Verify the complete flow
-    if (res3.responseData.status === "confirmed_and_saved") {
+    if (res5.responseData.status === "confirmed_and_saved") {
       console.log("✅ Draft Edit Flow QA PASSED");
-      console.log(`   - Content ID: ${res3.responseData.contentId}`);
-      console.log(`   - Draft was edited before confirmation`);
-      console.log(`   - Content saved to Google Sheets`);
+      console.log(`   - Content ID: ${res5.responseData.contentId}`);
+      console.log("   - Draft was edited before confirmation");
+      console.log("   - Content saved to Google Sheets");
     } else {
       console.log("❌ Draft Edit Flow QA FAILED");
-      console.log(`   Got: ${res3.responseData.status}`);
+      console.log(`   Got: ${res5.responseData.status}`);
     }
 
     // Restore original function
