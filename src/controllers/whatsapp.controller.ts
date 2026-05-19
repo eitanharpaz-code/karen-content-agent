@@ -12,6 +12,9 @@ import {
   storePendingConfirmation,
   getPendingConfirmation,
   clearPendingConfirmation,
+  isResetRequest,
+  isNewIdeaCommand,
+  getNewIdeaText,
 } from "../services/confirmation.service";
 import {
   getExistingContentIds,
@@ -21,6 +24,12 @@ import {
   findProductionTaskByName,
   updateProductionStatus,
   getProductionStatusColumnIndex,
+  getTasksMissingEdit,
+  getTasksMissingCover,
+  getTasksMissingCopy,
+  getTasksNotUploaded,
+  getStuckTasks,
+  searchTasksByKeyword,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -28,6 +37,11 @@ import {
   detectStatusUpdate,
   getColumnName,
 } from "../services/production-status.service";
+import {
+  detectVisibilityIntent,
+  extractSearchKeyword,
+  formatVisibilityResponse,
+} from "../services/visibility.service";
 
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
@@ -49,6 +63,47 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   }
 
   try {
+    // Sprint 9: New idea command should clear existing draft and start a fresh one
+    if (isNewIdeaCommand(incomingText)) {
+      const newIdeaText = getNewIdeaText(incomingText);
+      clearPendingConfirmation(sender);
+
+      if (!newIdeaText) {
+        const replyText = "רק שלחי רעיון חדש אחריו את הטקסט: רעיון חדש: ...";
+        await safeSendWhatsAppMessage(sender, replyText);
+        return res.status(200).json({ status: "new_idea_command_missing_text", sender });
+      }
+
+      const draft = await createContentDraft(newIdeaText);
+      const draftSummary = {
+        ...draft,
+        originalUserInput: newIdeaText,
+      };
+      storePendingConfirmation(sender, draftSummary);
+
+      const replyText = `הרעיון החדש התחיל בהצלחה.
+
+שם קצר: ${draft.shortName}
+קטגוריה: ${displayCategory(draft.category)}
+טון: ${displayTone(draft.tone)}
+עדיפות: ${displayPriority(draft.priority)}
+סיכום: ${draft.summary}
+
+זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "new_idea_started", sender, draft: draftSummary });
+    }
+
+    // Sprint 9: Reset commands clear the active draft and keep the session clean
+    if (isResetRequest(incomingText)) {
+      const pendingDraft = getPendingConfirmation(sender);
+      clearPendingConfirmation(sender);
+
+      const replyText = "הרעיון הקודם בוטל. אפשר לשלוח רעיון חדש.";
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "draft_reset", sender, hadPendingDraft: !!pendingDraft });
+    }
+
     // Check if this is a confirmation response
     if (isConfirmationMessage(incomingText)) {
       const pendingDraft = getPendingConfirmation(sender);
@@ -64,9 +119,14 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
           console.log(`\n[Sprint 6 Workflow] User confirmed content from ${sender}`);
 
-          // Get existing IDs and generate new one based on category
+          // Get existing IDs and generate new one based on category prefix registry
           const existingIds = await getExistingContentIds(spreadsheetId);
-          const contentId = generateContentId(pendingDraft.category, existingIds);
+          const contentId = await generateContentId(
+            spreadsheetId,
+            pendingDraft.category,
+            existingIds,
+            !!pendingDraft.categoryExplicit
+          );
           console.log(`[Sprint 6 Workflow] Generated Content_ID: ${contentId}`);
 
           // STEP 1: Save to בנק רעיונות (Content Library) - PRIMARY SHEET
@@ -264,6 +324,74 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             error: errorMessage,
           });
         }
+      }
+    }
+
+    // Sprint 10: Check if this is a visibility query (read-only)
+    const visibilityIntent = detectVisibilityIntent(incomingText);
+    if (visibilityIntent) {
+      try {
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+        if (!spreadsheetId) {
+          throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
+        }
+
+        console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
+
+        let tasks: any[] = [];
+        switch (visibilityIntent) {
+          case "missing_edit":
+            tasks = await getTasksMissingEdit(spreadsheetId);
+            break;
+          case "missing_cover":
+            tasks = await getTasksMissingCover(spreadsheetId);
+            break;
+          case "missing_copy":
+            tasks = await getTasksMissingCopy(spreadsheetId);
+            break;
+          case "not_uploaded":
+            tasks = await getTasksNotUploaded(spreadsheetId);
+            break;
+          case "stuck_workflow":
+            tasks = await getStuckTasks(spreadsheetId);
+            break;
+          case "category_search": {
+            const keyword = extractSearchKeyword(incomingText);
+            if (!keyword) {
+              tasks = [];
+            } else {
+              tasks = await searchTasksByKeyword(spreadsheetId, keyword);
+            }
+            break;
+          }
+          default:
+            tasks = [];
+        }
+
+        const replyText = formatVisibilityResponse(tasks, visibilityIntent);
+        await safeSendWhatsAppMessage(sender, replyText);
+
+        console.log(`[Sprint 10] ✅ Visibility query response sent`);
+
+        return res.status(200).json({
+          status: "visibility_query",
+          sender,
+          intent: visibilityIntent,
+          taskCount: tasks.length,
+        });
+      } catch (visibilityError) {
+        const errorMessage =
+          visibilityError instanceof Error ? visibilityError.message : "Unknown error";
+        console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
+
+        const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
+        await safeSendWhatsAppMessage(sender, replyText);
+
+        return res.status(500).json({
+          status: "visibility_query_error",
+          sender,
+          error: errorMessage,
+        });
       }
     }
 

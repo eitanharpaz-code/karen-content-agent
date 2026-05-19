@@ -5,6 +5,7 @@ import { normalizeHebrewText, getTokenOverlapScore } from "./production-status.s
 const SHEET_NAMES = {
   contentLibrary: "בנק רעיונות",
   productionTasks: "משימות הפקה",
+  categories: "קטגוריות",
   eventsTimeline: "ציר אירועים",
   monthlyGantt: "גאנט תוכן",
 };
@@ -43,11 +44,44 @@ export const getSpreadsheetMetadata = async (spreadsheetId: string) => {
   };
 };
 
+export const ensureSheetExists = async (
+  spreadsheetId: string,
+  sheetName: string
+): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const metadata = await getSpreadsheetMetadata(spreadsheetId);
+  const sheetExists = metadata.sheets?.some((sheet) => sheet.title === sheetName);
+
+  if (sheetExists) {
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: sheetName,
+            },
+          },
+        },
+      ],
+    },
+  });
+};
+
 export const appendRowToSheet = async (
   spreadsheetId: string,
   sheetName: string,
   values: Array<string | number | null>
 ): Promise<void> => {
+  if (sheetName === SHEET_NAMES.categories) {
+    await ensureSheetExists(spreadsheetId, SHEET_NAMES.categories);
+  }
+
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -87,8 +121,14 @@ export const getExistingContentIds = async (spreadsheetId: string): Promise<stri
   return values.slice(1).map((row) => row[0]).filter(Boolean);
 };
 
-// Map Hebrew categories to category prefixes
-const CATEGORY_PREFIX_MAP: Record<string, string> = {
+export type CategoryRegistryEntry = {
+  categoryName: string;
+  prefix: string;
+  createdAt: string;
+  notes: string;
+};
+
+const BUILT_IN_CATEGORY_PREFIX_MAP: Record<string, string> = {
   "קפריסין": "CYP",
   "שמלות": "DRS",
   "רווקות": "BCH",
@@ -96,21 +136,196 @@ const CATEGORY_PREFIX_MAP: Record<string, string> = {
   "על החתונה": "PRW",
   "חתונה": "WED",
   "כללי": "GEN",
+  "זוגיות": "REL",
+  "ספקים": "VEN",
+  "משפחה": "FAM",
+  "אורחים": "GST",
+  "תקציב": "BUD",
+  "רגשות": "EMO",
 };
 
-// Generate next Content ID based on category (e.g., CYP-006, WED-001, etc.)
-// category: Hebrew category name
-// existingIds: array of existing IDs from the sheet
-export const generateContentId = (category: string, existingIds: string[]): string => {
-  const prefix = CATEGORY_PREFIX_MAP[category] || "GEN";
-  
-  // Filter IDs that match this category's prefix
+const GENERIC_CATEGORY_PREFIX = "CAT";
+
+const seedCategoryRows = (): Array<Array<string>> => [
+  ["category_name", "prefix", "created_at", "notes"],
+  ["קפריסין", "CYP", new Date().toISOString(), ""],
+  ["שמלות", "DRS", new Date().toISOString(), ""],
+  ["רווקות", "BCH", new Date().toISOString(), ""],
+  ["רווקים", "BCH", new Date().toISOString(), ""],
+  ["על החתונה", "PRW", new Date().toISOString(), ""],
+  ["חתונה", "WED", new Date().toISOString(), ""],
+  ["כללי", "GEN", new Date().toISOString(), ""],
+];
+
+const transliterateHebrewToLatin = (text: string): string => {
+  const mapping: Record<string, string> = {
+    א: "A", ב: "B", ג: "G", ד: "D", ה: "H", ו: "V", ז: "Z", ח: "KH",
+    ט: "T", י: "Y", כ: "K", ך: "K", ל: "L", מ: "M", ם: "M", נ: "N", ן: "N",
+    ס: "S", ע: "A", פ: "P", ף: "P", צ: "TZ", ץ: "TZ", ק: "K", ר: "R", ש: "SH", ת: "T",
+  };
+
+  return text
+    .split("")
+    .map((char) => mapping[char] || "")
+    .join("")
+    .replace(/[^A-Z]/g, "")
+    .toUpperCase();
+};
+
+const normalizeCategoryPrefixCandidate = (categoryName: string): string => {
+  const normalized = normalizeHebrewText(categoryName).replace(/[^א-תa-zA-Z]/g, "");
+  const mapped = BUILT_IN_CATEGORY_PREFIX_MAP[normalized];
+  if (mapped) {
+    return mapped;
+  }
+
+  const transliterated = transliterateHebrewToLatin(normalized);
+  if (transliterated.length >= 3) {
+    return transliterated.slice(0, 3);
+  }
+
+  if (transliterated.length === 2) {
+    return `${transliterated}A`;
+  }
+
+  return GENERIC_CATEGORY_PREFIX;
+};
+
+const generateUniquePrefix = (basePrefix: string, existingPrefixes: Set<string>): string => {
+  const normalizedBase = basePrefix.toUpperCase().slice(0, 3);
+  if (!existingPrefixes.has(normalizedBase)) {
+    return normalizedBase;
+  }
+
+  const prefixStart = normalizedBase.slice(0, 2) || "C";
+  for (let suffix = 2; suffix < 100; suffix++) {
+    const candidate = `${prefixStart}${suffix}`.slice(0, 3).toUpperCase();
+    if (!existingPrefixes.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  let counter = 2;
+  while (true) {
+    const candidate = `${normalizedBase.slice(0, 2)}${counter}`.slice(0, 3).toUpperCase();
+    if (!existingPrefixes.has(candidate)) {
+      return candidate;
+    }
+    counter += 1;
+  }
+};
+
+export const getCategories = async (spreadsheetId: string): Promise<CategoryRegistryEntry[]> => {
+  await ensureSheetExists(spreadsheetId, SHEET_NAMES.categories);
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.categories}!A:D`,
+  });
+
+  const rows = response.data.values || [];
+
+  if (rows.length <= 1) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SHEET_NAMES.categories}!A:D`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: seedCategoryRows() },
+    });
+    return seedCategoryRows().slice(1).map((row) => ({
+      categoryName: row[0],
+      prefix: row[1],
+      createdAt: row[2],
+      notes: row[3],
+    }));
+  }
+
+  return rows.slice(1).map((row) => ({
+    categoryName: row[0].toString(),
+    prefix: row[1].toString(),
+    createdAt: row[2]?.toString() || "",
+    notes: row[3]?.toString() || "",
+  }));
+};
+
+export const getCategoryByName = async (
+  spreadsheetId: string,
+  categoryName: string
+): Promise<CategoryRegistryEntry | null> => {
+  const categories = await getCategories(spreadsheetId);
+  const normalizedSearch = normalizeHebrewText(categoryName);
+  return (
+    categories.find(
+      (entry) => normalizeHebrewText(entry.categoryName) === normalizedSearch
+    ) || null
+  );
+};
+
+export const getCategoryPrefix = async (
+  spreadsheetId: string,
+  categoryName: string
+): Promise<string | null> => {
+  const category = await getCategoryByName(spreadsheetId, categoryName);
+  return category?.prefix || null;
+};
+
+export const createCategory = async (
+  spreadsheetId: string,
+  categoryName: string,
+  prefix: string,
+  notes = ""
+): Promise<CategoryRegistryEntry> => {
+  const createdAt = new Date().toISOString();
+  await appendRowToSheet(spreadsheetId, SHEET_NAMES.categories, [
+    categoryName,
+    prefix,
+    createdAt,
+    notes,
+  ]);
+
+  return {
+    categoryName,
+    prefix,
+    createdAt,
+    notes,
+  };
+};
+
+export const ensureCategoryExists = async (
+  spreadsheetId: string,
+  categoryName: string,
+  allowCreate = false
+): Promise<CategoryRegistryEntry | null> => {
+  const normalizedName = normalizeHebrewText(categoryName);
+  const categories = await getCategories(spreadsheetId);
+  const existing = categories.find(
+    (entry) => normalizeHebrewText(entry.categoryName) === normalizedName
+  );
+
+  if (existing) {
+    return existing;
+  }
+
+  if (!allowCreate) {
+    return null;
+  }
+
+  const existingPrefixes = new Set(categories.map((entry) => entry.prefix.toUpperCase()));
+  const basePrefix = normalizeCategoryPrefixCandidate(categoryName);
+  const prefix = generateUniquePrefix(basePrefix, existingPrefixes);
+  return createCategory(spreadsheetId, categoryName, prefix);
+};
+
+export const generateContentIdForPrefix = (
+  prefix: string,
+  existingIds: string[]
+): string => {
   const categoryIds = existingIds.filter((id) => id.startsWith(prefix + "-"));
-  
-  // Find the maximum number
   let maxNum = 0;
   categoryIds.forEach((id) => {
-    const match = id.match(/^[A-Z]+-(\d+)$/);
+    const match = id.match(new RegExp(`^${prefix}-(\\d+)$`));
     if (match) {
       const num = parseInt(match[1], 10);
       if (num > maxNum) {
@@ -118,8 +333,19 @@ export const generateContentId = (category: string, existingIds: string[]): stri
       }
     }
   });
-  
+
   return `${prefix}-${String(maxNum + 1).padStart(3, "0")}`;
+};
+
+export const generateContentId = async (
+  spreadsheetId: string,
+  category: string,
+  existingIds: string[],
+  allowCreateCategory = false
+): Promise<string> => {
+  const categoryEntry = await ensureCategoryExists(spreadsheetId, category, allowCreateCategory);
+  const prefix = categoryEntry?.prefix || "GEN";
+  return generateContentIdForPrefix(prefix, existingIds);
 };
 
 // Save content idea to בנק רעיונות
@@ -358,6 +584,113 @@ export const getProductionStatusColumnIndex = (columnName: string): number | nul
   };
 
   return columnMap[columnName] || null;
+};
+
+// ========== Sprint 10: Visibility Queries (Read-Only) ==========
+
+export type ProductionTaskRow = {
+  contentId: string;
+  taskName: string;
+  needsText: string;
+  filmed: string;
+  edited: string;
+  coverReady: string;
+  copyReady: string;
+  uploaded: string;
+  deadline: string;
+  uploadTime: string;
+  notes: string;
+};
+
+// Get all production tasks from משימות הפקה
+export const getAllProductionTasks = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.productionTasks}!A:K`,
+  });
+
+  const values = response.data.values || [];
+  // Skip header row (row 1)
+  return values.slice(1).map((row) => ({
+    contentId: row[0] || "",
+    taskName: row[1] || "",
+    needsText: row[2] || "לא",
+    filmed: row[3] || "לא",
+    edited: row[4] || "לא",
+    coverReady: row[5] || "לא",
+    copyReady: row[6] || "לא",
+    uploaded: row[7] || "לא",
+    deadline: row[8] || "",
+    uploadTime: row[9] || "",
+    notes: row[10] || "",
+  }));
+};
+
+// Get tasks that need editing: filmed but not edited
+export const getTasksMissingEdit = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.filmed === "כן" && task.edited !== "כן");
+};
+
+// Get tasks missing cover: cover ready != כן
+export const getTasksMissingCover = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.coverReady !== "כן");
+};
+
+// Get tasks missing copy: copy ready != כן
+export const getTasksMissingCopy = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.copyReady !== "כן");
+};
+
+// Get tasks not uploaded: uploaded != כן
+export const getTasksNotUploaded = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.uploaded !== "כן");
+};
+
+// Get stuck tasks: deterministic patterns
+// Pattern 1: filmed but not edited
+// Pattern 2: edited but not uploaded
+// Pattern 3: not filmed and not edited (idle)
+export const getStuckTasks = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => {
+    // Filmed but not edited
+    if (task.filmed === "כן" && task.edited !== "כן") {
+      return true;
+    }
+    // Edited but not uploaded
+    if (task.edited === "כן" && task.uploaded !== "כן") {
+      return true;
+    }
+    // Cover/copy missing in later stages
+    if (task.filmed === "כן" && (task.coverReady !== "כן" || task.copyReady !== "כן")) {
+      return true;
+    }
+    return false;
+  });
+};
+
+// Search tasks by keyword or category
+export const searchTasksByKeyword = async (
+  spreadsheetId: string,
+  keyword: string
+): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  const normalizedKeyword = normalizeHebrewText(keyword);
+  return tasks.filter((task) => {
+    const normalizedName = normalizeHebrewText(task.taskName);
+    const normalizedNotes = normalizeHebrewText(task.notes);
+    return (
+      normalizedName.includes(normalizedKeyword) ||
+      normalizedNotes.includes(normalizedKeyword)
+    );
+  });
 };
 
 // Export sheet names for use in other modules

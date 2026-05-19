@@ -1,7 +1,6 @@
-// Hebrew values are canonical for all enums
-// These represent the actual Hebrew values used internally, in WhatsApp, and in Google Sheets
-export type Category = "קפריסין" | "חתונה" | "שמלות" | "כללי" | "רווקות" | "רווקים" | "על החתונה";
-export type Tone = "הסברתי" | "מצחיק" | "אותנטי" | "השראתי" | "טרנדי" | "רגשי";
+// Hebrew values are canonical for known categories, but dynamic categories are allowed for Sprint 9
+export type Category = string;
+export type Tone = "הסברתי" | "מצחיק" | "אותנטי" | "השראתי" | "טרנדי" | "רגשי" | "הומוריסטי" | "דרמטי";
 export type Priority = "גבוה" | "בינוני" | "נמוך";
 export type Platform = "אינסטגרם" | "טיקטוק";
 export type RequiresShooting = "כן" | "לא";
@@ -14,6 +13,7 @@ export interface ContentIdeaDraft {
   summary: string;
   requiresShooting?: RequiresShooting;
   platforms?: Platform[];
+  categoryExplicit?: boolean;
 }
 
 export interface DraftSummary extends ContentIdeaDraft {

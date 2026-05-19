@@ -35,7 +35,7 @@ const TESTS: MultiStatusTest[] = [
     message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
     expectedStatusTypes: ["filmed", "edited", "uploaded"],
     expectedContentName: "שמלה שלישית",
-    expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
+    expectedMatchedTaskName: "שמלה שלישית",
   },
   {
     description: "Cover and copy ready in one message",

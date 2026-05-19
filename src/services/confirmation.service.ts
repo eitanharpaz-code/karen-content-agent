@@ -69,6 +69,32 @@ export const isConfirmationMessage = (text: string): boolean => {
   return yesWords.includes(normalized);
 };
 
+export const isResetRequest = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  const resetCommands = [
+    "ביטול",
+    "תבטלי",
+    "איפוס",
+    "עזבי",
+    "לא משנה",
+    "תתחילי מחדש",
+    "רעיון חדש",
+    "אני רוצה לשלוח רעיון חדש",
+  ];
+
+  return resetCommands.some((command) => normalized === command || normalized.startsWith(`${command}:`));
+};
+
+export const isNewIdeaCommand = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  return normalized.startsWith("רעיון חדש:");
+};
+
+export const getNewIdeaText = (text: string): string | null => {
+  const match = text.match(/רעיון חדש\s*:\s*(.+)/i);
+  return match ? match[1].trim() : null;
+};
+
 export const isEditRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
   const editIndicators = [
@@ -129,6 +155,23 @@ export const parseEditRequest = (text: string): { field: string; value: string }
   // Category edits - more natural patterns
   if (normalized.includes("קטגוריה") || normalized.includes("category") ||
       normalized.includes("קטגוריית")) {
+    // Explicit category command parsing
+    const categoryPatterns = [
+      /(?:תשני|שני|תעדכני|עדכני|תשנה|שנה|תעדכן|עדכן)?\s*(?:את\s+)?(?:ה\s*)?(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
+      /(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
+    ];
+
+    for (const pattern of categoryPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        let value = match[1].trim();
+        value = value.replace(/^[\s\-–—]+/, "").replace(/[.,!?;:]+$/, "").trim();
+        if (value) {
+          return { field: "category", value };
+        }
+      }
+    }
+
     const categoryValue = findHebrewValue(normalized, CATEGORY_HEBREW_VALUES);
     if (categoryValue) {
       return { field: "category", value: categoryValue };
@@ -204,6 +247,7 @@ export const applyEditToDraft = (draft: DraftSummary, edit: { field: string; val
       break;
     case "category":
       updatedDraft.category = edit.value as any;
+      updatedDraft.categoryExplicit = true;
       break;
     case "tone":
       updatedDraft.tone = edit.value as any;
