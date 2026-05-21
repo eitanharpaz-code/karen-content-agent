@@ -41,6 +41,8 @@ import {
 import {
   detectVisibilityIntent,
   extractSearchKeyword,
+  extractStatusQueryTarget,
+  formatTaskStatusResponse,
   formatVisibilityResponse,
   isLikelyVisibilityQuery,
   isQuestionLikeMessage,
@@ -260,6 +262,42 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           }
 
           console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
+
+          if (visibilityIntent === "task_status") {
+            const target = extractStatusQueryTarget(incomingText);
+            if (!target) {
+              const replyText = "לא הבנתי את שם התוכן. נסי שנית.";
+              await safeSendWhatsAppMessage(sender, replyText);
+              return res.status(200).json({ status: "visibility_query_no_target", sender });
+            }
+
+            const matchResult = await findProductionTaskByName(spreadsheetId, target);
+            if (!matchResult) {
+              const replyText = "לא מצאתי תוכן מתאים לשם הזה. נסי שנית עם שם ברור יותר.";
+              await safeSendWhatsAppMessage(sender, replyText);
+              return res.status(200).json({ status: "visibility_query_no_match", sender, target });
+            }
+
+            if ("ambiguous" in matchResult && matchResult.ambiguous) {
+              const replyText = "מצאתי כמה תכנים דומים, איזה מהם התכוונת? נסי שנית עם שם ברור יותר.";
+              await safeSendWhatsAppMessage(sender, replyText);
+              return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
+            }
+
+            const exactMatch = matchResult as ProductionTaskMatch;
+            const replyText = formatTaskStatusResponse(exactMatch);
+            await safeSendWhatsAppMessage(sender, replyText);
+
+            console.log(`[Sprint 10] ✅ Task status response sent for: ${exactMatch.row[1]}`);
+
+            return res.status(200).json({
+              status: "visibility_task_status",
+              sender,
+              intent: visibilityIntent,
+              target,
+              taskName: exactMatch.row[1],
+            });
+          }
 
           let tasks: any[] = [];
           switch (visibilityIntent) {

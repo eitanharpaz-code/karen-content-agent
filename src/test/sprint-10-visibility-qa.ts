@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 import {
   detectVisibilityIntent,
   extractSearchKeyword,
+  extractStatusQueryTarget,
+  formatTaskStatusResponse,
   formatVisibilityResponse,
   VisibilityIntent,
   isQuestionLikeMessage,
@@ -15,6 +17,8 @@ import {
   getTasksEditedAndNotUploaded,
   getStuckTasks,
   searchTasksByKeyword,
+  findProductionTaskByName,
+  type ProductionTaskMatch,
 } from "../services/sheets.service";
 
 dotenv.config();
@@ -55,6 +59,24 @@ const TEST_CASES: VisibilityTestCase[] = [
     description: "Detect edited-but-not-uploaded visibility intent from alternate phrasing",
     query: "מה נערך ולא עלה",
     expectedIntent: "edited_not_uploaded",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect task-status response for an exact task query",
+    query: "מה הסטטוס של הלוקים שלי לקפריסין?",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect task-status response for a supported status phrasing",
+    query: "מה מצב הסרטון על הלוקים לקפריסין?",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect task-status intent for a broad status query",
+    query: "מה מצב חתונה?",
+    expectedIntent: "task_status",
     shouldReadFromSheets: true,
   },
   {
@@ -132,6 +154,25 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
           tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
           console.log(`📊 Found ${tasks.length} tasks edited but not uploaded`);
           break;
+        case "task_status": {
+          const target = extractStatusQueryTarget(testCase.query);
+          if (!target) {
+            console.log("❌ Could not extract task status target from query");
+            return { passed: false, reason: "Task status target extraction failed" };
+          }
+
+          const matchResult = await findProductionTaskByName(spreadsheetId, target);
+          if (!matchResult) {
+            console.log(`📊 No production task matched target: ${target}`);
+          } else if ("ambiguous" in matchResult && matchResult.ambiguous) {
+            console.log(`📊 Ambiguous production task match for target: ${target}`);
+          } else {
+            const exactMatch = matchResult as ProductionTaskMatch;
+            const response = formatTaskStatusResponse(exactMatch);
+            console.log(`📱 Response:\n${response}`);
+          }
+          break;
+        }
         case "stuck_workflow":
           tasks = await getStuckTasks(spreadsheetId);
           console.log(`📊 Found ${tasks.length} stuck tasks`);
@@ -152,14 +193,16 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
           return { passed: false, reason: "Unhandled intent" };
       }
 
-      if (!Array.isArray(tasks)) {
-        console.error(`❌ Expected array of tasks, got ${typeof tasks}`);
-        return { passed: false, reason: "Invalid task array" };
-      }
+      if (intent !== "task_status") {
+        if (!Array.isArray(tasks)) {
+          console.error(`❌ Expected array of tasks, got ${typeof tasks}`);
+          return { passed: false, reason: "Invalid task array" };
+        }
 
-      const response = formatVisibilityResponse(tasks, intent);
-      console.log(`📱 Response:\n${response}`);
-      console.log(`✅ Sheet query executed successfully`);
+        const response = formatVisibilityResponse(tasks, intent);
+        console.log(`📱 Response:\n${response}`);
+        console.log(`✅ Sheet query executed successfully`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`❌ Sheet query failed: ${message}`);

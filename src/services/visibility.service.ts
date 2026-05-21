@@ -6,6 +6,7 @@ import type { ProductionTaskRow } from "./sheets.service";
 export type VisibilityIntent =
   | "missing_edit"
   | "edited_not_uploaded"
+  | "task_status"
   | "missing_cover"
   | "missing_copy"
   | "not_uploaded"
@@ -13,9 +14,63 @@ export type VisibilityIntent =
   | "stuck_workflow"
   | null;
 
+export const extractStatusQueryTarget = (text: string): string | null => {
+  const rawText = text.trim();
+  const patterns = [
+    /^(?:מה הסטטוס של)\s+(.+?)(?:\?|$)$/i,
+    /^(?:מה מצב(?: הסרטון)? על)\s+(.+?)(?:\?|$)$/i,
+    /^(?:איפה אני עומדת עם)\s+(.+?)(?:\?|$)$/i,
+    /^(?:מה מצב)\s+(.+?)(?:\?|$)$/i,
+    /^(?:מה קורה עם)\s+(.+?)(?:\?|$)$/i,
+  ];
+
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index];
+    const match = rawText.match(pattern);
+    if (match && match[1]) {
+      const target = match[1].trim().replace(/[?!]+$/, "").trim();
+      if (!target) {
+        continue;
+      }
+      const tokenCount = target.split(/\s+/).filter(Boolean).length;
+
+      // Preserve category-search behavior for short "מה הסטטוס של X" queries
+      // when the target is a single-word category name.
+      if (index === 0 && tokenCount < 2) {
+        continue;
+      }
+
+      return target;
+    }
+  }
+
+  return null;
+};
+
+export const formatTaskStatusResponse = (task: { row: string[] }): string => {
+  const taskName = task.row[1] || "תוכן";
+  const filmed = task.row[3] || "לא";
+  const edited = task.row[4] || "לא";
+  const coverReady = task.row[5] || "לא";
+  const copyReady = task.row[6] || "לא";
+  const uploaded = task.row[7] || "לא";
+
+  return `${taskName}:
+צולם: ${filmed}
+נערך: ${edited}
+קאבר מוכן: ${coverReady}
+קופי מוכן: ${copyReady}
+הועלה: ${uploaded}`;
+};
+
 export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // Use raw text for intent detection to avoid filler word removal
   const rawText = text.toLowerCase();
+
+  const taskStatusTarget = extractStatusQueryTarget(text);
+  if (taskStatusTarget) {
+    return "task_status";
+  }
 
   // --- Edited but not uploaded intent ---
   const editedNotUploadedPhrases = [
