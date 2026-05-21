@@ -28,6 +28,7 @@ import {
   getTasksMissingCover,
   getTasksMissingCopy,
   getTasksNotUploaded,
+  getTasksEditedAndNotUploaded,
   getStuckTasks,
   searchTasksByKeyword,
 } from "../services/sheets.service";
@@ -41,7 +42,17 @@ import {
   detectVisibilityIntent,
   extractSearchKeyword,
   formatVisibilityResponse,
+  isLikelyVisibilityQuery,
+  isQuestionLikeMessage,
 } from "../services/visibility.service";
+import {
+  cleanIdeaPrefix,
+  isContinuationMessage,
+  isMetaConversation,
+  hasIdeaConfidence,
+  hasEditConfidence,
+  generateClarificationPrompt,
+} from "../utils/conversation-utils";
 
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
@@ -225,15 +236,94 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           await safeSendWhatsAppMessage(sender, replyText);
           return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
         } else {
-          const replyText = "לא הצלחתי להבין את העריכה. אנא נסח אותה ברור יותר או אשר את הרעיון הנוכחי.";
-          await safeSendWhatsAppMessage(sender, replyText);
+          // FIX 4: Better clarification response for unclear edits
+          const clarificationPrompt = generateClarificationPrompt(true);
+          await safeSendWhatsAppMessage(sender, clarificationPrompt);
           return res.status(200).json({ status: "edit_not_understood", sender });
         }
       } else {
-        const replyText = "אין רעיון ממתין לעריכה. מה הרעיון החדש שלך?";
-        await safeSendWhatsAppMessage(sender, replyText);
+        const clarificationPrompt = generateClarificationPrompt(false);
+        await safeSendWhatsAppMessage(sender, clarificationPrompt);
         return res.status(200).json({ status: "no_pending_for_edit", sender });
       }
+    }
+
+    const visibilityIntent = detectVisibilityIntent(incomingText);
+    const questionLikeMessage = isQuestionLikeMessage(incomingText);
+
+    if (questionLikeMessage) {
+      if (visibilityIntent) {
+        try {
+          const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+          if (!spreadsheetId) {
+            throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
+          }
+
+          console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
+
+          let tasks: any[] = [];
+          switch (visibilityIntent) {
+            case "edited_not_uploaded":
+              tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
+              break;
+            case "missing_edit":
+              tasks = await getTasksMissingEdit(spreadsheetId);
+              break;
+            case "missing_cover":
+              tasks = await getTasksMissingCover(spreadsheetId);
+              break;
+            case "missing_copy":
+              tasks = await getTasksMissingCopy(spreadsheetId);
+              break;
+            case "not_uploaded":
+              tasks = await getTasksNotUploaded(spreadsheetId);
+              break;
+            case "stuck_workflow":
+              tasks = await getStuckTasks(spreadsheetId);
+              break;
+            case "category_search": {
+              const keyword = extractSearchKeyword(incomingText);
+              if (!keyword) {
+                tasks = [];
+              } else {
+                tasks = await searchTasksByKeyword(spreadsheetId, keyword);
+              }
+              break;
+            }
+            default:
+              tasks = [];
+          }
+
+          const replyText = formatVisibilityResponse(tasks, visibilityIntent);
+          await safeSendWhatsAppMessage(sender, replyText);
+
+          console.log(`[Sprint 10] ✅ Visibility query response sent`);
+
+          return res.status(200).json({
+            status: "visibility_query",
+            sender,
+            intent: visibilityIntent,
+            taskCount: tasks.length,
+          });
+        } catch (visibilityError) {
+          const errorMessage =
+            visibilityError instanceof Error ? visibilityError.message : "Unknown error";
+          console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
+
+          const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
+          await safeSendWhatsAppMessage(sender, replyText);
+
+          return res.status(500).json({
+            status: "visibility_query_error",
+            sender,
+            error: errorMessage,
+          });
+        }
+      }
+
+      const clarificationPrompt = generateClarificationPrompt(!!getPendingConfirmation(sender));
+      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      return res.status(200).json({ status: "question_clarification", sender });
     }
 
     // Sprint 7: Check if this is a production status update
@@ -328,7 +418,6 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     }
 
     // Sprint 10: Check if this is a visibility query (read-only)
-    const visibilityIntent = detectVisibilityIntent(incomingText);
     if (visibilityIntent) {
       try {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
@@ -340,6 +429,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
         let tasks: any[] = [];
         switch (visibilityIntent) {
+          case "edited_not_uploaded":
+            tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
+            break;
           case "missing_edit":
             tasks = await getTasksMissingEdit(spreadsheetId);
             break;
@@ -394,22 +486,58 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         });
       }
     }
-
-    // Sprint 6: Check if there's already a pending confirmation
-    const existingDraft = getPendingConfirmation(sender);
-    if (existingDraft) {
-      const replyText = "יש לך רעיון ממתין לאישור. אשר אותו קודם או שלח רעיון חדש.";
+    // If message looks like a visibility question but intent detection was unclear,
+    // return a graceful fallback instead of progressing to draft creation.
+    if (!visibilityIntent && isLikelyVisibilityQuery(incomingText)) {
+      const replyText = "לא הצלחתי להבין את שאלת הסטטוס. נסי לנסח אחרת.";
       await safeSendWhatsAppMessage(sender, replyText);
-      return res.status(200).json({ status: "pending_exists", sender });
+      return res.status(200).json({ status: "visibility_unclear", sender });
+    }
+
+    // ===== FIX 3: Meta-conversation detection =====
+    // Don't create content from meta-conversation messages
+    const existingDraft = getPendingConfirmation(sender);
+    if (isMetaConversation(incomingText)) {
+      const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
+      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      return res.status(200).json({ status: "meta_conversation", sender });
+    }
+
+    // ===== FIX 2: Draft continuation handling =====
+    // If draft exists and message looks like continuation, treat it as continuation
+    if (existingDraft && isContinuationMessage(incomingText)) {
+      // Treat as edit/continuation context
+      const replyText = `זה מעניין! נוכל לשלב את זה בדברים הקודמים.
+
+רעיון עדכון:
+שם קצר: ${existingDraft.shortName}
+קטגוריה: ${displayCategory(existingDraft.category)}
+טון: ${displayTone(existingDraft.tone)}
+עדיפות: ${displayPriority(existingDraft.priority)}
+סיכום: ${existingDraft.summary}
+
+זה בסדר? או תרצי לשנות משהו?`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "continuation_acknowledged", sender, draft: existingDraft });
+    }
+
+    // ===== FIX 5: Lightweight confidence gating =====
+    // Check if message has minimum confidence to be treated as new idea
+    if (!hasIdeaConfidence(incomingText)) {
+      const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
+      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      return res.status(200).json({ status: "low_confidence_idea", sender });
     }
 
     // Create new content draft
-    const draft = await createContentDraft(incomingText);
+    // FIX 1: Clean conversational prefixes before creating draft
+    const cleanedUserInput = cleanIdeaPrefix(incomingText);
+    const draft = await createContentDraft(cleanedUserInput);
 
-    // Store pending confirmation
+    // Store pending confirmation with cleaned input
     const draftSummary = {
       ...draft,
-      originalUserInput: incomingText,
+      originalUserInput: cleanedUserInput,
     };
     storePendingConfirmation(sender, draftSummary);
 

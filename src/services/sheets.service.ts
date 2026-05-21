@@ -632,7 +632,8 @@ export const getAllProductionTasks = async (spreadsheetId: string): Promise<Prod
 // Get tasks that need editing: filmed but not edited
 export const getTasksMissingEdit = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
-  return tasks.filter((task) => task.filmed === "כן" && task.edited !== "כן");
+  // Sprint 10 fix: return all tasks that are not marked as edited (no longer require filmed === "כן")
+  return tasks.filter((task) => task.edited !== "כן");
 };
 
 // Get tasks missing cover: cover ready != כן
@@ -651,6 +652,11 @@ export const getTasksMissingCopy = async (spreadsheetId: string): Promise<Produc
 export const getTasksNotUploaded = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
   return tasks.filter((task) => task.uploaded !== "כן");
+};
+
+export const getTasksEditedAndNotUploaded = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.edited === "כן" && task.uploaded !== "כן");
 };
 
 // Get stuck tasks: deterministic patterns

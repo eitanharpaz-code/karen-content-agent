@@ -5,6 +5,7 @@ import type { ProductionTaskRow } from "./sheets.service";
 
 export type VisibilityIntent =
   | "missing_edit"
+  | "edited_not_uploaded"
   | "missing_cover"
   | "missing_copy"
   | "not_uploaded"
@@ -14,60 +15,133 @@ export type VisibilityIntent =
 
 export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // Use raw text for intent detection to avoid filler word removal
-  // that's designed for production task name matching
   const rawText = text.toLowerCase();
 
-  // Missing Edit Intent
-  // Examples: מה נשאר לערוך, מה עוד לא נערך, מה מחכה לעריכה, איזה סרטונים עדיין לא ערוכים
-  // These are QUESTIONS about editing status, not draft creation with the word "edit" in it
-  if (
-    (rawText.includes("ערוך") || rawText.includes("עריכה") || rawText.includes("ערוכ")) &&
-    (rawText.includes("?") || rawText.includes("מה") || rawText.includes("איזה") || rawText.includes("מחכה"))
-  ) {
+  // --- Edited but not uploaded intent ---
+  const editedNotUploadedPhrases = [
+    "מה ערכתי ועוד לא עלה",
+    "מה ערכתי ולא עלה",
+    "מה נערך ולא עלה",
+    "איזה תכנים ערוכים ולא עלו",
+    "מה ערוך ועדיין לא עלה",
+    "מה כבר ערכתי ולא העליתי",
+    "מה כבר ערכתי ולא עלה",
+  ];
+  if (editedNotUploadedPhrases.some((p) => rawText.includes(p))) {
+    return "edited_not_uploaded";
+  }
+
+  // --- Missing Edit Intent ---
+  // Flexible phrasings users commonly use. Any question about "ערוך/עריכה/ערוכים" maps deterministically.
+  const editPhrases = [
+    "נשאר לערוך",
+    "מה נשאר לערוך",
+    "מה עוד לא ערוך",
+    "מה עוד לא נערך",
+    "מה מחכה לעריכה",
+    "איזה סרטונים עדיין לא ערוכים",
+    "עוד לא ערוך",
+    "מה עוד צריך עריכה",
+    "איזה תכנים עוד לא מוכנים",
+    "ערוך",
+    "עריכה",
+    "ערוכ",
+  ];
+  if (editPhrases.some((p) => rawText.includes(p))) {
     return "missing_edit";
   }
 
-  // Missing Cover Intent
-  // Examples: איזה תכנים בלי קאבר, מה עדיין בלי קאבר, מה חסר לו קאבר, מה עוד צריך קאבר
-  if (rawText.includes("קאבר") && (rawText.includes("?") || rawText.includes("בלי") || rawText.includes("חסר"))) {
+  // --- Missing Cover Intent ---
+  const coverPhrases = [
+    "קאבר",
+    "בלי קאבר",
+    "מה צריך קאבר",
+    "מה חסר לו קאבר",
+    "מה עוד בלי קאבר",
+  ];
+  if (coverPhrases.some((p) => rawText.includes(p))) {
     return "missing_cover";
   }
 
-  // Missing Copy Intent
-  // Examples: איזה תכנים בלי קופי, מה עדיין בלי קופי, מה עוד צריך קופי
-  if (rawText.includes("קופי") && (rawText.includes("?") || rawText.includes("בלי") || rawText.includes("חסר"))) {
+  // --- Missing Copy Intent ---
+  const copyPhrases = [
+    "קופי",
+    "בלי קופי",
+    "מה צריך קופי",
+    "מה עוד בלי קופי",
+  ];
+  if (copyPhrases.some((p) => rawText.includes(p))) {
     return "missing_copy";
   }
 
-  // Upload Status Intent
-  // Examples: מה עדיין לא עלה, איזה תכנים לא הועלו, מה מחכה להעלאה, מה עוד לא באוויר
-  if (
-    (rawText.includes("עלה") || rawText.includes("הועל") || rawText.includes("העלאה") || rawText.includes("באוויר")) &&
-    (rawText.includes("?") || rawText.includes("מה") || rawText.includes("איזה"))
-  ) {
+  // --- Upload / Not Uploaded Intent ---
+  const uploadPhrases = [
+    "מה עדיין לא עלה",
+    "מה נשאר לעלות",
+    "מה עוד צריך לעלות",
+    "מה מחכה להעלאה",
+    "מה עוד לא באוויר",
+    "מה עדיין לא פורסם",
+    "איזה תכנים עוד לא עלו",
+    "מה נשאר לפרסם",
+    "עוד לא פורסם",
+    "פורסם",
+    "העלאה",
+    "עלה",
+    "באוויר",
+  ];
+  if (uploadPhrases.some((p) => rawText.includes(p))) {
     return "not_uploaded";
   }
 
-  // Stuck Workflow Intent
-  // Examples: איזה תכנים תקועים, מה תקוע בהפקה, איפה נתקענו, מה עוד מחכה, מה לא מתקדם
-  if (
-    (rawText.includes("תקוע") || rawText.includes("מתקדם")) &&
-    (rawText.includes("?") || rawText.includes("מה") || rawText.includes("איזה") || rawText.includes("איפה"))
-  ) {
+  // --- Stuck Workflow Intent ---
+  const stuckPhrases = [
+    "תקוע",
+    "נתקענו",
+    "מה נתקע",
+    "מה נתקע?",
+    "מה לא מתקדם",
+    "איפה אנחנו תקועים",
+    "מה נתקע",
+    "מה עוד מחכה",
+  ];
+  if (stuckPhrases.some((p) => rawText.includes(p))) {
     return "stuck_workflow";
   }
 
-  // Category/Topic Search Intent
-  // Examples: מה הסטטוס של קפריסין, מה קורה עם הזוגיות, תראה לי תכני חתונה, מה יש על ספקים
-  // Only trigger if it's clearly a query (has question mark or query words)
-  if (
-    (rawText.includes("סטטוס") || rawText.includes("קורה") || rawText.includes("תראה") || rawText.includes("יש")) &&
-    (rawText.includes("?") || rawText.includes("של") || rawText.includes("עם") || rawText.includes("תראה"))
-  ) {
+  // --- Category/Topic Search Intent ---
+  const categoryPhrases = ["מה הסטטוס", "מה הסטטוס של", "מה קורה עם", "תראה לי תכני", "מה יש על"];
+  if (categoryPhrases.some((p) => rawText.includes(p))) {
     return "category_search";
   }
 
   return null;
+};
+
+// Heuristic: if the user message looks like a visibility question but no intent matched,
+// treat it as an unclear visibility query so controller can return a graceful fallback.
+export const isLikelyVisibilityQuery = (text: string): boolean => {
+  const raw = text.toLowerCase();
+  const queryIndicators = ["מה", "איזה", "נשאר", "עוד", "מחכה", "?", "?", "למה"];
+  const visibilityKeywords = ["ערוך", "עריכה", "קאבר", "קופי", "העלאה", "עלה", "פורסם", "תקוע", "סטטוס", "פרסם", "במק"].map((k) => k);
+
+  const hasQueryWord = queryIndicators.some((q) => raw.includes(q));
+  const hasVisKeyword = visibilityKeywords.some((k) => raw.includes(k));
+  return hasQueryWord && hasVisKeyword;
+};
+
+export const isQuestionLikeMessage = (text: string): boolean => {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (trimmed.endsWith("?")) {
+    return true;
+  }
+
+  return /^(מה|איזה|איפה|כמה|מי)\b/.test(normalized);
 };
 
 // Extract category/keyword from category search query
@@ -121,6 +195,8 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
   switch (intent) {
     case "missing_edit":
       return `נשאר לערוך:\n${taskNames}${suffix}`;
+    case "edited_not_uploaded":
+      return `נערך ועדיין לא עלה:\n${taskNames}${suffix}`;
     case "missing_cover":
       return `חסר קאבר:\n${taskNames}${suffix}`;
     case "missing_copy":

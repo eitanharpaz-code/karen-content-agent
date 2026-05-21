@@ -4,12 +4,15 @@ import {
   extractSearchKeyword,
   formatVisibilityResponse,
   VisibilityIntent,
+  isQuestionLikeMessage,
 } from "../services/visibility.service";
+import { detectStatusUpdate } from "../services/production-status.service";
 import {
   getTasksMissingEdit,
   getTasksMissingCover,
   getTasksMissingCopy,
   getTasksNotUploaded,
+  getTasksEditedAndNotUploaded,
   getStuckTasks,
   searchTasksByKeyword,
 } from "../services/sheets.service";
@@ -26,6 +29,7 @@ type VisibilityTestCase = {
   query: string;
   expectedIntent: VisibilityIntent;
   shouldReadFromSheets: boolean;
+  isQuestionLike?: boolean;
 };
 
 const TEST_CASES: VisibilityTestCase[] = [
@@ -40,6 +44,25 @@ const TEST_CASES: VisibilityTestCase[] = [
     query: "איזה סרטונים עדיין לא ערוכים?",
     expectedIntent: "missing_edit",
     shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect edited-but-not-uploaded visibility intent from direct phrasing",
+    query: "מה ערכתי ועוד לא עלה",
+    expectedIntent: "edited_not_uploaded",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect edited-but-not-uploaded visibility intent from alternate phrasing",
+    query: "מה נערך ולא עלה",
+    expectedIntent: "edited_not_uploaded",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Unsupported question-like update should not auto-update sheets",
+    query: "מה צילמתי?",
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
   },
   {
     description: "Detect missing cover intent",
@@ -105,6 +128,10 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
           tasks = await getTasksNotUploaded(spreadsheetId);
           console.log(`📊 Found ${tasks.length} tasks not uploaded`);
           break;
+        case "edited_not_uploaded":
+          tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
+          console.log(`📊 Found ${tasks.length} tasks edited but not uploaded`);
+          break;
         case "stuck_workflow":
           tasks = await getStuckTasks(spreadsheetId);
           console.log(`📊 Found ${tasks.length} stuck tasks`);
@@ -138,6 +165,15 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
       console.error(`❌ Sheet query failed: ${message}`);
       return { passed: false, reason: `Sheet error: ${message}` };
     }
+  }
+
+  if (testCase.isQuestionLike && !intent) {
+    const looksLikeQuestion = isQuestionLikeMessage(testCase.query);
+    if (!looksLikeQuestion) {
+      console.error(`❌ Expected query to be question-like: ${testCase.query}`);
+      return { passed: false, reason: "Question-like detection mismatch" };
+    }
+    console.log(`✅ Question-like message detected and no direct visibility intent returned`);
   }
 
   return { passed: true };
@@ -174,6 +210,14 @@ const main = async () => {
     console.log(
       `- ${result.description}: ${result.passed ? "PASS" : "FAIL"}${result.reason ? ` (${result.reason})` : ""}`
     );
+  }
+
+  const statusUpdateCheck = detectStatusUpdate("ערכתי את הסרטון על החליפה");
+  if (!statusUpdateCheck) {
+    console.error("❌ Expected production status update detection for non-question update phrase.");
+    results.push({ description: "Non-question production status update remains supported", passed: false, reason: "Status update detection failed" });
+  } else {
+    console.log("✅ Production status update detection still works for non-question phrase.");
   }
 
   const allPassed = results.every((result) => result.passed);

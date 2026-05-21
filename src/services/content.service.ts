@@ -1,8 +1,12 @@
 import { askClaude } from "./claude.service";
 import { ContentIdeaDraft } from "../types/content.types";
+import { cleanIdeaPrefix } from "../utils/conversation-utils";
 
 export const createContentDraft = async (userInput: string): Promise<ContentIdeaDraft> => {
-  const draftPrompt = `אני מקבל את הרעיון הבא לתוכן: "${userInput}"
+  // Fix 1: Clean conversational prefixes from the beginning
+  const cleanedInput = cleanIdeaPrefix(userInput);
+
+  const draftPrompt = `אני מקבל את הרעיון הבא לתוכן: "${cleanedInput}"
 
 בנה לי הצעה מובנית לתוכן עם:
 - Short Name (שם קצר לתוכן בעברית, עד 5 מילים)

@@ -15,7 +15,8 @@
     "test:sprint-9": "ts-node src/test/sprint-9-category-registry-qa.ts",
     "test:sprint-10": "ts-node src/test/sprint-10-visibility-qa.ts",
     "test:draft-edit": "ts-node src/test/draft-edit-qa.ts",
-    "test:natural-hebrew": "ts-node src/test/natural-hebrew-edit-qa.ts"
+    "test:natural-hebrew": "ts-node src/test/natural-hebrew-edit-qa.ts",
+    "test:usability": "ts-node src/test/usability-improvements-qa.ts"
   },
   "repository": {
     "type": "git",
