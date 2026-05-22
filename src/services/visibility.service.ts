@@ -192,11 +192,25 @@ export const isQuestionLikeMessage = (text: string): boolean => {
   }
 
   const normalized = trimmed.toLowerCase();
+  
+  // Check for trailing question mark
   if (trimmed.endsWith("?")) {
     return true;
   }
 
-  return /^(מה|איזה|איפה|כמה|מי)\b/.test(normalized);
+  // Single-word question starters (interrogative words)
+  const singleWordPattern = /^(מה|איזה|איזו|אילו|איפה|כמה|מי)\b/;
+  if (singleWordPattern.test(normalized)) {
+    return true;
+  }
+
+  // Multi-word question starters
+  const multiWordPattern = /^(תראה לי|תראי לי|יש משהו|יש תכנים|מה עם)\s/;
+  if (multiWordPattern.test(normalized)) {
+    return true;
+  }
+
+  return false;
 };
 
 // Extract category/keyword from category search query

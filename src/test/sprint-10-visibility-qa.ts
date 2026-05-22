@@ -116,6 +116,52 @@ const TEST_CASES: VisibilityTestCase[] = [
     expectedIntent: "category_search",
     shouldReadFromSheets: true,
   },
+  {
+    description: "Detect missing cover intent with אילו pattern",
+    query: "אילו סרטונים נערכו והקאבר לא מוכן",
+    expectedIntent: "missing_cover",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect question-like: איזו pattern",
+    query: "איזו משימה נשארה?",
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
+  },
+  {
+    description: "Detect not uploaded intent with תראה לי pattern",
+    query: "תראה לי מה לא עלה",
+    expectedIntent: "not_uploaded",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect missing cover intent with תראי לי pattern",
+    query: "תראי לי מה בלי קאבר",
+    expectedIntent: "missing_cover",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Detect question-like: יש משהו pattern with question mark",
+    query: "יש משהו שלא נערך?",
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
+  },
+  {
+    description: "Detect question-like: יש תכנים pattern with question mark",
+    query: "יש תכנים שלא עלו?",
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
+  },
+  {
+    description: "Detect question-like: מה עם pattern without question mark",
+    query: "מה עם קפריסין",
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
+  },
 ];
 
 const runVisibilityTest = async (testCase: VisibilityTestCase) => {
