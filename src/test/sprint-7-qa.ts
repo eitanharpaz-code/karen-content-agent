@@ -63,11 +63,6 @@ const TEST_CASES: Sprint7Test[] = [
     message: "הקופי מוכן לשמלה השלישית",
     expectedStatusType: "copy_ready",
   },
-  {
-    description: "Uploaded status update",
-    message: "העליתי את הסרטון על השמלה השלישית",
-    expectedStatusType: "uploaded",
-  },
 ];
 
 const EDGE_CASE_TESTS: Sprint7EdgeCaseTest[] = [
@@ -93,9 +88,9 @@ const MULTI_STATUS_TESTS: Sprint7MultiStatusTest[] = [
     expectedContentName: "קונספט טעימות חדש לחתונה",
   },
   {
-    description: "Filmed, edited and uploaded in one message",
+    description: "Filmed, edited and uploaded in one message (cascades to include cover and copy)",
     message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
-    expectedStatusTypes: ["filmed", "edited", "uploaded"],
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
     expectedContentName: "שמלה שלישית",
     expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
   },
@@ -105,6 +100,13 @@ const MULTI_STATUS_TESTS: Sprint7MultiStatusTest[] = [
     expectedStatusTypes: ["cover_ready", "copy_ready"],
     expectedContentName: "קפריסין",
     allowAmbiguous: true,
+  },
+  {
+    description: "Uploaded status update (cascades to include filmed, edited, cover, and copy)",
+    message: "העליתי את הסרטון על השמלה השלישית",
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
+    expectedContentName: "שמלה שלישית",
+    expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
   },
 ];
 

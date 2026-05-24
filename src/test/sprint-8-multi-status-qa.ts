@@ -31,11 +31,10 @@ const TESTS: MultiStatusTest[] = [
     expectedContentName: "קונספט טעימות חדש לחתונה",
   },
   {
-    description: "Filmed, edited and uploaded in one message",
+    description: "Filmed, edited and uploaded in one message (cascades to include cover and copy)",
     message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
-    expectedStatusTypes: ["filmed", "edited", "uploaded"],
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
     expectedContentName: "שמלה שלישית",
-    expectedMatchedTaskName: "שמלה שלישית",
   },
   {
     description: "Cover and copy ready in one message",

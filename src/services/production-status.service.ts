@@ -244,6 +244,53 @@ const findAllProductionStatusMatches = (message: string): StatusPatternMatch[] =
 
 const STATUS_PREFIX_CLEANUP = /^(?:מוכן|מוכנים|סיימתי|סיימנו|סיימת|סיימתם|סיימתן)\s*/i;
 
+/**
+ * Expand detected status types with their production dependencies.
+ * One-directional cascade:
+ * - uploaded → filmed + edited + cover_ready + copy_ready + uploaded
+ * - edited → filmed + edited
+ * - filmed → filmed only
+ * - cover_ready → cover_ready only
+ * - copy_ready → copy_ready only
+ * 
+ * Results are deduplicated.
+ */
+export const expandStatusTypesWithDependencies = (statusTypes: ProductionStatusType[]): ProductionStatusType[] => {
+  const expanded = new Set<ProductionStatusType>();
+
+  for (const statusType of statusTypes) {
+    switch (statusType) {
+      case "uploaded":
+        // Uploaded means all previous steps are complete
+        expanded.add("filmed");
+        expanded.add("edited");
+        expanded.add("cover_ready");
+        expanded.add("copy_ready");
+        expanded.add("uploaded");
+        break;
+      case "edited":
+        // Edited requires filming first
+        expanded.add("filmed");
+        expanded.add("edited");
+        break;
+      case "filmed":
+        // Filmed only marks filming
+        expanded.add("filmed");
+        break;
+      case "cover_ready":
+        // Cover ready is independent
+        expanded.add("cover_ready");
+        break;
+      case "copy_ready":
+        // Copy ready is independent
+        expanded.add("copy_ready");
+        break;
+    }
+  }
+
+  return Array.from(expanded);
+};
+
 export const detectStatusUpdate = (message: string): StatusUpdateRequest | null => {
   const trimmedMessage = message.trim();
   const statusMatches = findAllProductionStatusMatches(trimmedMessage);
@@ -265,13 +312,14 @@ export const detectStatusUpdate = (message: string): StatusUpdateRequest | null 
   uniqueStatusMatches.sort((a, b) => a.firstTokenStart - b.firstTokenStart);
 
   const statusTypes = uniqueStatusMatches.map((match) => match.statusType);
+  const expandedStatusTypes = expandStatusTypesWithDependencies(statusTypes);
   const lastMatch = uniqueStatusMatches.reduce((best, match) => {
     return match.lastTokenEnd > best.lastTokenEnd ? match : best;
   }, uniqueStatusMatches[0]);
 
   return {
     statusType: statusTypes[0],
-    statusTypes,
+    statusTypes: expandedStatusTypes,
     contentName: extractContentName(trimmedMessage, lastMatch.lastTokenEnd),
     rawMessage: message,
   };
