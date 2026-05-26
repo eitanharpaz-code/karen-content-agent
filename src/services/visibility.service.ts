@@ -14,29 +14,95 @@ export type VisibilityIntent =
   | "stuck_workflow"
   | null;
 
+/**
+ * Normalize a task-status target for matching.
+ * Cleans up formatting issues that prevent matching against stored task names.
+ * 
+ * Removes:
+ * - Line breaks (replaced with spaces)
+ * - Surrounding quotes (", ', ״, ׳)
+ * - Copied idea prefixes from the beginning
+ * - Generic wrapper words from the beginning
+ */
+const normalizeTaskStatusTargetForMatching = (text: string): string => {
+  if (!text) return "";
+
+  let normalized = text;
+
+  // 1. Replace line breaks with spaces
+  normalized = normalized.replace(/[\n\r]+/g, " ");
+
+  // 2. Remove surrounding quotes: ", ', ״, ׳
+  normalized = normalized.replace(/^["'״׳\s]+/, "").replace(/["'״׳\s]+$/, "").trim();
+
+  // 3. Remove copied idea prefixes from the beginning
+  const ideaPrefixes = [
+    "רעיון חדש:",
+    "רעיון חדש-",
+    "רעיון חדש",
+    "יש לי רעיון חדש",
+    "יש לי רעיון",
+    "רעיון לסרטון",
+  ];
+
+  for (const prefix of ideaPrefixes) {
+    if (normalized.toLowerCase().startsWith(prefix.toLowerCase())) {
+      normalized = normalized.substring(prefix.length).trim();
+      break;
+    }
+  }
+
+  // 4. Remove generic wrapper words from the beginning
+  const wrapperPrefixes = [
+    "הסרטון על",
+    "סרטון על",
+    "התוכן על",
+    "הרעיון על",
+  ];
+
+  for (const prefix of wrapperPrefixes) {
+    if (normalized.toLowerCase().startsWith(prefix.toLowerCase())) {
+      normalized = normalized.substring(prefix.length).trim();
+      break;
+    }
+  }
+
+  return normalized.trim();
+};
+
 export const extractStatusQueryTarget = (text: string): string | null => {
   const rawText = text.trim();
   const patterns = [
-    /^(?:מה הסטטוס של)\s+(.+?)(?:\?|$)$/i,
-    /^(?:מה מצב(?: הסרטון)? על)\s+(.+?)(?:\?|$)$/i,
-    /^(?:איפה אני עומדת עם)\s+(.+?)(?:\?|$)$/i,
-    /^(?:מה מצב)\s+(.+?)(?:\?|$)$/i,
-    /^(?:מה קורה עם)\s+(.+?)(?:\?|$)$/i,
+    // "מה הסטטוס של X" - requires multi-word for exact match (single-word goes to category_search)
+    { regex: /^(?:מה הסטטוס של)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
+    // "מה מצב [הסרטון] על X"
+    { regex: /^(?:מה מצב(?:\s+הסרטון)?\s+על)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
+    // "איפה אני עומדת עם X"
+    { regex: /^(?:איפה אני עומדת עם)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
+    // "מה מצב X"
+    { regex: /^(?:מה מצב)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
+    // "מה קורה עם X" or "מה עם X" - requires multi-word (single-word goes to category/question-like)
+    { regex: /^(?:מה\s+(?:קורה\s+)?עם)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
   ];
 
-  for (let index = 0; index < patterns.length; index += 1) {
-    const pattern = patterns[index];
-    const match = rawText.match(pattern);
+  for (const { regex, multiWordOnly } of patterns) {
+    const match = rawText.match(regex);
     if (match && match[1]) {
-      const target = match[1].trim().replace(/[?!]+$/, "").trim();
+      let target = match[1].trim().replace(/[?!]+$/, "").trim();
       if (!target) {
         continue;
       }
+      
+      // Normalize the target to handle formatting issues (quotes, line breaks, prefixes, etc.)
+      target = normalizeTaskStatusTargetForMatching(target);
+      if (!target) {
+        continue;
+      }
+      
       const tokenCount = target.split(/\s+/).filter(Boolean).length;
 
-      // Preserve category-search behavior for short "מה הסטטוס של X" queries
-      // when the target is a single-word category name.
-      if (index === 0 && tokenCount < 2) {
+      // Skip single-word targets if the pattern requires multi-word
+      if (multiWordOnly && tokenCount < 2) {
         continue;
       }
 

@@ -89,9 +89,11 @@ export const appendRowToSheet = async (
   console.log(`[Sheets] Row payload: ${JSON.stringify(values)}`);
   
   try {
+    // Use sheet name only (without cell reference) to ensure append works correctly across all columns
+    // This prevents the append from updating a partially-filled last row
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${sheetName}!A:A`,
+      range: sheetName,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [values],
@@ -421,6 +423,19 @@ export type ProductionTaskSearchResult =
   | { ambiguous: true; matches: ProductionTaskMatch[] }
   | null;
 
+/**
+ * Normalize punctuation for matching purposes only.
+ * Removes punctuation that might differ between user input and stored task names.
+ * For matching only—does not modify stored values.
+ */
+const removePunctuationForMatching = (text: string): string => {
+  return text
+    .replace(/[,.:–\-]/g, "") // comma, period, colon, dashes (both regular and en-dash)
+    .replace(/[""\"''״׳]/g, "") // English and Hebrew quotes
+    .replace(/\s+/g, " ") // normalize repeated whitespace
+    .trim();
+};
+
 // Sprint 7: Find production task by content name with Hebrew normalization
 // Performs deterministic matching using normalized Hebrew text
 export const findProductionTaskByName = async (
@@ -438,11 +453,13 @@ export const findProductionTaskByName = async (
 
     const rows = response.data.values || [];
     
-    // Normalize the incoming search term
+    // Normalize the incoming search term with both Hebrew and punctuation normalization
     const normalizedSearchName = normalizeHebrewText(contentName);
+    const punctuationNormalizedSearch = removePunctuationForMatching(normalizedSearchName);
     
     console.log(`[Sprint 7] Searching for content: "${contentName}"`);
     console.log(`[Sprint 7] Normalized search term: "${normalizedSearchName}"`);
+    console.log(`[Sprint 7] Punctuation-normalized search: "${punctuationNormalizedSearch}"`);
     
     const exactMatches: Array<{ rowIndex: number; row: string[] }> = [];
     const includesMatches: Array<{ rowIndex: number; row: string[] }> = [];
@@ -454,17 +471,34 @@ export const findProductionTaskByName = async (
       if (row && row[1]) {
         const sheetContentName = row[1].toString();
         const normalizedTaskName = normalizeHebrewText(sheetContentName);
+        const punctuationNormalizedTask = removePunctuationForMatching(normalizedTaskName);
         
         console.log(`[Sprint 7] Array index ${i} → Google Sheets row ${sheetRowNumber}: "${sheetContentName}" → normalized: "${normalizedTaskName}"`);
 
+        // Try exact normalized match
         if (normalizedTaskName === normalizedSearchName) {
           console.log(`[Sprint 7] ✓ Exact normalized match at row ${sheetRowNumber}`);
           exactMatches.push({ rowIndex: sheetRowNumber, row });
           continue;
         }
 
+        // Try punctuation-normalized exact match
+        if (punctuationNormalizedTask === punctuationNormalizedSearch) {
+          console.log(`[Sprint 7] ✓ Exact punctuation-normalized match at row ${sheetRowNumber}`);
+          exactMatches.push({ rowIndex: sheetRowNumber, row });
+          continue;
+        }
+
+        // Try includes match with normalized text
         if (normalizedTaskName.includes(normalizedSearchName) || normalizedSearchName.includes(normalizedTaskName)) {
           console.log(`[Sprint 7] ✓ Includes match at row ${sheetRowNumber}`);
+          includesMatches.push({ rowIndex: sheetRowNumber, row });
+          continue;
+        }
+
+        // Try includes match with punctuation-normalized text
+        if (punctuationNormalizedTask.includes(punctuationNormalizedSearch) || punctuationNormalizedSearch.includes(punctuationNormalizedTask)) {
+          console.log(`[Sprint 7] ✓ Includes punctuation-normalized match at row ${sheetRowNumber}`);
           includesMatches.push({ rowIndex: sheetRowNumber, row });
           continue;
         }

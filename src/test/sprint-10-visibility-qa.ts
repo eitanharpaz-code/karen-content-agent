@@ -34,6 +34,7 @@ type VisibilityTestCase = {
   expectedIntent: VisibilityIntent;
   shouldReadFromSheets: boolean;
   isQuestionLike?: boolean;
+  allowAmbiguous?: boolean;
 };
 
 const TEST_CASES: VisibilityTestCase[] = [
@@ -162,6 +163,43 @@ const TEST_CASES: VisibilityTestCase[] = [
     shouldReadFromSheets: false,
     isQuestionLike: true,
   },
+  {
+    description: "Task-status: target without comma (punctuation normalization)",
+    query: "מה הסטטוס של סיפור ההיכרות מהצד של החתן",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Task-status: target with comma (baseline)",
+    query: "מה הסטטוס של סיפור ההיכרות, מהצד של החתן",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Task-status: target with surrounding quotes",
+    query: 'מה הסטטוס של "סיפור ההיכרות, מהצד של החתן"',
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Task-status: target with line break and idea prefix",
+    query: "מה הסטטוס של רעיון חדש-\nסיפור ההיכרות, מהצד של החתן",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Task-status: target with wrapper word (הסרטון על)",
+    query: "מה מצב הסרטון על סיפור ההיכרות מהצד של החתן",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+  },
+  {
+    description: "Task-status: partial target match (מה עם pattern)",
+    query: "מה עם סיפור ההיכרות",
+    expectedIntent: "task_status",
+    shouldReadFromSheets: true,
+    allowAmbiguous: true,
+  },
 ];
 
 const runVisibilityTest = async (testCase: VisibilityTestCase) => {
@@ -211,7 +249,11 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
           if (!matchResult) {
             console.log(`📊 No production task matched target: ${target}`);
           } else if ("ambiguous" in matchResult && matchResult.ambiguous) {
-            console.log(`📊 Ambiguous production task match for target: ${target}`);
+            if (testCase.allowAmbiguous) {
+              console.log(`📊 Ambiguous production task match found (expected for this test): ${target}`);
+            } else {
+              console.log(`📊 Ambiguous production task match for target: ${target}`);
+            }
           } else {
             const exactMatch = matchResult as ProductionTaskMatch;
             const response = formatTaskStatusResponse(exactMatch);
