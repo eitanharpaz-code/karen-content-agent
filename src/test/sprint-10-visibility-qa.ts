@@ -200,6 +200,12 @@ const TEST_CASES: VisibilityTestCase[] = [
     shouldReadFromSheets: true,
     allowAmbiguous: true,
   },
+  {
+    description: "REGRESSION TEST: Visibility query must not fall through to production update - מה ערכתי ועוד לא עלה",
+    query: "מה ערכתי ועוד לא עלה",
+    expectedIntent: "edited_not_uploaded",
+    shouldReadFromSheets: true,
+  },
 ];
 
 const runVisibilityTest = async (testCase: VisibilityTestCase) => {

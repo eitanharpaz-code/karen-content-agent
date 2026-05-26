@@ -253,112 +253,114 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     const visibilityIntent = detectVisibilityIntent(incomingText);
     const questionLikeMessage = isQuestionLikeMessage(incomingText);
 
-    if (questionLikeMessage) {
-      if (visibilityIntent) {
-        try {
-          const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-          if (!spreadsheetId) {
-            throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
-          }
+    // Sprint 10: Core rule - ANY visibilityIntent is read-only and must be handled before production updates
+    if (visibilityIntent) {
+      try {
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+        if (!spreadsheetId) {
+          throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
+        }
 
-          console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
+        console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
 
-          if (visibilityIntent === "task_status") {
-            const target = extractStatusQueryTarget(incomingText);
-            if (!target) {
-              const replyText = "לא הבנתי את שם התוכן. נסי שנית.";
-              await safeSendWhatsAppMessage(sender, replyText);
-              return res.status(200).json({ status: "visibility_query_no_target", sender });
-            }
-
-            const matchResult = await findProductionTaskByName(spreadsheetId, target);
-            if (!matchResult) {
-              const replyText = "לא מצאתי תוכן מתאים לשם הזה. נסי שנית עם שם ברור יותר.";
-              await safeSendWhatsAppMessage(sender, replyText);
-              return res.status(200).json({ status: "visibility_query_no_match", sender, target });
-            }
-
-            if ("ambiguous" in matchResult && matchResult.ambiguous) {
-              const replyText = "מצאתי כמה תכנים דומים, איזה מהם התכוונת? נסי שנית עם שם ברור יותר.";
-              await safeSendWhatsAppMessage(sender, replyText);
-              return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
-            }
-
-            const exactMatch = matchResult as ProductionTaskMatch;
-            const replyText = formatTaskStatusResponse(exactMatch);
+        if (visibilityIntent === "task_status") {
+          const target = extractStatusQueryTarget(incomingText);
+          if (!target) {
+            const replyText = "לא הבנתי את שם התוכן. נסי שנית.";
             await safeSendWhatsAppMessage(sender, replyText);
-
-            console.log(`[Sprint 10] ✅ Task status response sent for: ${exactMatch.row[1]}`);
-
-            return res.status(200).json({
-              status: "visibility_task_status",
-              sender,
-              intent: visibilityIntent,
-              target,
-              taskName: exactMatch.row[1],
-            });
+            return res.status(200).json({ status: "visibility_query_no_target", sender });
           }
 
-          let tasks: any[] = [];
-          switch (visibilityIntent) {
-            case "edited_not_uploaded":
-              tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
-              break;
-            case "missing_edit":
-              tasks = await getTasksMissingEdit(spreadsheetId);
-              break;
-            case "missing_cover":
-              tasks = await getTasksMissingCover(spreadsheetId);
-              break;
-            case "missing_copy":
-              tasks = await getTasksMissingCopy(spreadsheetId);
-              break;
-            case "not_uploaded":
-              tasks = await getTasksNotUploaded(spreadsheetId);
-              break;
-            case "stuck_workflow":
-              tasks = await getStuckTasks(spreadsheetId);
-              break;
-            case "category_search": {
-              const keyword = extractSearchKeyword(incomingText);
-              if (!keyword) {
-                tasks = [];
-              } else {
-                tasks = await searchTasksByKeyword(spreadsheetId, keyword);
-              }
-              break;
-            }
-            default:
-              tasks = [];
+          const matchResult = await findProductionTaskByName(spreadsheetId, target);
+          if (!matchResult) {
+            const replyText = "לא מצאתי תוכן מתאים לשם הזה. נסי שנית עם שם ברור יותר.";
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query_no_match", sender, target });
           }
 
-          const replyText = formatVisibilityResponse(tasks, visibilityIntent);
+          if ("ambiguous" in matchResult && matchResult.ambiguous) {
+            const replyText = "מצאתי כמה תכנים דומים, איזה מהם התכוונת? נסי שנית עם שם ברור יותר.";
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
+          }
+
+          const exactMatch = matchResult as ProductionTaskMatch;
+          const replyText = formatTaskStatusResponse(exactMatch);
           await safeSendWhatsAppMessage(sender, replyText);
 
-          console.log(`[Sprint 10] ✅ Visibility query response sent`);
+          console.log(`[Sprint 10] ✅ Task status response sent for: ${exactMatch.row[1]}`);
 
           return res.status(200).json({
-            status: "visibility_query",
+            status: "visibility_task_status",
             sender,
             intent: visibilityIntent,
-            taskCount: tasks.length,
-          });
-        } catch (visibilityError) {
-          const errorMessage =
-            visibilityError instanceof Error ? visibilityError.message : "Unknown error";
-          console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
-
-          const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
-          await safeSendWhatsAppMessage(sender, replyText);
-
-          return res.status(500).json({
-            status: "visibility_query_error",
-            sender,
-            error: errorMessage,
+            target,
+            taskName: exactMatch.row[1],
           });
         }
-      }
 
+        let tasks: any[] = [];
+        switch (visibilityIntent) {
+          case "edited_not_uploaded":
+            tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
+            break;
+          case "missing_edit":
+            tasks = await getTasksMissingEdit(spreadsheetId);
+            break;
+          case "missing_cover":
+            tasks = await getTasksMissingCover(spreadsheetId);
+            break;
+          case "missing_copy":
+            tasks = await getTasksMissingCopy(spreadsheetId);
+            break;
+          case "not_uploaded":
+            tasks = await getTasksNotUploaded(spreadsheetId);
+            break;
+          case "stuck_workflow":
+            tasks = await getStuckTasks(spreadsheetId);
+            break;
+          case "category_search": {
+            const keyword = extractSearchKeyword(incomingText);
+            if (!keyword) {
+              tasks = [];
+            } else {
+              tasks = await searchTasksByKeyword(spreadsheetId, keyword);
+            }
+            break;
+          }
+          default:
+            tasks = [];
+        }
+
+        const replyText = formatVisibilityResponse(tasks, visibilityIntent);
+        await safeSendWhatsAppMessage(sender, replyText);
+
+        console.log(`[Sprint 10] ✅ Visibility query response sent`);
+
+        return res.status(200).json({
+          status: "visibility_query",
+          sender,
+          intent: visibilityIntent,
+          taskCount: tasks.length,
+        });
+      } catch (visibilityError) {
+        const errorMessage =
+          visibilityError instanceof Error ? visibilityError.message : "Unknown error";
+        console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
+
+        const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
+        await safeSendWhatsAppMessage(sender, replyText);
+
+        return res.status(500).json({
+          status: "visibility_query_error",
+          sender,
+          error: errorMessage,
+        });
+      }
+    }
+
+    // Handle unsupported question-like messages (after visibilityIntent is ruled out)
+    if (questionLikeMessage) {
       const clarificationPrompt = generateClarificationPrompt(!!getPendingConfirmation(sender));
       await safeSendWhatsAppMessage(sender, clarificationPrompt);
       return res.status(200).json({ status: "question_clarification", sender });
