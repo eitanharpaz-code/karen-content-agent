@@ -100,7 +100,7 @@ export const isEditRequest = (text: string): boolean => {
   const editIndicators = [
     "תשנה", "שנה", "תשני", "שני", "תעדכן", "עדכן", "תעדכני", "עדכני",
     "תקרא", "קרא", "הטון", "העדיפות",
-    "הקטגוריה", "הסיכום", "זה לא", "לא נכון", "טעות",
+    "הקטגוריה", "הסיכום", "סיכום", "בסיכום", "זה לא", "לא נכון", "טעות",
     "אני רוצה", "בא לי", "עדיף", "צריך", "יהיה", "שיהיה",
     "לשנות", "לעדכן", "לקרוא", "change", "update", "edit"
   ];
@@ -120,68 +120,35 @@ export const parseEditRequest = (text: string): { field: string; value: string }
     return null;
   };
 
-  // Priority edits - more natural patterns
-  if (normalized.includes("עדיפות") || normalized.includes("priority") ||
-      normalized.includes("רמת עדיפות")) {
-    const priorityValue = findHebrewValue(normalized, PRIORITY_HEBREW_VALUES);
-    if (priorityValue) {
-      return { field: "priority", value: priorityValue };
-    }
-  }
+  // === EXPLICIT FIELD COMMANDS - checked first, return immediately ===
 
-  // Tone edits - more natural patterns
-  if (normalized.includes("טון") || normalized.includes("tone") ||
-      normalized.includes("רגשי") || normalized.includes("מצחיק") ||
-      normalized.includes("הומוריסטי") || normalized.includes("השראתי") ||
-      normalized.includes("הסברתי") || normalized.includes("אותנטי") ||
-      normalized.includes("טרנדי") || normalized.includes("דרמטי")) {
-    // Handle common natural phrases first
-    if (normalized.includes("תעשי את זה יותר רגשי") || normalized.includes("יותר רגשי")) {
-      return { field: "tone", value: "רגשי" };
-    }
-    if (normalized.includes("יותר מצחיק") || normalized.includes("יותר מצחיק")) {
-      return { field: "tone", value: "מצחיק" };
-    }
-    if (normalized.includes("פחות דרמטי")) {
-      return { field: "tone", value: "רגשי" };
-    }
-
-    const toneValue = findHebrewValue(normalized, TONE_HEBREW_VALUES);
-    if (toneValue) {
-      return { field: "tone", value: toneValue };
-    }
-  }
-
-  // Category edits - more natural patterns
-  if (normalized.includes("קטגוריה") || normalized.includes("category") ||
-      normalized.includes("קטגוריית")) {
-    // Explicit category command parsing
-    const categoryPatterns = [
-      /(?:תשני|שני|תעדכני|עדכני|תשנה|שנה|תעדכן|עדכן)?\s*(?:את\s+)?(?:ה\s*)?(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
-      /(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
+  // 1. Explicit summary edits - check and return immediately without re-parsing value
+  if (normalized.includes("סיכום") || normalized.includes("summary") ||
+      normalized.includes("תיאור")) {
+    // Extract everything after summary indicators - explicit patterns only
+    const summaryPatterns = [
+      /תשנה את הסיכום ל[:\s]*(.+)/i,
+      /שנה את הסיכום ל[:\s]*(.+)/i,
+      /תעדכן את הסיכום ל[:\s]*(.+)/i,
+      /הסיכום צריך להיות[:\s]*(.+)/i,
+      /בסיכום תכתוב[:\s]*(.+)/i,
+      /שנה סיכום ל[:\s]*(.+)/i,
+      /(?:סיכום|summary|תיאור)[:\s]*(.+)/i,
     ];
 
-    for (const pattern of categoryPatterns) {
+    for (const pattern of summaryPatterns) {
       const match = text.match(pattern);
       if (match) {
-        let value = match[1].trim();
-        value = value.replace(/^[\s\-–—]+/, "").replace(/[.,!?;:]+$/, "").trim();
-        if (value) {
-          return { field: "category", value };
-        }
+        // Return immediately - do NOT inspect value for other fields
+        return { field: "summary", value: match[1].trim() };
       }
-    }
-
-    const categoryValue = findHebrewValue(normalized, CATEGORY_HEBREW_VALUES);
-    if (categoryValue) {
-      return { field: "category", value: categoryValue };
     }
   }
 
-  // Short name edits - improved patterns
+  // 2. Explicit short name edits - check and return immediately
   if (normalized.includes("שם") || normalized.includes("קרא") || normalized.includes("name") ||
       normalized.includes("תקרא") || normalized.includes("שנה שם")) {
-    // More flexible name extraction patterns
+    // More flexible name extraction patterns - explicit patterns only
     const namePatterns = [
       /תקרא לזה ["']([^"']+)["']/,
       /שם ["']([^"']+)["']/,
@@ -195,6 +162,7 @@ export const parseEditRequest = (text: string): { field: string; value: string }
     for (const pattern of namePatterns) {
       const match = text.match(pattern);
       if (match) {
+        // Return immediately - do NOT inspect value for other fields
         return { field: "shortName", value: match[1] };
       }
     }
@@ -211,27 +179,102 @@ export const parseEditRequest = (text: string): { field: string; value: string }
           const extractedName = nameMatch[1].trim();
           // Take up to 5 words for the name
           const words = nameMatch[1].split(/\s+/).slice(0, 5).join(' ');
+          // Return immediately - do NOT inspect value for other fields
           return { field: "shortName", value: words.trim() };
         }
       }
     }
   }
 
-  // Summary edits
-  if (normalized.includes("סיכום") || normalized.includes("summary") ||
-      normalized.includes("תיאור")) {
-    // Extract everything after summary indicators
-    const summaryPatterns = [
-      /(?:סיכום|summary|תיאור)[:\s]*(.+)/i,
-      /שנה את הסיכום ל[:\s]*(.+)/i,
-      /הסיכום צריך להיות[:\s]*(.+)/i,
+  // 3. Explicit category edits - check and return immediately
+  if (normalized.includes("קטגוריה") || normalized.includes("category") ||
+      normalized.includes("קטגוריית")) {
+    // Explicit category command parsing
+    const categoryPatterns = [
+      /(?:תשני|שני|תעדכני|עדכני|תשנה|שנה|תעדכן|עדכן)?\s*(?:את\s+)?(?:ה\s*)?(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
+      /(?:קטגוריה|קטגוריית)\s*(?:ל|לל|ל־|על|של)?\s*(.+)/i,
     ];
 
-    for (const pattern of summaryPatterns) {
+    for (const pattern of categoryPatterns) {
       const match = text.match(pattern);
       if (match) {
-        return { field: "summary", value: match[1].trim() };
+        let value = match[1].trim();
+        value = value.replace(/^[\s\-–—]+/, "").replace(/[.,!?;:]+$/, "").trim();
+        if (value) {
+          // Return immediately - do NOT inspect value for other fields
+          return { field: "category", value };
+        }
       }
+    }
+
+    const categoryValue = findHebrewValue(normalized, CATEGORY_HEBREW_VALUES);
+    if (categoryValue) {
+      // Return immediately - do NOT inspect value for other fields
+      return { field: "category", value: categoryValue };
+    }
+  }
+
+  // 4. Explicit tone edits - check and return immediately
+  if (normalized.includes("טון") || normalized.includes("tone")) {
+    // Only check for explicit tone commands - look for "תשנה את הטון" or similar
+    const explicitTonePatterns = [
+      /תשנה את הטון ל[:\s]*(.+)/i,
+      /שנה את הטון ל[:\s]*(.+)/i,
+      /תעדכן את הטון ל[:\s]*(.+)/i,
+      /הטון צריך להיות[:\s]*(.+)/i,
+      /בטון[:\s]*(.+)/i,
+      /טון[:\s]*(.+)/i,
+    ];
+
+    for (const pattern of explicitTonePatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const toneValue = findHebrewValue(match[1], TONE_HEBREW_VALUES);
+        if (toneValue) {
+          // Return immediately - do NOT inspect other parts of message
+          return { field: "tone", value: toneValue };
+        }
+      }
+    }
+
+    // Handle common natural phrases for tone
+    if (normalized.includes("תעשי את זה יותר רגשי") || normalized.includes("יותר רגשי")) {
+      return { field: "tone", value: "רגשי" };
+    }
+    if (normalized.includes("יותר מצחיק")) {
+      return { field: "tone", value: "מצחיק" };
+    }
+    if (normalized.includes("פחות דרמטי")) {
+      return { field: "tone", value: "רגשי" };
+    }
+
+    const toneValue = findHebrewValue(normalized, TONE_HEBREW_VALUES);
+    if (toneValue) {
+      return { field: "tone", value: toneValue };
+    }
+  }
+
+  // 5. Explicit priority edits - check and return immediately
+  if (normalized.includes("עדיפות") || normalized.includes("priority") ||
+      normalized.includes("רמת עדיפות")) {
+    const priorityValue = findHebrewValue(normalized, PRIORITY_HEBREW_VALUES);
+    if (priorityValue) {
+      // Return immediately - do NOT inspect value for other fields
+      return { field: "priority", value: priorityValue };
+    }
+  }
+
+  // === GENERIC/FUZZY INFERENCE - only used if explicit patterns fail ===
+  // (kept for backwards compatibility with unsupported phrases)
+
+  // Generic tone inference (only if no explicit field matched)
+  if (normalized.includes("רגשי") || normalized.includes("מצחיק") ||
+      normalized.includes("הומוריסטי") || normalized.includes("השראתי") ||
+      normalized.includes("הסברתי") || normalized.includes("אותנטי") ||
+      normalized.includes("טרנדי") || normalized.includes("דרמטי")) {
+    const toneValue = findHebrewValue(normalized, TONE_HEBREW_VALUES);
+    if (toneValue) {
+      return { field: "tone", value: toneValue };
     }
   }
 
