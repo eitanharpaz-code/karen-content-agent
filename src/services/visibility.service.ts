@@ -1,4 +1,4 @@
-import type { ProductionTaskRow } from "./sheets.service";
+import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
 
 // Sprint 10: Visibility Intent Detection
 // Deterministic routing for natural Hebrew visibility queries
@@ -12,6 +12,8 @@ export type VisibilityIntent =
   | "not_uploaded"
   | "category_search"
   | "stuck_workflow"
+  | "priority_filter"
+  | "whats_important"
   | null;
 
 /**
@@ -250,6 +252,33 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     return "category_search";
   }
 
+  // --- What's Important Now Intent ---
+  const whatsImportantPhrases = [
+    "מה הכי חשוב עכשיו",
+    "מה דחוף",
+    "מה הכי דחוף",
+    "מה אני צריכה לעשות",
+    "מה הצעד הבא",
+    "מה חשוב עכשיו",
+    "מה קודם",
+  ];
+  if (whatsImportantPhrases.some((p) => rawText.includes(p))) {
+    return "whats_important";
+  }
+
+  // --- Priority Filter Intent ---
+  const priorityFilterPhrases = [
+    "מה בעדיפות גבוה",
+    "מה בעדיפות בינוני",
+    "מה בעדיפות נמוך",
+    "עדיפות גבוה",
+    "עדיפות בינוני",
+    "עדיפות נמוך",
+  ];
+  if (priorityFilterPhrases.some((p) => rawText.includes(p))) {
+    return "priority_filter";
+  }
+
   return null;
 };
 
@@ -313,6 +342,54 @@ export const extractSearchKeyword = (text: string): string | null => {
 };
 
 // Format a short visibility response
+export const extractPriorityFromQuery = (text: string): string | null => {
+  const raw = text.toLowerCase();
+  if (raw.includes("גבוה")) return "גבוה";
+  if (raw.includes("בינוני")) return "בינוני";
+  if (raw.includes("נמוך")) return "נמוך";
+  return null;
+};
+
+export const formatWhatsImportantResponse = (
+  highPriorityNotUploaded: ProductionTaskRowExtended[],
+  stuckTasks: ProductionTaskRowExtended[],
+  trendTasks: ProductionTaskRowExtended[]
+): string => {
+  const lines: string[] = [];
+
+  if (highPriorityNotUploaded.length > 0) {
+    lines.push("עדיפות גבוה שלא עלה:");
+    highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${t.taskName}`));
+  }
+
+  if (stuckTasks.length > 0) {
+    lines.push("\nתקוע - צולם ולא נערך:");
+    stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${t.taskName}`));
+  }
+
+  if (lines.length === 0) {
+    lines.push("הכל נראה בסדר כרגע.");
+  }
+
+  if (trendTasks.length > 0) {
+    lines.push(`\nאגב, יש ${trendTasks.length} טרנדים שעדיין לא עלו. רוצה לראות אותם?`);
+  }
+
+  return lines.join("\n");
+};
+
+export const formatPriorityFilterResponse = (
+  tasks: ProductionTaskRowExtended[],
+  priority: string
+): string => {
+  const filtered = tasks.filter((t) => t.priority === priority && !t.isTrend);
+  if (filtered.length === 0) {
+    return `אין תכנים בעדיפות ${priority} כרגע.`;
+  }
+  const taskNames = filtered.slice(0, 5).map((t) => `- ${t.taskName}`).join("\n");
+  const suffix = filtered.length > 5 ? `\n...ו${filtered.length - 5} עוד` : "";
+  return `תכנים בעדיפות ${priority}:\n${taskNames}${suffix}`;
+};
 export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: VisibilityIntent): string => {
   if (tasks.length === 0) {
     switch (intent) {

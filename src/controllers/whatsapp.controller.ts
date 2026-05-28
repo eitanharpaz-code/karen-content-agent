@@ -33,6 +33,7 @@ import {
   getTasksEditedAndNotUploaded,
   getStuckTasks,
   searchTasksByKeyword,
+  getAllProductionTasksWithPriority,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -48,6 +49,9 @@ import {
   formatVisibilityResponse,
   isLikelyVisibilityQuery,
   isQuestionLikeMessage,
+  extractPriorityFromQuery,
+  formatWhatsImportantResponse,
+  formatPriorityFilterResponse,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -359,6 +363,26 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
               tasks = await searchTasksByKeyword(spreadsheetId, keyword);
             }
             break;
+          }
+          case "whats_important": {
+            const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
+            const highNotUploaded = allTasks.filter((t) => t.priority === "גבוה" && t.uploaded !== "כן" && !t.isTrend);
+            const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
+            const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
+            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends);
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
+          }
+          case "priority_filter": {
+            const priority = extractPriorityFromQuery(incomingText);
+            if (!priority) {
+              await safeSendWhatsAppMessage(sender, "לא הבנתי איזו עדיפות. נסי: גבוה, בינוני, או נמוך.");
+              return res.status(200).json({ status: "visibility_query", sender });
+            }
+            const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
+            const replyText = formatPriorityFilterResponse(allTasks, priority);
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           default:
             tasks = [];

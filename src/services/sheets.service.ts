@@ -729,7 +729,55 @@ export const getStuckTasks = async (spreadsheetId: string): Promise<ProductionTa
     return false;
   });
 };
+// Get all content ideas from בנק רעיונות with priority
+export const getContentIdeasWithPriority = async (spreadsheetId: string): Promise<Map<string, { priority: string; category: string }>> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
 
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:H`,
+  });
+
+  const values = response.data.values || [];
+  const map = new Map<string, { priority: string; category: string }>();
+
+  values.slice(1).forEach((row) => {
+    const contentId = row[0] || "";
+    const category = row[2] || "";
+    const priority = row[7] || "בינוני";
+    if (contentId) {
+      map.set(contentId, { priority, category });
+    }
+  });
+
+  return map;
+};
+
+// Extended task row with priority and category from בנק רעיונות
+export type ProductionTaskRowExtended = ProductionTaskRow & {
+  priority: string;
+  category: string;
+  isTrend: boolean;
+};
+
+// Get all production tasks with priority from בנק רעיונות
+export const getAllProductionTasksWithPriority = async (spreadsheetId: string): Promise<ProductionTaskRowExtended[]> => {
+  const [tasks, ideasMap] = await Promise.all([
+    getAllProductionTasks(spreadsheetId),
+    getContentIdeasWithPriority(spreadsheetId),
+  ]);
+
+  return tasks.map((task) => {
+    const idea = ideasMap.get(task.contentId);
+    return {
+      ...task,
+      priority: idea?.priority || "בינוני",
+      category: idea?.category || "",
+      isTrend: task.contentId.startsWith("TRD-"),
+    };
+  });
+};
 // Search tasks by keyword or category
 export const searchTasksByKeyword = async (
   spreadsheetId: string,
