@@ -21,9 +21,7 @@ export const askClaude = async (message: string): Promise<string> => {
   const systemPrompt = await loadSystemPrompt();
   const client = new Anthropic({ apiKey });
 
-  const prompt = `${systemPrompt}\n
-User: ${message}\n
-Assistant:`;
+
 
   const model = process.env.ANTHROPIC_MODEL || "claude-opus-4-7";
 

@@ -194,14 +194,14 @@ export const hasEditConfidence = (text: string): boolean => {
  */
 export const generateClarificationPrompt = (hasActiveDraft: boolean): string => {
   if (hasActiveDraft) {
-    return `לא בטוחה שהבנתי 🙂
+    return `לא בטוחה שהבנתי 
 
 את רוצה:
 • לערוך את הרעיון הקיים?
 • להתחיל רעיון חדש?
 • או משהו אחר?`;
   } else {
-    return `לא בטוחה שהבנתי 🙂
+    return `לא בטוחה שהבנתי
 
 את רוצה:
 • להשתיל רעיון חדש?
