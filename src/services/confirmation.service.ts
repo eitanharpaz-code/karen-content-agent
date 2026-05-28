@@ -94,6 +94,30 @@ export const getNewIdeaText = (text: string): string | null => {
   const match = text.match(/רעיון חדש\s*:\s*(.+)/i);
   return match ? match[1].trim() : null;
 };
+export const isTrendCommand = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  const trendPrefixes = [
+    "טרנד:",
+    "טרנד -",
+    "טרנד–",
+    "יש טרנד חדש",
+    "יש טרנד",
+    "טרנד חדש",
+    "טרנד ",
+  ];
+  return trendPrefixes.some((prefix) => normalized.startsWith(prefix));
+};
+
+export const getTrendText = (text: string): string | null => {
+  const cleaned = text
+    .trim()
+    .replace(/^יש טרנד חדש\s*[,:\-–]?\s*/i, "")
+    .replace(/^יש טרנד\s*[,:\-–]?\s*/i, "")
+    .replace(/^טרנד חדש\s*[,:\-–]?\s*/i, "")
+    .replace(/^טרנד\s*[,:\-–]?\s*/i, "")
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+};
 
 export const isEditRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();

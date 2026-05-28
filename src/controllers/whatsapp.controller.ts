@@ -15,6 +15,8 @@ import {
   isResetRequest,
   isNewIdeaCommand,
   getNewIdeaText,
+  isTrendCommand,
+  getTrendText,
 } from "../services/confirmation.service";
 import {
   getExistingContentIds,
@@ -77,6 +79,36 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   try {
     // Sprint 9: New idea command should clear existing draft and start a fresh one
+    // Fast Lane: Trend content - quick save without full draft flow
+    if (isTrendCommand(incomingText)) {
+      const trendText = getTrendText(incomingText);
+      clearPendingConfirmation(sender);
+
+      if (!trendText) {
+        const replyText = "לא הבנתי את הטרנד. נסי שוב, למשל: טרנד: שם הסרטון";
+        await safeSendWhatsAppMessage(sender, replyText);
+        return res.status(200).json({ status: "trend_missing_text", sender });
+      }
+
+      const trendDraft = {
+        shortName: trendText,
+        category: "טרנד",
+        tone: "טרנדי" as const,
+        priority: "גבוה" as const,
+        summary: trendText,
+        originalUserInput: trendText,
+      };
+      storePendingConfirmation(sender, trendDraft);
+
+      const replyText = `טרנד נרשם.
+שם: ${trendText}
+קטגוריה: טרנד
+עדיפות: גבוה
+
+לשמור?`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "trend_started", sender, draft: trendDraft });
+    }
     if (isNewIdeaCommand(incomingText)) {
       const newIdeaText = getNewIdeaText(incomingText);
       clearPendingConfirmation(sender);
