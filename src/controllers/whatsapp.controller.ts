@@ -315,8 +315,8 @@ const replyText = `מעולה, הטרנד נשמר.
           }
 
           if ("ambiguous" in matchResult && matchResult.ambiguous) {
-          const matchList = matchResult.matches.map((m: any) => `- ${m.row[1]} (${m.row[0]})`).join("\n");
-          const replyText = `מצאתי כמה תכנים דומים:\n${matchList}\n\nעל איזה מהם התכוונת? תשלחי את ה-ID.`;
+          const matchList = matchResult.matches.map((m: any) => formatTaskStatusResponse(m)).join("\n\n");
+          const replyText = `מצאתי כמה תכנים דומים, הנה הסטטוס של כולם:\n\n${matchList}`;
           await safeSendWhatsAppMessage(sender, replyText);
           return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
           }
