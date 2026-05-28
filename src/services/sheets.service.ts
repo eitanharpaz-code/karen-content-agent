@@ -592,6 +592,20 @@ export const updateProductionStatus = async (
     });
 
     console.log(`[Sprint 7] ✅ Successfully updated ${cellAddress} to "כן"`);
+    // Write actual upload timestamp to column L (index 12) when uploaded column is marked
+    if (columnIndex === 8) {
+      const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+      const timestampRange = `${SHEET_NAMES.productionTasks}!L${rowIndex}`;
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: timestampRange,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[israelTime]],
+        },
+      });
+      console.log(`[Sprint 7] ✅ Wrote upload timestamp to L${rowIndex}: ${israelTime}`);
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Sprint 7] Failed to update production status: ${errorMessage}`);

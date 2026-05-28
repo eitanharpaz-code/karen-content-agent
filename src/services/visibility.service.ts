@@ -212,6 +212,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // --- Upload / Not Uploaded Intent ---
   const uploadPhrases = [
     "מה עדיין לא עלה",
+    "תראה לי מה לא עלה",
     "מה נשאר לעלות",
     "מה עוד צריך לעלות",
     "מה מחכה להעלאה",
