@@ -195,6 +195,10 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה צריך קאבר",
     "מה חסר לו קאבר",
     "מה עוד בלי קאבר",
+    "חסר קאבר",
+    "אין קאבר",
+    "ללא קאבר",
+    "קאבר חסר",
   ];
   if (coverPhrases.some((p) => rawText.includes(p))) {
     return "missing_cover";
@@ -206,6 +210,10 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "בלי קופי",
     "מה צריך קופי",
     "מה עוד בלי קופי",
+    "חסר קופי",
+    "אין קופי",
+    "ללא קופי",
+    "קופי חסר",
   ];
   if (copyPhrases.some((p) => rawText.includes(p))) {
     return "missing_copy";
@@ -214,6 +222,8 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // --- Upload / Not Uploaded Intent ---
   const uploadPhrases = [
     "מה עדיין לא עלה",
+    "מה עוד לא עלה",
+    "מה לא עלה",
     "תראה לי מה לא עלה",
     "מה נשאר לעלות",
     "מה עוד צריך לעלות",
@@ -223,6 +233,9 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "איזה תכנים עוד לא עלו",
     "מה נשאר לפרסם",
     "עוד לא פורסם",
+    "לא עלה עדיין",
+    "עדיין לא עלה",
+    "מה טרם עלה",
     "פורסם",
     "העלאה",
     "באוויר",
@@ -234,12 +247,14 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // --- Stuck Workflow Intent ---
   const stuckPhrases = [
     "תקוע",
+    "תקועה",
+    "מה תקוע",
+    "מה תקועה",
     "נתקענו",
     "מה נתקע",
-    "מה נתקע?",
+    "מה נתקע אצלי",
     "מה לא מתקדם",
     "איפה אנחנו תקועים",
-    "מה נתקע",
     "מה עוד מחכה",
   ];
   if (stuckPhrases.some((p) => rawText.includes(p))) {
