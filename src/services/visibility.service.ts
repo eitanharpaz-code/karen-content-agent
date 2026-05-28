@@ -255,12 +255,21 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // --- What's Important Now Intent ---
   const whatsImportantPhrases = [
     "מה הכי חשוב עכשיו",
+    "מה הכי חשוב",
+    "מה חשוב עכשיו",
+    "מה חשוב",
     "מה דחוף",
     "מה הכי דחוף",
+    "מה דחוף עכשיו",
     "מה אני צריכה לעשות",
+    "מה צריך לעשות",
     "מה הצעד הבא",
-    "מה חשוב עכשיו",
-    "מה קודם",
+    "מה כדאי להעלות",
+    "מה כדאי לעלות",
+    "מה להעלות",
+    "מה לעלות",
+    "מה לעלות השבוע",
+    "מה להעלות השבוע",
   ];
   if (whatsImportantPhrases.some((p) => rawText.includes(p))) {
     return "whats_important";
