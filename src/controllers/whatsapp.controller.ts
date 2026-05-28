@@ -89,7 +89,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       clearPendingConfirmation(sender);
 
       if (!trendText) {
-        const replyText = "לא הבנתי את הטרנד. נסי שוב, למשל: טרנד: שם הסרטון";
+        const replyText = "לא בטוחה שהבנתי איזה טרנד התכוונת.\nנסי לכתוב: טרנד: שם הסרטון";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "trend_missing_text", sender });
       }
@@ -118,7 +118,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       clearPendingConfirmation(sender);
 
       if (!newIdeaText) {
-        const replyText = "רק שלחי רעיון חדש אחריו את הטקסט: רעיון חדש: ...";
+        const replyText = "רוצה לפתוח רעיון חדש?\nתשלחי לי:\nרעיון חדש: ...\nואני אמשיך משם.";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "new_idea_command_missing_text", sender });
       }
@@ -246,7 +246,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           });
         }
       } else {
-        const replyText = "לא מצאתי רעיון ממתין לאישור. מה הרעיון החדש שלך?";
+        const replyText = "כרגע אין רעיון שממתין לאישור.\nאם יש לך רעיון חדש, תשלחי לי ונמשיך משם.";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "no_pending", sender });
       }
@@ -302,20 +302,20 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         if (visibilityIntent === "task_status") {
           const target = extractStatusQueryTarget(incomingText);
           if (!target) {
-            const replyText = "לא הבנתי את שם התוכן. נסי שנית.";
+            const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.\nנסי לכתוב: מה הסטטוס של...";
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_query_no_target", sender });
           }
 
           const matchResult = await findProductionTaskByName(spreadsheetId, target);
           if (!matchResult) {
-            const replyText = "לא מצאתי תוכן מתאים לשם הזה. נסי שנית עם שם ברור יותר.";
+            const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.\nנסי לכתוב: מה הסטטוס של...";
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_query_no_match", sender, target });
           }
 
           if ("ambiguous" in matchResult && matchResult.ambiguous) {
-            const replyText = "מצאתי כמה תכנים דומים, איזה מהם התכוונת? נסי שנית עם שם ברור יותר.";
+            const replyText = "מצאתי כמה תכנים שיכולים להתאים למה שכתבת.\nתשלחי לי שם קצת יותר מדויק ונמשיך.";
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
           }
@@ -376,7 +376,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           case "priority_filter": {
             const priority = extractPriorityFromQuery(incomingText);
             if (!priority) {
-              await safeSendWhatsAppMessage(sender, "לא הבנתי איזו עדיפות. נסי: גבוה, בינוני, או נמוך.");
+              await safeSendWhatsAppMessage(sender, "איזו עדיפות תרצי לתת לזה?\nגבוה, בינוני או נמוך?");
               return res.status(200).json({ status: "visibility_query", sender });
             }
             const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
@@ -439,7 +439,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           const matchResult = await findProductionTaskByName(spreadsheetId, statusUpdate.contentName);
 
           if (!matchResult) {
-            const replyText = "לא מצאתי תוכן מתאים לעדכון. אנא נסי שוב עם שם ברור יותר.";
+            const replyText = "לא בטוחה איזה תוכן רצית לעדכן.\nתכתבי לי שוב את שם הסרטון ונמשיך.";
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 7 Workflow] No production task found for: ${statusUpdate.contentName}`);
             return res.status(200).json({
