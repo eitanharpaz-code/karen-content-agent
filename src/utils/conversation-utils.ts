@@ -193,19 +193,9 @@ export const hasEditConfidence = (text: string): boolean => {
  * Generate a better clarification prompt that guides the user.
  */
 export const generateClarificationPrompt = (hasActiveDraft: boolean): string => {
-  if (hasActiveDraft) {
-    return `לא בטוחה שהבנתי 
-
-את רוצה:
-• לערוך את הרעיון הקיים?
-• להתחיל רעיון חדש?
-• או משהו אחר?`;
+if (hasActiveDraft) {
+    return `רגע, רק לוודא שאני איתך.\nרצית לערוך את הרעיון הנוכחי או לפתוח חדש?`;
   } else {
-    return `לא בטוחה שהבנתי
-
-את רוצה:
-• להשתיל רעיון חדש?
-• לעדכן סטטוס קיים?
-• או משהו אחר?`;
+    return `לא בטוחה שהבנתי.\nרצית לפתוח רעיון חדש או לבדוק משהו קיים?`;
   }
 };

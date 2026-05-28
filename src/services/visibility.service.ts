@@ -406,12 +406,12 @@ export const formatWhatsImportantResponse = (
   const lines: string[] = [];
 
   if (highPriorityNotUploaded.length > 0) {
-    lines.push("עדיפות גבוה שלא עלה:");
+   lines.push("תכנים בעדיפות גבוהה שעוד לא עלו:");
     highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${t.taskName}`));
   }
 
   if (stuckTasks.length > 0) {
-    lines.push("\nתקוע - צולם ולא נערך:");
+   lines.push("\nתקוע - צולם ועדיין לא נערך:");
     stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${t.taskName}`));
   }
 

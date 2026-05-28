@@ -104,10 +104,10 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       };
       storePendingConfirmation(sender, trendDraft);
 
-      const replyText = `טרנד נרשם.
+const replyText = `מעולה, הטרנד נשמר.
 שם: ${trendText}
 קטגוריה: טרנד
-עדיפות: גבוה
+עדיפות: גבוהה
 
 לשמור?`;
       await safeSendWhatsAppMessage(sender, replyText);
@@ -130,7 +130,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       };
       storePendingConfirmation(sender, draftSummary);
 
-      const replyText = `הרעיון החדש התחיל בהצלחה.
+      const replyText = `יאללה, פתחתי רעיון חדש.
 
 שם קצר: ${draft.shortName}
 קטגוריה: ${displayCategory(draft.category)}
@@ -148,7 +148,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       const pendingDraft = getPendingConfirmation(sender);
       clearPendingConfirmation(sender);
 
-      const replyText = "הרעיון הקודם בוטל. אפשר לשלוח רעיון חדש.";
+      const replyText = "אין בעיה, עזבנו את הרעיון הקודם ונמשיך הלאה.";
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "draft_reset", sender, hadPendingDraft: !!pendingDraft });
     }
@@ -217,7 +217,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 6 Workflow] ⚠️  WhatsApp confirmation sent (with warning about task creation failure)`);
           } else {
-            const replyText = `הרעיון נשמר בהצלחה.\nID: ${contentId}`;
+            const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
           }
@@ -262,7 +262,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           storePendingConfirmation(sender, updatedDraft);
 
           // Send updated draft summary
-          const replyText = `הבנתי. עדכנתי את הרעיון.
+          const replyText = `קיבלתי, עדכנתי את הרעיון.
 
 שם קצר: ${updatedDraft.shortName}
 קטגוריה: ${displayCategory(updatedDraft.category)}
@@ -450,7 +450,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           }
 
           if ("ambiguous" in matchResult && matchResult.ambiguous) {
-            const replyText = "מצאתי כמה תכנים דומים, איזה מהם התכוונת?\nנסי שנית עם שם ברור יותר.";
+            const replyText = "מצאתי כמה תכנים דומים.\nאיזה מהם התכוונת?";
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 7 Workflow] Multiple or ambiguous matches for: ${statusUpdate.contentName}`);
             return res.status(200).json({
@@ -484,7 +484,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
           const contentNameDisplay = exactMatch.row[1] || statusUpdate.contentName;
           const columnList = uniqueUpdates.map((update) => update.columnName).join(", ");
-          const replyText = `עודכן בהצלחה - "${contentNameDisplay}" סומן כ: ${columnList}`;
+          const replyText = `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${columnList}`;
           await safeSendWhatsAppMessage(sender, replyText);
 
           console.log(`[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}\n`);
@@ -585,7 +585,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // If message looks like a visibility question but intent detection was unclear,
     // return a graceful fallback instead of progressing to draft creation.
     if (!visibilityIntent && isLikelyVisibilityQuery(incomingText)) {
-      const replyText = "לא הצלחתי להבין את שאלת הסטטוס. נסי לנסח אחרת.";
+     const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.";
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "visibility_unclear", sender });
     }
@@ -603,7 +603,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // If draft exists and message looks like continuation, treat it as continuation
     if (existingDraft && isContinuationMessage(incomingText)) {
       // Treat as edit/continuation context
-      const replyText = `זה מעניין! נוכל לשלב את זה בדברים הקודמים.
+      const replyText = `זה דווקא יכול להתחבר ממש טוב.
 
 רעיון עדכון:
 שם קצר: ${existingDraft.shortName}
@@ -638,7 +638,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     storePendingConfirmation(sender, draftSummary);
 
     // Format response
-    const replyText = `הרעיון שלך נשמע טוב.
+    const replyText = `יש פה כיוון טוב.
 
 שם קצר: ${draft.shortName}
 קטגוריה: ${displayCategory(draft.category)}
