@@ -315,9 +315,10 @@ const replyText = `מעולה, הטרנד נשמר.
           }
 
           if ("ambiguous" in matchResult && matchResult.ambiguous) {
-            const replyText = "מצאתי כמה תכנים שיכולים להתאים למה שכתבת.\nתשלחי לי שם קצת יותר מדויק ונמשיך.";
-            await safeSendWhatsAppMessage(sender, replyText);
-            return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
+          const matchList = matchResult.matches.map((m: any) => `- ${m.row[1]} (${m.row[0]})`).join("\n");
+          const replyText = `מצאתי כמה תכנים דומים:\n${matchList}\n\nעל איזה מהם התכוונת? תשלחי את ה-ID.`;
+          await safeSendWhatsAppMessage(sender, replyText);
+          return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
           }
 
           const exactMatch = matchResult as ProductionTaskMatch;

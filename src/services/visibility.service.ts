@@ -90,7 +90,7 @@ export const extractStatusQueryTarget = (text: string): string | null => {
   rawText = rawText.trim();
   const patterns = [
     // "מה הסטטוס של X" - requires multi-word for exact match (single-word goes to category_search)
-    { regex: /^(?:מה הסטטוס של)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
+    { regex: /^(?:מה הסט[טא]טוס של)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
     // "מה מצב [הסרטון] על X"
     { regex: /^(?:מה מצב(?:\s+הסרטון)?\s+על)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
     // "איפה אני עומדת עם X"
@@ -262,7 +262,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   }
 
   // --- Category/Topic Search Intent ---
-  const categoryPhrases = ["מה הסטטוס", "מה הסטטוס של", "מה קורה עם", "תראה לי תכני", "מה יש על"];
+  const categoryPhrases = ["מה הסטטוס", "מה הסטטוס של", "מה הסטאטוס", "מה הסטאטוס של", "מה קורה עם", "תראה לי תכני", "מה יש על"];
   if (categoryPhrases.some((p) => rawText.includes(p))) {
     return "category_search";
   }
