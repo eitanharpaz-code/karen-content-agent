@@ -278,11 +278,35 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // --- Priority Filter Intent ---
   const priorityFilterPhrases = [
     "מה בעדיפות גבוה",
-    "מה בעדיפות בינוני",
-    "מה בעדיפות נמוך",
+    "מה בעדיפות גבוהה",
+    "בעדיפות גבוה",
+    "בעדיפות גבוהה",
     "עדיפות גבוה",
+    "עדיפות גבוהה",
+    "תראי גבוה",
+    "תראי לי גבוה",
+    "תראי גבוהה",
+    "מה גבוה",
+    "מה גבוהה",
+    "מה בעדיפות בינוני",
+    "מה בעדיפות בינונית",
+    "בעדיפות בינוני",
+    "בעדיפות בינונית",
     "עדיפות בינוני",
+    "עדיפות בינונית",
+    "תראי בינוני",
+    "תראי לי בינוני",
+    "מה בינוני",
+    "מה בעדיפות נמוך",
+    "מה בעדיפות נמוכה",
+    "בעדיפות נמוך",
+    "בעדיפות נמוכה",
     "עדיפות נמוך",
+    "עדיפות נמוכה",
+    "תראי נמוך",
+    "תראי לי נמוך",
+    "מה נמוך",
+    "מה נמוכה",
   ];
   if (priorityFilterPhrases.some((p) => rawText.includes(p))) {
     return "priority_filter";
@@ -353,9 +377,9 @@ export const extractSearchKeyword = (text: string): string | null => {
 // Format a short visibility response
 export const extractPriorityFromQuery = (text: string): string | null => {
   const raw = text.toLowerCase();
-  if (raw.includes("גבוה")) return "גבוה";
-  if (raw.includes("בינוני")) return "בינוני";
-  if (raw.includes("נמוך")) return "נמוך";
+  if (raw.includes("גבוה") || raw.includes("גבוהה")) return "גבוה";
+  if (raw.includes("בינוני") || raw.includes("בינונית")) return "בינוני";
+  if (raw.includes("נמוך") || raw.includes("נמוכה")) return "נמוך";
   return null;
 };
 
