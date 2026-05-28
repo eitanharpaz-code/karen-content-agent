@@ -442,15 +442,15 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
   if (tasks.length === 0) {
     switch (intent) {
       case "missing_edit":
-        return "אין תוכן שצריך עריכה! 🎉";
+       return "אין כרגע משהו שמחכה לעריכה.";
       case "missing_cover":
-        return "כל התכנים יש להם קאבר! 🎉";
+        return "אין כרגע תוכן שחסר לו קאבר.";
       case "missing_copy":
-        return "כל התכנים יש להם קופי! 🎉";
+        return "אין כרגע תוכן שחסר לו קופי.";
       case "not_uploaded":
-        return "כל התכנים הועלו! 🎉";
+       return "נראה שאין כרגע משהו שעדיין לא עלה.";
       case "stuck_workflow":
-        return "אין תוכן תקוע! 🎉";
+       return "לא נראה שיש כרגע תוכן תקוע.";
       case "category_search":
         return "לא נמצא תוכן בקטגוריה זו.";
       default:
@@ -468,17 +468,17 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
 
   switch (intent) {
     case "missing_edit":
-      return `נשאר לערוך:\n${taskNames}${suffix}`;
+      return `עוד נשאר לערוך:\n${taskNames}${suffix}`;
     case "edited_not_uploaded":
-      return `נערך ועדיין לא עלה:\n${taskNames}${suffix}`;
+      return `כבר נערך ומחכה לעלות:\n${taskNames}${suffix}`;
     case "missing_cover":
-      return `חסר קאבר:\n${taskNames}${suffix}`;
+      return `התכנים שעדיין בלי קאבר:\n${taskNames}${suffix}`;
     case "missing_copy":
-      return `חסר קופי:\n${taskNames}${suffix}`;
+      return `התכנים שעדיין בלי קופי:\n${taskNames}${suffix}`;
     case "not_uploaded":
-      return `לא עלה עדיין:\n${taskNames}${suffix}`;
+     return `התכנים שעדיין מחכים לעלות:\n${taskNames}${suffix}`;
     case "stuck_workflow":
-      return `תוכן תקוע:\n${taskNames}${suffix}`;
+     return `מה שנראה שתקוע כרגע:\n${taskNames}${suffix}`;
     case "category_search":
       return `תכנים בקטגוריה:\n${taskNames}${suffix}`;
     default:
