@@ -130,14 +130,16 @@ export const extractStatusQueryTarget = (text: string): string | null => {
 };
 
 export const formatTaskStatusResponse = (task: { row: string[] }): string => {
+  const contentId = task.row[0] || "";
   const taskName = task.row[1] || "תוכן";
+  const displayName = contentId ? `${taskName} (${contentId})` : taskName;
   const filmed = task.row[3] || "לא";
   const edited = task.row[4] || "לא";
   const coverReady = task.row[5] || "לא";
   const copyReady = task.row[6] || "לא";
   const uploaded = task.row[7] || "לא";
 
-  return `${taskName}:
+  return `${displayName}:
 צולם: ${filmed}
 נערך: ${edited}
 קאבר מוכן: ${coverReady}
