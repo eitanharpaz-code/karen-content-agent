@@ -71,7 +71,21 @@ const normalizeTaskStatusTargetForMatching = (text: string): string => {
 };
 
 export const extractStatusQueryTarget = (text: string): string | null => {
-  const rawText = text.trim();
+  const conversationalPrefixes = [
+    /^ועכשיו[,،]?\s*/i,
+    /^אוקיי[,،]?\s*/i,
+    /^אוקי[,،]?\s*/i,
+    /^רגע[,،]?\s*/i,
+    /^אז[,،]?\s*/i,
+    /^טוב[,،]?\s*/i,
+    /^בסדר[,،]?\s*/i,
+    /^אגב[,،]?\s*/i,
+  ];
+  let rawText = text.trim();
+  for (const prefix of conversationalPrefixes) {
+    rawText = rawText.replace(prefix, "");
+  }
+  rawText = rawText.trim();
   const patterns = [
     // "מה הסטטוס של X" - requires multi-word for exact match (single-word goes to category_search)
     { regex: /^(?:מה הסטטוס של)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
@@ -208,7 +222,6 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "עוד לא פורסם",
     "פורסם",
     "העלאה",
-    "עלה",
     "באוויר",
   ];
   if (uploadPhrases.some((p) => rawText.includes(p))) {

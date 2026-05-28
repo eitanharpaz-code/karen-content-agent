@@ -168,7 +168,7 @@ const STATUS_MAPPINGS: ProductionStatusMapping[] = [
   {
     statusType: "uploaded",
     columnName: "הועלה",
-    detectionPatterns: ["העליתי", "הסרטון עלה", "פורסם", "פרסמתי", "העלתי"],
+    detectionPatterns: ["העליתי", "הסרטון עלה", "הסרטון הועלה", "סרטון עלה", "עלה לאוויר", "פורסם", "פרסמתי", "העלתי"],
   },
 ];
 

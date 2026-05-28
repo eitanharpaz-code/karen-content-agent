@@ -448,7 +448,7 @@ export const findProductionTaskByName = async (
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${SHEET_NAMES.productionTasks}!A:B`, // Get content_id and content name columns
+      range: `${SHEET_NAMES.productionTasks}!A:K`, // Get content_id and content name columns
     });
 
     const rows = response.data.values || [];
