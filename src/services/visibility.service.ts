@@ -420,7 +420,8 @@ export const formatWhatsImportantResponse = (
   }
 
   if (trendTasks.length > 0) {
-    lines.push(`\nאגב, יש ${trendTasks.length} טרנדים שעדיין לא עלו. רוצה לראות אותם?`);
+    lines.push(`\nוגם יש ${trendTasks.length} טרנדים שעדיין לא עלו:`);
+trendTasks.forEach((t) => lines.push(`- ${t.taskName}`));
   }
 
   return lines.join("\n");
