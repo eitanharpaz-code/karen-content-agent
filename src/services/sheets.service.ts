@@ -1,5 +1,6 @@
 import { google, sheets_v4 } from "googleapis";
 import { normalizeHebrewText, getTokenOverlapScore } from "./production-status.service";
+import { parseDateFromSheet, getHebrewDayName } from "../utils/date-utils";
 
 // Sheet name mapping: English reference names to actual Hebrew sheet names
 const SHEET_NAMES = {
@@ -759,6 +760,8 @@ export type ProductionTaskRowExtended = ProductionTaskRow & {
   priority: string;
   category: string;
   isTrend: boolean;
+  deadlineDate: Date | null;
+  deadlineDayName: string;
 };
 
 // Get all production tasks with priority from בנק רעיונות
@@ -767,14 +770,17 @@ export const getAllProductionTasksWithPriority = async (spreadsheetId: string): 
     getAllProductionTasks(spreadsheetId),
     getContentIdeasWithPriority(spreadsheetId),
   ]);
-
-  return tasks.map((task) => {
+return tasks.map((task) => {
     const idea = ideasMap.get(task.contentId);
+    const deadlineDate = parseDateFromSheet(task.deadline);
+    const deadlineDayName = deadlineDate ? getHebrewDayName(deadlineDate) : "";
     return {
       ...task,
       priority: idea?.priority || "בינוני",
       category: idea?.category || "",
       isTrend: task.contentId.startsWith("TRD-"),
+      deadlineDate,
+      deadlineDayName,
     };
   });
 };

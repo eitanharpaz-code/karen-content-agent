@@ -1,4 +1,5 @@
 import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
+import { isThisWeek } from "../utils/date-utils";
 
 // Sprint 10: Visibility Intent Detection
 // Deterministic routing for natural Hebrew visibility queries
@@ -403,17 +404,38 @@ export const extractPriorityFromQuery = (text: string): string | null => {
 export const formatWhatsImportantResponse = (
   highPriorityNotUploaded: ProductionTaskRowExtended[],
   stuckTasks: ProductionTaskRowExtended[],
-  trendTasks: ProductionTaskRowExtended[]
+  trendTasks: ProductionTaskRowExtended[],
+  thisWeekTasks: ProductionTaskRowExtended[]
 ): string => {
   const lines: string[] = [];
 
+  if (thisWeekTasks.length > 0) {
+    lines.push("השבוע אמורים לעלות:");
+    thisWeekTasks.slice(0, 5).forEach((t) => {
+      if (t.filmed !== "כן") {
+        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
+        lines.push(`  שימי לב, את הסרטון הזה עדיין לא צילמת`);
+      } else if (t.edited !== "כן") {
+        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
+        lines.push(`  שימי לב, את הסרטון הזה עדיין לא ערכת`);
+      } else {
+        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
+      }
+    });
+    if (thisWeekTasks.length > 5) {
+      lines.push(`בנוסף את מתוכננת להעלות עוד ${thisWeekTasks.length - 5} סרטונים, לצפייה בהם כנסי לגוגל שיטס`);
+    }
+  }
+
   if (highPriorityNotUploaded.length > 0) {
-   lines.push("תכנים בעדיפות גבוהה שעוד לא עלו:");
+    if (lines.length > 0) lines.push("");
+    lines.push("תכנים בעדיפות גבוהה שעוד לא עלו:");
     highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${t.taskName}`));
   }
 
   if (stuckTasks.length > 0) {
-   lines.push("\nתקוע - צולם ועדיין לא נערך:");
+    if (lines.length > 0) lines.push("");
+    lines.push("תקוע - צולם ועדיין לא נערך:");
     stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${t.taskName}`));
   }
 
@@ -423,7 +445,7 @@ export const formatWhatsImportantResponse = (
 
   if (trendTasks.length > 0) {
     lines.push(`\nוגם יש ${trendTasks.length} טרנדים שעדיין לא עלו:`);
-trendTasks.forEach((t) => lines.push(`- ${t.taskName}`));
+    trendTasks.forEach((t) => lines.push(`- ${t.taskName}`));
   }
 
   return lines.join("\n");

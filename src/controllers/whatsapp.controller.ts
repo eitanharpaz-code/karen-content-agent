@@ -61,6 +61,7 @@ import {
   hasEditConfidence,
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
+import { isThisWeek } from "../utils/date-utils";
 
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
@@ -370,7 +371,8 @@ const replyText = `מעולה, הטרנד נשמר.
             const highNotUploaded = allTasks.filter((t) => t.priority === "גבוה" && t.uploaded !== "כן" && !t.isTrend);
             const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
             const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
-            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends);
+            const thisWeek = allTasks.filter((t) => t.deadlineDate !== null && isThisWeek(t.deadline) && t.uploaded !== "כן");
+            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek);
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }

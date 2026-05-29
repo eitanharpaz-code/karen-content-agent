@@ -11,10 +11,10 @@ const run = async () => {
   const highNotUploaded = tasks.filter(t => t.priority === "גבוה" && t.uploaded !== "כן" && !t.isTrend);
   const stuck = tasks.filter(t => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
   const trends = tasks.filter(t => t.isTrend && t.uploaded !== "כן");
+  const thisWeek = tasks.filter(t => t.deadlineDate !== null && t.uploaded !== "כן");
 
   console.log("\n===== מה הכי חשוב עכשיו? =====");
-  console.log(formatWhatsImportantResponse(highNotUploaded, stuck, trends));
-
+ console.log(formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek));
   console.log("\n===== עדיפות גבוה =====");
   console.log(formatPriorityFilterResponse(tasks, "גבוה"));
 
