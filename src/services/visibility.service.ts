@@ -436,13 +436,13 @@ export const formatWhatsImportantResponse = (
   if (highPriorityNotUploaded.length > 0) {
     if (lines.length > 0) lines.push("");
     lines.push("תכנים בעדיפות גבוהה שעוד לא עלו:");
-    highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${t.taskName}`));
+   highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
   }
 
   if (stuckTasks.length > 0) {
     if (lines.length > 0) lines.push("");
     lines.push("תקוע - צולם ועדיין לא נערך:");
-    stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${t.taskName}`));
+   stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
   }
 
   if (lines.length === 0) {
@@ -451,7 +451,7 @@ export const formatWhatsImportantResponse = (
 
   if (trendTasks.length > 0) {
     lines.push(`\nוגם יש ${trendTasks.length} טרנדים שעדיין לא עלו:`);
-    trendTasks.forEach((t) => lines.push(`- ${t.taskName}`));
+    trendTasks.forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
   }
 
   return lines.join("\n");
@@ -465,7 +465,7 @@ export const formatPriorityFilterResponse = (
   if (filtered.length === 0) {
     return `אין תכנים בעדיפות ${priority} כרגע.`;
   }
-  const taskNames = filtered.slice(0, 5).map((t) => `- ${t.taskName}`).join("\n");
+  const taskNames = filtered.slice(0, 5).map((t) => `- ${shortenTaskName(t.taskName)}`).join("\n");
   const suffix = filtered.length > 5 ? `\n...ו${filtered.length - 5} עוד` : "";
   return `תכנים בעדיפות ${priority}:\n${taskNames}${suffix}`;
 };
