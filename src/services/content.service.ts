@@ -63,15 +63,17 @@ export const createContentDraft = async (userInput: string): Promise<ContentIdea
       "bachelor": "רווקים",
       "pre wedding": "על החתונה",
       "pre-wedding": "על החתונה",
+      "trend": "טרנד",
+      "טרנד": "טרנד",
     };
     category = categoryMapping[category.toLowerCase()] || category;
 
     return {
-      shortName: (shortNameMatch?.[1] || "Unknown").trim(),
+      shortName: (shortNameMatch?.[1] || cleanedInput.substring(0, 30)).trim(),
       category: category as any,
       tone: tone as any,
       priority: priority as any,
-      summary: (summaryMatch?.[1] || response).trim(),
+      summary: (summaryMatch?.[1] || cleanedInput).trim(),
     };
   };
 
