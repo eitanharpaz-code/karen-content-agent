@@ -401,6 +401,11 @@ export const extractPriorityFromQuery = (text: string): string | null => {
   return null;
 };
 
+const shortenTaskName = (name: string, maxWords: number = 6): string => {
+  const words = name.trim().split(/\s+/);
+  if (words.length <= maxWords) return name;
+  return words.slice(0, maxWords).join(" ") + "...";
+};
 export const formatWhatsImportantResponse = (
   highPriorityNotUploaded: ProductionTaskRowExtended[],
   stuckTasks: ProductionTaskRowExtended[],
@@ -408,18 +413,19 @@ export const formatWhatsImportantResponse = (
   thisWeekTasks: ProductionTaskRowExtended[]
 ): string => {
   const lines: string[] = [];
-
   if (thisWeekTasks.length > 0) {
     lines.push("השבוע אמורים לעלות:");
     thisWeekTasks.slice(0, 5).forEach((t) => {
+     const shortName = shortenTaskName(t.taskName);
+      lines.push(`- ${shortName} (יום ${t.deadlineDayName})`);
       if (t.filmed !== "כן") {
-        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
-        lines.push(`  שימי לב, את הסרטון הזה עדיין לא צילמת`);
+        lines.push(`  *שימי לב, את הסרטון הזה עדיין לא צילמת*`);
       } else if (t.edited !== "כן") {
-        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
-        lines.push(`  שימי לב, את הסרטון הזה עדיין לא ערכת`);
-      } else {
-        lines.push(`- ${t.taskName} (יום ${t.deadlineDayName})`);
+        lines.push(`  *שימי לב, את הסרטון הזה עדיין לא ערכת*`);
+      } else if (t.coverReady !== "כן") {
+        lines.push(`  *שימי לב, עדיין חסר קאבר*`);
+      } else if (t.copyReady !== "כן") {
+        lines.push(`  *שימי לב, עדיין חסר קופי*`);
       }
     });
     if (thisWeekTasks.length > 5) {
