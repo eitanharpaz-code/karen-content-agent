@@ -1,6 +1,6 @@
 // Hebrew values are canonical for known categories, but dynamic categories are allowed for Sprint 9
 export type Category = string;
-export type Tone = "הסברתי" | "מצחיק" | "אותנטי" | "השראתי" | "טרנדי" | "רגשי" | "הומוריסטי" | "דרמטי";
+export type Tone = "הסברתי" | "מצחיק" | "אותנטי" | "השראתי" | "טרנדי" | "רגשי";
 export type Priority = "גבוה" | "בינוני" | "נמוך";
 export type Platform = "אינסטגרם" | "טיקטוק";
 export type RequiresShooting = "כן" | "לא";
