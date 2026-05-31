@@ -196,6 +196,6 @@ export const generateClarificationPrompt = (hasActiveDraft: boolean): string => 
 if (hasActiveDraft) {
     return `רגע, רק לוודא שאני איתך.\nרצית לערוך את הרעיון הנוכחי או לפתוח חדש?`;
   } else {
-    return `לא בטוחה שהבנתי.\nרצית לפתוח רעיון חדש או לבדוק משהו קיים?`;
+    return `לא בטוחה שתפסתי למה התכוונת.\nאם רצית לפתוח רעיון חדש, תכתבי:\nרעיון חדש: ...\nואם רצית לבדוק סטטוס, תכתבי:\nמה הסטטוס של...`;
   }
 };
