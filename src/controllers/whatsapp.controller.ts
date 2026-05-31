@@ -218,7 +218,7 @@ const replyText = `מעולה, הטרנד נשמר.
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 6 Workflow] ⚠️  WhatsApp confirmation sent (with warning about task creation failure)`);
           } else {
-            const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
+           const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
           }
