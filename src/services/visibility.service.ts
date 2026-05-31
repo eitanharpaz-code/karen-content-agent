@@ -91,7 +91,7 @@ export const extractStatusQueryTarget = (text: string): string | null => {
   rawText = rawText.trim();
   const patterns = [
     // "מה הסטטוס של X" - requires multi-word for exact match (single-word goes to category_search)
-    { regex: /^(?:מה הסט[טא]טוס של)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
+    { regex: /^(?:מה הסטטוס של|מה הסטאטוס של)\s+(.+)/is, multiWordOnly: true },
     // "מה מצב [הסרטון] על X"
     { regex: /^(?:מה מצב(?:\s+הסרטון)?\s+על)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
     // "איפה אני עומדת עם X"
