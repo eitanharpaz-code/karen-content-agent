@@ -491,7 +491,7 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
 
   // Format short list of task names
   const taskNames = tasks
-    .map((task) => `- ${task.taskName}`)
+   .map((task) => `- ${shortenTaskName(task.taskName)}`)
     .slice(0, 5)
     .join("\n");
 
