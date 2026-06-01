@@ -27,6 +27,8 @@ import {
   updateProductionStatus,
   getProductionStatusColumnIndex,
   getTasksMissingEdit,
+  getTasksMissingFilmed,
+  getContentIdeaSummary,
   getTasksMissingCover,
   getTasksMissingCopy,
   getTasksNotUploaded,
@@ -357,6 +359,24 @@ const replyText = `מעולה, הטרנד נשמר.
           case "stuck_workflow":
             tasks = await getStuckTasks(spreadsheetId);
             break;
+            case "missing_filmed":
+            tasks = await getTasksMissingFilmed(spreadsheetId);
+            break;
+            case "content_summary": {
+            const keyword = extractSearchKeyword(incomingText);
+            if (!keyword) {
+              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין על איזה סרטון את מדברת. תנסי שוב עם השם המדויק.");
+              return res.status(200).json({ status: "visibility_query", sender });
+            }
+            const summary = await getContentIdeaSummary(spreadsheetId, keyword);
+            if (!summary) {
+              await safeSendWhatsAppMessage(sender, "לא מצאתי תוכן שמתאים למה שכתבת. תנסי עם שם קצת יותר מדויק.");
+              return res.status(200).json({ status: "visibility_query", sender });
+            }
+            const replyText = `מצאתי את הסרטון\n"${summary.shortName}"\nהרעיון שלו:\n${summary.idea}`;
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_content_summary", sender });
+          }
           case "category_search": {
             const keyword = extractSearchKeyword(incomingText);
             if (!keyword) {

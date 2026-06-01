@@ -15,6 +15,8 @@ export type VisibilityIntent =
   | "stuck_workflow"
   | "priority_filter"
   | "whats_important"
+  | "missing_filmed"
+  | "content_summary"
   | null;
 
 /**
@@ -263,7 +265,32 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   if (stuckPhrases.some((p) => rawText.includes(p))) {
     return "stuck_workflow";
   }
+// --- Content Summary Intent ---
+  const summaryPhrases = [
+    "סיכום של", "סיכום על", "תני לי סיכום על", "תני לי סיכום של",
+    "תזכיר לי על", "תזכיר לי את הסרטון", "תזכיר לי את הרעיון על",
+    "תזכירי לי על", "תזכירי לי את",
+    "תקציר של", "תקציר על", "שלח לי תקציר על", "שלחי לי תקציר על","מה התקציר של",
+    "מה התקציר על",
+    "תני לי את התקציר של",
+    "תני לי את התקציר על",
+    "על מה הסרטון", "על מה הרעיון", "מה הסרטון על",
+    "תספרי לי על", "תספר לי על", "פרטים על", "מה יש לי על",
+  ];
+  if (summaryPhrases.some((p) => rawText.includes(p))) {
+    return "content_summary";
+  }
 
+  // --- Missing Filmed Intent ---
+  const filmedPhrases = [
+    "מה עוד לא צולם", "מה לא צולם", "מה נשאר לצלם",
+    "מה עוד צריך לצלם", "מה מחכה לצילום", "מה טרם צולם",
+    "עדיין לא צולם", "לא צולם עדיין", "בלי צילום", "חסר צילום",
+    "צילום", "צולם",
+  ];
+  if (filmedPhrases.some((p) => rawText.includes(p))) {
+    return "missing_filmed";
+  }
   // --- Category/Topic Search Intent ---
   const categoryPhrases = ["מה הסטטוס", "מה הסטטוס של", "מה הסטאטוס", "מה הסטאטוס של", "מה קורה עם", "תראה לי תכני", "מה יש על"];
   if (categoryPhrases.some((p) => rawText.includes(p))) {
@@ -482,6 +509,8 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
        return "נראה שאין כרגע משהו שעדיין לא עלה.";
       case "stuck_workflow":
        return "לא נראה שיש כרגע תוכן תקוע.";
+      case "missing_filmed":
+        return "אין כרגע תוכן שעוד לא צולם.";
       case "category_search":
         return "לא נמצא תוכן בקטגוריה זו.";
       default:
@@ -510,6 +539,9 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
      return `התכנים שעדיין מחכים לעלות:\n${taskNames}${suffix}`;
     case "stuck_workflow":
      return `מה שנראה שתקוע כרגע:\n${taskNames}${suffix}`;
+    case "category_search":
+     case "missing_filmed":
+      return `התכנים שעדיין לא צולמו:\n${taskNames}${suffix}`;
     case "category_search":
       return `תכנים בקטגוריה:\n${taskNames}${suffix}`;
     default:

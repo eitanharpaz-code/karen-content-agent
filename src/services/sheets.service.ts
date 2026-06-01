@@ -677,7 +677,11 @@ export const getAllProductionTasks = async (spreadsheetId: string): Promise<Prod
     notes: row[10] || "",
   }));
 };
-
+// Get tasks missing filming: filmed != כן
+export const getTasksMissingFilmed = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+  const tasks = await getAllProductionTasks(spreadsheetId);
+  return tasks.filter((task) => task.filmed !== "כן");
+};
 // Get tasks that need editing: filmed but not edited
 export const getTasksMissingEdit = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
@@ -729,6 +733,29 @@ export const getStuckTasks = async (spreadsheetId: string): Promise<ProductionTa
     }
     return false;
   });
+};
+// Get content idea summary by name - returns shortName and idea text
+export const getContentIdeaSummary = async (
+  spreadsheetId: string,
+  searchName: string
+): Promise<{ shortName: string; idea: string } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:B`,
+  });
+  const values = response.data.values || [];
+  const normalized = searchName.trim().toLowerCase();
+  const match = values.slice(1).find((row) => {
+    const idea = (row[1] || "").toString().toLowerCase();
+    return idea.includes(normalized) || normalized.includes(idea.substring(0, 10));
+  });
+  if (!match) return null;
+  return {
+    shortName: (match[1] || "").toString().substring(0, 30),
+    idea: (match[1] || "").toString(),
+  };
 };
 // Get all content ideas from בנק רעיונות with priority
 export const getContentIdeasWithPriority = async (spreadsheetId: string): Promise<Map<string, { priority: string; category: string }>> => {
