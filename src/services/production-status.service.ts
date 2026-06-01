@@ -365,3 +365,34 @@ export const getColumnName = (statusType: ProductionStatusType): string => {
 export const isProductionStatusUpdate = (message: string): boolean => {
   return detectStatusUpdate(message) !== null;
 };
+// Detect deadline update command
+// e.g. "תשני את הדדליין של X לתאריך Y"
+export const isDeadlineUpdate = (message: string): boolean => {
+  const raw = message.trim().toLowerCase();
+  return (
+    (raw.includes("דדליין") || raw.includes("תאריך")) &&
+    (raw.includes("תשני") || raw.includes("שני") || raw.includes("עדכני") || raw.includes("שנה") || raw.includes("עדכן"))
+  );
+};
+
+export const extractDeadlineUpdate = (message: string): { contentName: string; deadline: string } | null => {
+  const patterns = [
+    /תשני את הדדליין של (.+?) ל[־-]?(.+)/i,
+    /תשני את הדדליין של (.+?) לתאריך (.+)/i,
+    /עדכני את הדדליין של (.+?) ל[־-]?(.+)/i,
+    /שני את הדדליין של (.+?) ל[־-]?(.+)/i,
+    /הדדליין של (.+?) הוא (.+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) {
+      return {
+        contentName: match[1].trim(),
+        deadline: match[2].trim().replace(/[?!.]/g, ""),
+      };
+    }
+  }
+
+  return null;
+};

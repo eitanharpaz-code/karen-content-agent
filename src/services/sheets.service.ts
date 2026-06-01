@@ -743,18 +743,26 @@ export const getContentIdeaSummary = async (
   const sheets = google.sheets({ version: "v4", auth });
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:B`,
+    range: `${SHEET_NAMES.contentLibrary}!A:C`,
   });
   const values = response.data.values || [];
   const normalized = searchName.trim().toLowerCase();
-  const match = values.slice(1).find((row) => {
-    const idea = (row[1] || "").toString().toLowerCase();
-    return idea.includes(normalized) || normalized.includes(idea.substring(0, 10));
-  });
+ const scored = values.slice(1)
+    .map((row) => {
+      const idea = (row[1] || "").toString();
+      const score = getTokenOverlapScore(normalized, idea.toLowerCase());
+      return { row, score };
+    })
+    .filter((entry) => entry.score >= 2)
+    .sort((a, b) => b.score - a.score);
+  const match = scored.length > 0 ? scored[0].row : null;
+  
   if (!match) return null;
+  const ideaText = (match[1] || "").toString();
+  const shortName = ideaText.split(/\s+/).slice(0, 6).join(" ");
   return {
-    shortName: (match[1] || "").toString().substring(0, 30),
-    idea: (match[1] || "").toString(),
+    shortName,
+    idea: ideaText,
   };
 };
 // Get all content ideas from בנק רעיונות with priority
@@ -831,3 +839,56 @@ export const searchTasksByKeyword = async (
 // Export sheet names for use in other modules
 export { SHEET_NAMES };
 
+// Get tasks by category and stage for category_stage_filter intent
+export const getTasksByCategory = async (
+  spreadsheetId: string,
+  category: string,
+  stage: string
+): Promise<ProductionTaskRow[]> => {
+  const [tasks, ideasMap] = await Promise.all([
+    getAllProductionTasks(spreadsheetId),
+    getContentIdeasWithPriority(spreadsheetId),
+  ]);
+
+  const normalizedCategory = normalizeHebrewText(category);
+
+  const filtered = tasks.filter((task) => {
+    const idea = ideasMap.get(task.contentId);
+    if (!idea) return false;
+    const taskCategory = normalizeHebrewText(idea.category);
+    if (taskCategory !== normalizedCategory) return false;
+
+    switch (stage) {
+      case "filmed":   return task.filmed !== "כן";
+      case "edited":   return task.edited !== "כן";
+      case "cover":    return task.coverReady !== "כן";
+      case "copy":     return task.copyReady !== "כן";
+      case "uploaded": return task.uploaded !== "כן";
+      default:         return false;
+    }
+  });
+
+  return filtered;
+};
+// Update deadline for a production task
+export const updateDeadline = async (
+  spreadsheetId: string,
+  rowIndex: number,
+  deadline: string
+): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const range = `${SHEET_NAMES.productionTasks}!I${rowIndex}`;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[deadline]],
+    },
+  });
+
+  console.log(`[Deadline] ✅ Updated deadline for row ${rowIndex} to: ${deadline}`);
+};

@@ -17,6 +17,7 @@ export type VisibilityIntent =
   | "whats_important"
   | "missing_filmed"
   | "content_summary"
+  | "category_stage_filter"
   | null;
 
 /**
@@ -281,6 +282,18 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     return "content_summary";
   }
 
+  // --- Category + Stage Filter - חייב להיות לפני missing_filmed ---
+ const categoryStagePatterns = [
+    /מה לא .{2,10} ב.{2,15}/,
+    /מה עוד לא .{2,10} ב.{2,15}/,
+    /מה טרם .{2,10} ב.{2,15}/,
+    /מה נשאר .{2,10} ב.{2,15}/,
+    /מה לא .{2,10} על .{2,15}/,
+    /מה עוד לא .{2,10} על .{2,15}/,
+  ];
+  if (categoryStagePatterns.some((p) => p.test(rawText))) {
+    return "category_stage_filter";
+  }
   // --- Missing Filmed Intent ---
   const filmedPhrases = [
     "מה עוד לא צולם", "מה לא צולם", "מה נשאר לצלם",
@@ -291,6 +304,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   if (filmedPhrases.some((p) => rawText.includes(p))) {
     return "missing_filmed";
   }
+
   // --- Category/Topic Search Intent ---
   const categoryPhrases = ["מה הסטטוס", "מה הסטטוס של", "מה הסטאטוס", "מה הסטאטוס של", "מה קורה עם", "תראה לי תכני", "מה יש על"];
   if (categoryPhrases.some((p) => rawText.includes(p))) {
@@ -547,4 +561,77 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
     default:
       return taskNames;
   }
+};
+// Extract category and stage from a category_stage_filter query
+// e.g. "מה לא צולם בקפריסין" → { category: "קפריסין", stage: "filmed" }
+export const extractCategoryAndStage = (text: string): { category: string; stage: string } | null => {
+  const raw = text.trim();
+
+  const stageMap: Array<{ keywords: string[]; stage: string }> = [
+    { keywords: ["צולם", "צילום", "לצלם"], stage: "filmed" },
+    { keywords: ["נערך", "עריכה", "לערוך", "ערוך"], stage: "edited" },
+    { keywords: ["קאבר"], stage: "cover" },
+    { keywords: ["קופי"], stage: "copy" },
+    { keywords: ["עלה", "הועלה", "לעלות", "פורסם"], stage: "uploaded" },
+  ];
+
+  // Patterns: "מה לא X ב-Y" / "מה עוד לא X ב-Y" / "מה X ב-Y"
+ const categoryPatterns = [
+    /ב(.{2,15})$/,
+    /(על .{2,15})$/,
+    /של (.{2,15})$/,
+    /בקטגורית\s+(.{2,15})$/,
+  ];
+  let detectedStage: string | null = null;
+  let detectedCategory: string | null = null;
+
+  const normalized = raw.toLowerCase();
+
+  for (const { keywords, stage } of stageMap) {
+    if (keywords.some((k) => normalized.includes(k))) {
+      detectedStage = stage;
+      break;
+    }
+  }
+
+  for (const pattern of categoryPatterns) {
+    const match = raw.match(pattern);
+    if (match) {
+      detectedCategory = match[1].trim().replace(/[?!.,]/g, "");
+      break;
+    }
+  }
+
+  if (!detectedStage || !detectedCategory) return null;
+
+  return { category: detectedCategory, stage: detectedStage };
+};
+// Format response for category_stage_filter
+export const formatCategoryStageResponse = (
+  tasks: ProductionTaskRow[],
+  category: string,
+  stage: string
+): string => {
+  const stageLabels: Record<string, string> = {
+    filmed: "צולמו",
+    edited: "נערכו",
+    cover: "יש להם קאבר",
+    copy: "יש להם קופי",
+    uploaded: "עלו",
+  };
+
+  const stageLabel = stageLabels[stage] || stage;
+
+  if (tasks.length === 0) {
+    return `אין תכנים בקטגוריית ${category} שעדיין לא ${stageLabel}.`;
+  }
+
+  const taskNames = tasks
+    .slice(0, 5)
+    .map((t) => `- ${t.taskName.trim().split(/\s+/).slice(0, 6).join(" ")}`)
+    .join("\n");
+
+  const suffix = tasks.length > 5 ? `\n...ו${tasks.length - 5} עוד` : "";
+
+  return `תכנים בקטגוריית ${category} שעדיין לא ${stageLabel}:\n${taskNames}${suffix}`;
 };

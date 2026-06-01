@@ -25,9 +25,11 @@ import {
   createProductionTask,
   findProductionTaskByName,
   updateProductionStatus,
+  updateDeadline,
   getProductionStatusColumnIndex,
   getTasksMissingEdit,
   getTasksMissingFilmed,
+  getTasksByCategory,
   getContentIdeaSummary,
   getTasksMissingCover,
   getTasksMissingCopy,
@@ -39,7 +41,9 @@ import {
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
-  isProductionStatusUpdate,
+ isProductionStatusUpdate,
+  isDeadlineUpdate,
+  extractDeadlineUpdate,
   detectStatusUpdate,
   getColumnName,
 } from "../services/production-status.service";
@@ -53,7 +57,9 @@ import {
   isQuestionLikeMessage,
   extractPriorityFromQuery,
   formatWhatsImportantResponse,
-  formatPriorityFilterResponse,
+formatPriorityFilterResponse,
+  extractCategoryAndStage,
+  formatCategoryStageResponse,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -256,7 +262,7 @@ const replyText = `מעולה, הטרנד נשמר.
     }
 
     // Check if this is an edit request
-    if (isEditRequest(incomingText)) {
+   if (isEditRequest(incomingText) && !isDeadlineUpdate(incomingText)) {
       const pendingDraft = getPendingConfirmation(sender);
       if (pendingDraft) {
         const edit = parseEditRequest(incomingText);
@@ -362,6 +368,17 @@ const replyText = `מעולה, הטרנד נשמר.
             case "missing_filmed":
             tasks = await getTasksMissingFilmed(spreadsheetId);
             break;
+            case "category_stage_filter": {
+            const extracted = extractCategoryAndStage(incomingText);
+            if (!extracted) {
+              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזו קטגוריה ושלב ביקשת. נסי לכתוב למשל: מה לא צולם בקפריסין");
+              return res.status(200).json({ status: "visibility_query", sender });
+            }
+            const categoryTasks = await getTasksByCategory(spreadsheetId, extracted.category, extracted.stage);
+            const replyText = formatCategoryStageResponse(categoryTasks, extracted.category, extracted.stage);
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_category_stage", sender });
+          }
             case "content_summary": {
             const keyword = extractSearchKeyword(incomingText);
             if (!keyword) {
@@ -437,7 +454,13 @@ const replyText = `מעולה, הטרנד נשמר.
         });
       }
     }
-
+// Deadline update command
+    if (isDeadlineUpdate(incomingText)) {
+      const deadlineUpdate = extractDeadlineUpdate(incomingText);
+      if (!deadlineUpdate) {
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב: תשני את הדדליין של [שם הסרטון] ל-[תאריך]");
+        return res.status(200).json({ status: "deadline_update_parse_error", sender });
+      }
     // Handle unsupported question-like messages (after visibilityIntent is ruled out)
     if (questionLikeMessage) {
       const clarificationPrompt = generateClarificationPrompt(!!getPendingConfirmation(sender));
@@ -445,6 +468,27 @@ const replyText = `מעולה, הטרנד נשמר.
       return res.status(200).json({ status: "question_clarification", sender });
     }
 
+
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const matchResult = await findProductionTaskByName(spreadsheetId, deadlineUpdate.contentName);
+
+      if (!matchResult) {
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הסרטון. תנסי עם שם קצת יותר מדויק.");
+        return res.status(200).json({ status: "deadline_update_no_match", sender });
+      }
+
+      if ("ambiguous" in matchResult && matchResult.ambiguous) {
+        await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. תנסי עם שם יותר מדויק.");
+        return res.status(200).json({ status: "deadline_update_ambiguous", sender });
+      }
+
+      const exactMatch = matchResult as ProductionTaskMatch;
+      await updateDeadline(spreadsheetId, exactMatch.rowIndex, deadlineUpdate.deadline);
+
+      const replyText = `עדכנתי. הדדליין של "${exactMatch.row[1]}" הוא עכשיו ${deadlineUpdate.deadline}.`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "deadline_updated", sender });
+    }
     // Sprint 7: Check if this is a production status update
     if (isProductionStatusUpdate(incomingText)) {
       const statusUpdate = detectStatusUpdate(incomingText);
@@ -536,75 +580,7 @@ const replyText = `מעולה, הטרנד נשמר.
       }
     }
 
-    // Sprint 10: Check if this is a visibility query (read-only)
-    if (visibilityIntent) {
-      try {
-        const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-        if (!spreadsheetId) {
-          throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
-        }
-
-        console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
-
-        let tasks: any[] = [];
-        switch (visibilityIntent) {
-          case "edited_not_uploaded":
-            tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
-            break;
-          case "missing_edit":
-            tasks = await getTasksMissingEdit(spreadsheetId);
-            break;
-          case "missing_cover":
-            tasks = await getTasksMissingCover(spreadsheetId);
-            break;
-          case "missing_copy":
-            tasks = await getTasksMissingCopy(spreadsheetId);
-            break;
-          case "not_uploaded":
-            tasks = await getTasksNotUploaded(spreadsheetId);
-            break;
-          case "stuck_workflow":
-            tasks = await getStuckTasks(spreadsheetId);
-            break;
-          case "category_search": {
-            const keyword = extractSearchKeyword(incomingText);
-            if (!keyword) {
-              tasks = [];
-            } else {
-              tasks = await searchTasksByKeyword(spreadsheetId, keyword);
-            }
-            break;
-          }
-          default:
-            tasks = [];
-        }
-
-        const replyText = formatVisibilityResponse(tasks, visibilityIntent);
-        await safeSendWhatsAppMessage(sender, replyText);
-
-        console.log(`[Sprint 10] ✅ Visibility query response sent`);
-
-        return res.status(200).json({
-          status: "visibility_query",
-          sender,
-          intent: visibilityIntent,
-          taskCount: tasks.length,
-        });
-      } catch (visibilityError) {
-        const errorMessage =
-          visibilityError instanceof Error ? visibilityError.message : "Unknown error";
-        console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
-
-        const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
-        await safeSendWhatsAppMessage(sender, replyText);
-
-        return res.status(500).json({
-          status: "visibility_query_error",
-          sender,
-          error: errorMessage,
-        });
-      }
-    }
+  
     // If message looks like a visibility question but intent detection was unclear,
     // return a graceful fallback instead of progressing to draft creation.
     if (!visibilityIntent && isLikelyVisibilityQuery(incomingText)) {
