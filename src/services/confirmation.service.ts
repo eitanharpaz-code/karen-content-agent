@@ -341,3 +341,71 @@ export const getPendingConfirmation = (userId: string): DraftSummary | undefined
 export const clearPendingConfirmation = (userId: string): void => {
   pendingConfirmations.delete(userId);
 };
+// Archive intent detection
+export const isArchiveCommand = (message: string): boolean => {
+  const raw = message.trim().toLowerCase();
+  return (
+    raw.includes("ארכיון") ||
+    raw.includes("לארכיון") ||
+    raw.includes("בצד") ||
+    (raw.includes("תעבירי") && raw.includes("ארכיון")) ||
+    (raw.includes("תשמרי") && raw.includes("בצד"))
+  );
+};
+export const extractArchiveTarget = (message: string): string | null => {
+  const patterns = [
+    /תעבירי את (.+?) לארכיון/i,
+    /תעבירי את (.+?) בארכיון/i,
+    /שימי את (.+?) בארכיון/i,
+    /תשמרי את (.+?) בצד/i,
+    /העבירי את (.+?) לארכיון/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+};
+export const isViewArchiveCommand = (message: string): boolean => {
+  const raw = message.trim().toLowerCase();
+  const archiveWords = ["ארכיון", "רעיונות בצד", "בצד"];
+  const viewWords = ["מה יש", "מה נמצא", "מה קיים", "איזה סרטונים", "אילו סרטונים", "תזכיר", "תזכירי"];
+  const hasArchive = archiveWords.some((w) => raw.includes(w));
+  const hasView = viewWords.some((w) => raw.includes(w));
+  return hasArchive && hasView;
+};
+
+export const isRestoreCommand = (message: string): boolean => {
+  const raw = message.trim().toLowerCase();
+  return (
+    (raw.includes("תחזרי") || raw.includes("תחזיר") || raw.includes("תחזירי") || raw.includes("תוציאי") || raw.includes("תוציא")) &&
+    (raw.includes("ארכיון") || raw.includes("רעיונות") || raw.includes("בצד") || raw.includes("את"))
+  );
+};
+
+export const extractRestoreTarget = (message: string): string | null => {
+  const patterns = [
+    /תחזרי את (.+?) לרעיונות/i,
+    /תחזיר את (.+?) לרעיונות/i,
+    /תחזירי את (.+?) לרעיונות/i,
+    /תוציאי את (.+?) מהארכיון/i,
+    /תוציא את (.+?) מהארכיון/i,
+    /תחזרי את (.+?) מהארכיון/i,
+    /תחזיר את (.+?) מהארכיון/i,
+    /תחזירי את (.+?) מהארכיון/i,
+    /תחזרי את (.+)/i,
+    /תחזיר את (.+)/i,
+    /תחזירי את (.+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) return match[1].trim();
+  }
+
+  return null;
+};

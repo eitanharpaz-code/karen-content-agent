@@ -9,6 +9,7 @@ const SHEET_NAMES = {
   categories: "קטגוריות",
   eventsTimeline: "ציר אירועים",
   monthlyGantt: "גאנט תוכן",
+  archive: "רעיונות בצד",
 };
 
 const getAuthClient = () => {
@@ -891,4 +892,235 @@ export const updateDeadline = async (
   });
 
   console.log(`[Deadline] ✅ Updated deadline for row ${rowIndex} to: ${deadline}`);
+};
+// Find similar content idea in בנק רעיונות for duplicate detection
+export const findSimilarContentIdea = async (
+  spreadsheetId: string,
+  ideaText: string
+): Promise<{ contentId: string; idea: string } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:B`,
+  });
+
+  const values = response.data.values || [];
+  const normalized = normalizeHebrewText(ideaText).toLowerCase();
+
+  let bestMatch: { contentId: string; idea: string; score: number } | null = null;
+
+  for (const row of values.slice(1)) {
+    const idea = (row[1] || "").toString();
+    const normalizedIdea = normalizeHebrewText(idea).toLowerCase();
+    const score = getTokenOverlapScore(normalized, normalizedIdea);
+
+    if (score >= 2 && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = {
+        contentId: (row[0] || "").toString(),
+        idea,
+        score,
+      };
+    }
+  }
+
+  return bestMatch ? { contentId: bestMatch.contentId, idea: bestMatch.idea } : null;
+};
+// Archive content idea - move from בנק רעיונות to רעיונות בצד and delete from source
+export const archiveContentIdea = async (
+  spreadsheetId: string,
+  contentName: string
+): Promise<{ success: boolean; archivedName: string } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Find the row in בנק רעיונות
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+  });
+
+  const values = response.data.values || [];
+  const normalized = normalizeHebrewText(contentName).toLowerCase();
+
+  let matchIndex = -1;
+  let matchRow: string[] = [];
+
+  for (let i = 1; i < values.length; i++) {
+    const idea = (values[i][1] || "").toString();
+    const score = getTokenOverlapScore(normalized, normalizeHebrewText(idea).toLowerCase());
+    if (score >= 1) {
+      matchIndex = i + 1; // 1-indexed sheet row
+      matchRow = values[i];
+      break;
+    }
+  }
+
+  if (matchIndex === -1) return null;
+
+  // Add to רעיונות בצד with archive timestamp
+  const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+ // Pad matchRow to exactly 11 columns before adding timestamp to column L
+  const paddedRow = Array.from({ length: 11 }, (_, i) => matchRow[i] || "");
+  const archiveRow = [...paddedRow, israelTime];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${SHEET_NAMES.archive}!A:L`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [archiveRow] },
+  });
+
+  // Delete from בנק רעיונות
+  const sheetMeta = await getSpreadsheetMetadata(spreadsheetId);
+  const sourceSheet = sheetMeta.sheets?.find((s) => s.title === SHEET_NAMES.contentLibrary);
+  if (!sourceSheet?.sheetId) throw new Error("Could not find בנק רעיונות sheet ID");
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: sourceSheet.sheetId,
+              dimension: "ROWS",
+              startIndex: matchIndex - 1,
+              endIndex: matchIndex,
+            },
+          },
+        },
+      ],
+    },
+  });
+// Delete from משימות הפקה by content_id
+  const contentId = (matchRow[0] || "").toString();
+  if (contentId) {
+    const tasksResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.productionTasks}!A:A`,
+    });
+    const taskRows = tasksResponse.data.values || [];
+    const taskRowIndex = taskRows.findIndex((row, i) => i > 0 && row[0] === contentId);
+    if (taskRowIndex > 0) {
+      const taskSheetMeta = await getSpreadsheetMetadata(spreadsheetId);
+      const taskSheet = taskSheetMeta.sheets?.find((s) => s.title === SHEET_NAMES.productionTasks);
+      if (taskSheet?.sheetId !== undefined) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                deleteDimension: {
+                  range: {
+                    sheetId: taskSheet.sheetId,
+                    dimension: "ROWS",
+                    startIndex: taskRowIndex,
+                    endIndex: taskRowIndex + 1,
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+    }
+  }
+
+  return { success: true, archivedName: (matchRow[1] || contentName).toString() };
+};
+// Get list of archived content ideas
+export const getArchiveList = async (spreadsheetId: string): Promise<{ contentId: string; idea: string }[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.archive}!A:B`,
+  });
+
+  const values = response.data.values || [];
+  return values.slice(1)
+    .filter((row) => row[0] && row[1])
+    .map((row) => ({
+      contentId: row[0].toString(),
+      idea: row[1].toString(),
+    }));
+};
+
+// Restore content idea from archive back to בנק רעיונות + create production task
+export const restoreFromArchive = async (
+  spreadsheetId: string,
+  contentName: string
+): Promise<{ success: boolean; restoredName: string } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Find in archive
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.archive}!A:L`,
+  });
+
+  const values = response.data.values || [];
+  const normalized = normalizeHebrewText(contentName).toLowerCase();
+
+  let matchIndex = -1;
+  let matchRow: string[] = [];
+
+let bestScore = 0;
+  for (let i = 1; i < values.length; i++) {
+    const idea = (values[i][1] || "").toString();
+    const score = getTokenOverlapScore(normalized, normalizeHebrewText(idea).toLowerCase());
+    if (score > bestScore) {
+      bestScore = score;
+      matchIndex = i + 1;
+      matchRow = values[i];
+    }
+  }
+  if (bestScore < 1) matchIndex = -1;
+
+  if (matchIndex === -1) return null;
+
+  // Add back to בנק רעיונות (columns A-K only, skip timestamp in L)
+  const ideaRow = matchRow.slice(0, 11);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [ideaRow] },
+  });
+
+  // Re-create production task
+  const contentId = (matchRow[0] || "").toString();
+  const contentShortName = (matchRow[1] || "").toString().split(/\s+/).slice(0, 6).join(" ");
+  await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
+    contentId, contentShortName, "לא", "לא", "לא", "לא", "לא", "לא", "", "", "",
+  ]);
+
+  // Delete from archive
+  const sheetMeta = await getSpreadsheetMetadata(spreadsheetId);
+  const archiveSheet = sheetMeta.sheets?.find((s) => s.title === SHEET_NAMES.archive);
+  if (archiveSheet?.sheetId !== undefined) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: archiveSheet.sheetId,
+                dimension: "ROWS",
+                startIndex: matchIndex - 1,
+                endIndex: matchIndex,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  return { success: true, restoredName: (matchRow[1] || contentName).toString() };
 };

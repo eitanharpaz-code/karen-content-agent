@@ -16,6 +16,11 @@ import {
   isNewIdeaCommand,
   getNewIdeaText,
   isTrendCommand,
+ isArchiveCommand,
+  extractArchiveTarget,
+  isViewArchiveCommand,
+  isRestoreCommand,
+  extractRestoreTarget,
   getTrendText,
 } from "../services/confirmation.service";
 import {
@@ -26,6 +31,10 @@ import {
   findProductionTaskByName,
   updateProductionStatus,
   updateDeadline,
+  findSimilarContentIdea,
+ archiveContentIdea,
+  getArchiveList,
+  restoreFromArchive,
   getProductionStatusColumnIndex,
   getTasksMissingEdit,
   getTasksMissingFilmed,
@@ -454,8 +463,58 @@ const replyText = `מעולה, הטרנד נשמר.
         });
       }
     }
-// Deadline update command
-    if (isDeadlineUpdate(incomingText)) {
+// Archive - view list
+// View archive list
+    // Archive - move to archive
+if (isViewArchiveCommand(incomingText)) {
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const archiveList = await getArchiveList(spreadsheetId);
+      if (archiveList.length === 0) {
+        await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות בארכיון.");
+        return res.status(200).json({ status: "archive_empty", sender });
+      }
+      const listText = archiveList.slice(0, 10).map((item) => `- ${item.idea.split(/\s+/).slice(0, 6).join(" ")}`).join("\n");
+      const suffix = archiveList.length > 10 ? `\n...ו${archiveList.length - 10} עוד` : "";
+      await safeSendWhatsAppMessage(sender, `הרעיונות שבצד:\n${listText}${suffix}`);
+      return res.status(200).json({ status: "archive_listed", sender });
+    }
+
+    // Restore from archive
+    if (isRestoreCommand(incomingText)) {
+      const target = extractRestoreTarget(incomingText);
+      if (!target) {
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון להחזיר. נסי לכתוב: תחזרי את [שם הרעיון] לרעיונות");
+        return res.status(200).json({ status: "restore_parse_error", sender });
+      }
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const result = await restoreFromArchive(spreadsheetId, target);
+      if (!result) {
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון בארכיון. תנסי עם שם קצת יותר מדויק.");
+        return res.status(200).json({ status: "restore_not_found", sender });
+      }
+      await safeSendWhatsAppMessage(sender, `מעולה, החזרתי את הרעיון "${result.restoredName}" לבנק הרעיונות.`);
+      return res.status(200).json({ status: "restored", sender });
+    }    
+if (isArchiveCommand(incomingText)) {
+      const target = extractArchiveTarget(incomingText);
+      if (!target) {
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון לשמור בצד. נסי לכתוב: תעבירי את [שם הרעיון] לארכיון");
+        return res.status(200).json({ status: "archive_parse_error", sender });
+      }
+
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const result = await archiveContentIdea(spreadsheetId, target);
+
+      if (!result) {
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. תנסי עם שם קצת יותר מדויק.");
+        return res.status(200).json({ status: "archive_not_found", sender });
+      }
+
+      const replyText = `אין בעיה.\nשמרתי את הרעיון "${result.archivedName}" בצד למקרה שתרצי לחזור אליו.`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "archived", sender });
+    }   
+if (isDeadlineUpdate(incomingText)) {
       const deadlineUpdate = extractDeadlineUpdate(incomingText);
       if (!deadlineUpdate) {
         await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב: תשני את הדדליין של [שם הסרטון] ל-[תאריך]");
@@ -636,8 +695,24 @@ const replyText = `מעולה, הטרנד נשמר.
     };
     storePendingConfirmation(sender, draftSummary);
 
-    // Format response
-    const replyText = `יש פה כיוון טוב.
+  // Check for duplicates before confirming
+    const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+    const similar = spreadsheetId
+      ? await findSimilarContentIdea(spreadsheetId, cleanedUserInput)
+      : null;
+
+    const replyText = similar
+      ? `יש פה כיוון טוב.
+
+שם קצר: ${draft.shortName}
+קטגוריה: ${displayCategory(draft.category)}
+טון: ${displayTone(draft.tone)}
+עדיפות: ${displayPriority(draft.priority)}
+סיכום: ${draft.summary}
+
+שימי לב - מצאתי רעיון דומה שכבר קיים: "${similar.idea.substring(0, 40)}..."
+רוצה לשמור בכל זאת?`
+      : `יש פה כיוון טוב.
 
 שם קצר: ${draft.shortName}
 קטגוריה: ${displayCategory(draft.category)}
