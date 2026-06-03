@@ -869,6 +869,24 @@ export const getTasksByCategory = async (
   return filtered;
 };
 // Update deadline for a production task
+export const findRowIndexByContentId = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<number | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.productionTasks}!A:A`,
+  });
+  const rows = response.data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]?.toString().trim() === contentId.trim()) {
+      return i + 1; // 1-indexed
+    }
+  }
+  return null;
+};
 export const updateDeadline = async (
   spreadsheetId: string,
   rowIndex: number,

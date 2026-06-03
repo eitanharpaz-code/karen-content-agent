@@ -52,6 +52,7 @@ import {
   searchTasksByKeyword,
  getAllProductionTasksWithPriority,
   getCategories,
+  findRowIndexByContentId,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -107,6 +108,25 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
+   if (pendingQuestion?.questionType === "set_deadline") {
+      const contentId = pendingQuestion.context?.contentId as string;
+      clearPendingQuestion(sender);
+      if (isRejectionMessage(incomingText) || incomingText.trim() === "לא") {
+        await safeSendWhatsAppMessage(sender, "בסדר, אפשר תמיד להוסיף תאריך אחר כך.");
+        return res.status(200).json({ status: "deadline_skipped", sender });
+      }
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+      if (spreadsheetId && contentId) {
+        const rowIndex = await findRowIndexByContentId(spreadsheetId, contentId);
+        if (rowIndex) {
+          await updateDeadline(spreadsheetId, rowIndex, incomingText.trim());
+          await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את הדדליין ל-${incomingText.trim()}.`);
+        } else {
+          await safeSendWhatsAppMessage(sender, "לא מצאתי את המשימה בגיליון, אפשר לעדכן ידנית.");
+        }
+      }
+      return res.status(200).json({ status: "deadline_set", sender });
+    }
     if (pendingQuestion && isRejectionMessage(incomingText)) {
       clearPendingQuestion(sender);
       await safeSendWhatsAppMessage(sender, "אין בעיה, עזבתי את הרעיון.");
@@ -274,6 +294,11 @@ const replyText = `מעולה, הטרנד נשמר.
           } else {
            const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
             await safeSendWhatsAppMessage(sender, replyText);
+            storePendingQuestion(sender, {
+              questionType: "set_deadline",
+              context: { contentId },
+            });
+            await safeSendWhatsAppMessage(sender, "יש תאריך יעד לסרטון הזה?");
             console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
           }
 
