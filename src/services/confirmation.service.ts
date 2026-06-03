@@ -3,6 +3,23 @@ import { DraftSummary } from "../types/content.types";
 // In-memory storage for pending confirmations (MVP)
 const pendingConfirmations = new Map<string, DraftSummary>();
 
+// Pending question context - what the agent last asked
+type PendingQuestion = {
+  questionType: string;  // e.g. "show_trends", "confirm_deadline", "show_more"
+  context?: Record<string, unknown>;  // optional extra data
+};
+const pendingQuestions = new Map<string, PendingQuestion>();
+
+export const storePendingQuestion = (userId: string, question: PendingQuestion): void => {
+  pendingQuestions.set(userId, question);
+};
+export const getPendingQuestion = (userId: string): PendingQuestion | undefined => {
+  return pendingQuestions.get(userId);
+};
+export const clearPendingQuestion = (userId: string): void => {
+  pendingQuestions.delete(userId);
+};
+
 // Translation mappings: Hebrew (canonical) to Hebrew display
 // These are used for parsing user edits from Hebrew text
 const PRIORITY_HEBREW_VALUES: Record<string, string> = {
