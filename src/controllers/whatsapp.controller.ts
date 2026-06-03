@@ -3,6 +3,7 @@ import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft } from "../services/content.service";
 import {
   isConfirmationMessage,
+  isRejectionMessage,
   isEditRequest,
   parseEditRequest,
   applyEditToDraft,
@@ -106,8 +107,33 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
+    if (pendingQuestion && isRejectionMessage(incomingText)) {
+      clearPendingQuestion(sender);
+      await safeSendWhatsAppMessage(sender, "אין בעיה, עזבתי את הרעיון.");
+      return res.status(200).json({ status: "pending_question_rejected", sender });
+    }
     if (pendingQuestion && isConfirmationMessage(incomingText)) {
-      switch (pendingQuestion.questionType) {
+     switch (pendingQuestion.questionType) {
+        case "confirm_duplicate": {
+          clearPendingQuestion(sender);
+          const originalInput = pendingQuestion.context?.originalInput as string;
+          if (!originalInput) {
+            await safeSendWhatsAppMessage(sender, "משהו השתבש, נסי שוב.");
+            return res.status(200).json({ status: "duplicate_context_missing", sender });
+          }
+          const draft = await createContentDraft(originalInput);
+          const draftSummary = { ...draft, originalUserInput: originalInput };
+          storePendingConfirmation(sender, draftSummary);
+          const replyText = `יש פה כיוון טוב.
+שם קצר: ${draft.shortName}
+קטגוריה: ${displayCategory(draft.category)}
+טון: ${displayTone(draft.tone)}
+עדיפות: ${displayPriority(draft.priority)}
+סיכום: ${draft.summary}
+זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
+          await safeSendWhatsAppMessage(sender, replyText);
+          return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
+        }
       }
     }
 
@@ -697,45 +723,40 @@ if (isDeadlineUpdate(incomingText)) {
       return res.status(200).json({ status: "low_confidence_idea", sender });
     }
 
-    // Create new content draft
-    // FIX 1: Clean conversational prefixes before creating draft
+// Create new content draft
     const cleanedUserInput = cleanIdeaPrefix(incomingText);
-    const draft = await createContentDraft(cleanedUserInput);
+    const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 
-    // Store pending confirmation with cleaned input
+    // Check for duplicates BEFORE creating draft
+    const similar = spreadsheetId
+      ? await findSimilarContentIdea(spreadsheetId, cleanedUserInput)
+      : null;
+
+    if (similar) {
+      storePendingQuestion(sender, {
+        questionType: "confirm_duplicate",
+        context: { originalInput: cleanedUserInput },
+      });
+      const replyText = `שימי לב - מצאתי רעיון דומה שכבר קיים: "${similar.idea.substring(0, 50)}..." (${similar.contentId})
+רוצה לשמור בכל זאת?`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "duplicate_found", sender });
+    }
+
+    // No duplicate - create draft normally
+    const draft = await createContentDraft(cleanedUserInput);
     const draftSummary = {
       ...draft,
       originalUserInput: cleanedUserInput,
     };
     storePendingConfirmation(sender, draftSummary);
-
-  // Check for duplicates before confirming
-    const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-    const similar = spreadsheetId
-      ? await findSimilarContentIdea(spreadsheetId, cleanedUserInput)
-      : null;
-
-    const replyText = similar
-      ? `יש פה כיוון טוב.
-
+    const replyText = `יש פה כיוון טוב.
 שם קצר: ${draft.shortName}
 קטגוריה: ${displayCategory(draft.category)}
 טון: ${displayTone(draft.tone)}
 עדיפות: ${displayPriority(draft.priority)}
 סיכום: ${draft.summary}
-
-שימי לב - מצאתי רעיון דומה שכבר קיים: "${similar.idea.substring(0, 40)}..."
-רוצה לשמור בכל זאת?`
-      : `יש פה כיוון טוב.
-
-שם קצר: ${draft.shortName}
-קטגוריה: ${displayCategory(draft.category)}
-טון: ${displayTone(draft.tone)}
-עדיפות: ${displayPriority(draft.priority)}
-סיכום: ${draft.summary}
-
 זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
-
     await safeSendWhatsAppMessage(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 

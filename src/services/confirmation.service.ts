@@ -85,7 +85,11 @@ export const isConfirmationMessage = (text: string): boolean => {
   const yesWords = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב"];
   return yesWords.includes(normalized);
 };
-
+export const isRejectionMessage = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  const noWords = ["לא", "לא תודה", "בטלי", "אל תשמרי", "עזבי את זה"];
+  return noWords.includes(normalized);
+};
 export const isResetRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
   const resetCommands = [
