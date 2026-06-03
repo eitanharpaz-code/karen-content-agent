@@ -12,6 +12,9 @@ import {
   storePendingConfirmation,
   getPendingConfirmation,
   clearPendingConfirmation,
+  storePendingQuestion,
+  getPendingQuestion,
+  clearPendingQuestion,
   isResetRequest,
   isNewIdeaCommand,
   getNewIdeaText,
@@ -101,6 +104,13 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   }
 
   try {
+    // Check for pending question response (priority: before draft checks)
+    const pendingQuestion = getPendingQuestion(sender);
+    if (pendingQuestion && isConfirmationMessage(incomingText)) {
+      switch (pendingQuestion.questionType) {
+      }
+    }
+
     // Sprint 9: New idea command should clear existing draft and start a fresh one
     // Fast Lane: Trend content - quick save without full draft flow
     if (isTrendCommand(incomingText)) {
@@ -423,6 +433,7 @@ const replyText = `מעולה, הטרנד נשמר.
             const thisWeek = allTasks.filter((t) => t.deadlineDate !== null && isThisWeek(t.deadline) && t.uploaded !== "כן");
             const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek);
             await safeSendWhatsAppMessage(sender, replyText);
+            
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           case "priority_filter": {
