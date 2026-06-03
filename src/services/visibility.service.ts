@@ -564,7 +564,7 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
 };
 // Extract category and stage from a category_stage_filter query
 // e.g. "מה לא צולם בקפריסין" → { category: "קפריסין", stage: "filmed" }
-export const extractCategoryAndStage = (text: string): { category: string; stage: string } | null => {
+export const extractCategoryAndStage = (text: string, categoryNames: string[]): { category: string; stage: string } | null => {
   const raw = text.trim();
 
   const stageMap: Array<{ keywords: string[]; stage: string }> = [
@@ -575,35 +575,22 @@ export const extractCategoryAndStage = (text: string): { category: string; stage
     { keywords: ["עלה", "הועלה", "לעלות", "פורסם"], stage: "uploaded" },
   ];
 
-  // Patterns: "מה לא X ב-Y" / "מה עוד לא X ב-Y" / "מה X ב-Y"
- const categoryPatterns = [
-    /ב(.{2,15})$/,
-    /(על .{2,15})$/,
-    /של (.{2,15})$/,
-    /בקטגורית\s+(.{2,15})$/,
-  ];
-  let detectedStage: string | null = null;
+ let detectedStage: string | null = null;
   let detectedCategory: string | null = null;
-
   const normalized = raw.toLowerCase();
-
   for (const { keywords, stage } of stageMap) {
     if (keywords.some((k) => normalized.includes(k))) {
       detectedStage = stage;
       break;
     }
   }
-
-  for (const pattern of categoryPatterns) {
-    const match = raw.match(pattern);
-    if (match) {
-      detectedCategory = match[1].trim().replace(/[?!.,]/g, "");
+  for (const name of categoryNames) {
+    if (new RegExp(`(^|\\s|ב|ל|מ|ש)${name.toLowerCase()}(\\s|$)`).test(normalized)) {
+      detectedCategory = name;
       break;
     }
   }
-
   if (!detectedStage || !detectedCategory) return null;
-
   return { category: detectedCategory, stage: detectedStage };
 };
 // Format response for category_stage_filter

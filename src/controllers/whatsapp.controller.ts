@@ -46,7 +46,8 @@ import {
   getTasksEditedAndNotUploaded,
   getStuckTasks,
   searchTasksByKeyword,
-  getAllProductionTasksWithPriority,
+ getAllProductionTasksWithPriority,
+  getCategories,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -378,7 +379,9 @@ const replyText = `מעולה, הטרנד נשמר.
             tasks = await getTasksMissingFilmed(spreadsheetId);
             break;
             case "category_stage_filter": {
-            const extracted = extractCategoryAndStage(incomingText);
+           const allCategories = await getCategories(spreadsheetId);
+            const categoryNames = allCategories.map((c) => c.categoryName).sort((a, b) => b.length - a.length);
+            const extracted = extractCategoryAndStage(incomingText, categoryNames);
             if (!extracted) {
               await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזו קטגוריה ושלב ביקשת. נסי לכתוב למשל: מה לא צולם בקפריסין");
               return res.status(200).json({ status: "visibility_query", sender });

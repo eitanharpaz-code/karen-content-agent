@@ -851,13 +851,10 @@ export const getTasksByCategory = async (
     getContentIdeasWithPriority(spreadsheetId),
   ]);
 
-  const normalizedCategory = normalizeHebrewText(category);
-
   const filtered = tasks.filter((task) => {
     const idea = ideasMap.get(task.contentId);
     if (!idea) return false;
-    const taskCategory = normalizeHebrewText(idea.category);
-    if (taskCategory !== normalizedCategory) return false;
+    if (idea.category.trim() !== category.trim()) return false;
 
     switch (stage) {
       case "filmed":   return task.filmed !== "כן";
