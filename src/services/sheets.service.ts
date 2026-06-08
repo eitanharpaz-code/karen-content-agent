@@ -1139,3 +1139,49 @@ let bestScore = 0;
 
   return { success: true, restoredName: (matchRow[1] || contentName).toString() };
 };
+export const getGanttByDateRange = async (
+  spreadsheetId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<any[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `גאנט תוכן!A:M`,
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length < 2) return [];
+
+  const results: any[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const dateStr = (row[1] || "").toString().trim();
+    if (!dateStr) continue;
+
+    const parsed = parseDateFromSheet(dateStr);
+    if (!parsed) continue;
+
+    if (parsed >= startDate && parsed <= endDate) {
+      results.push({
+        contentId: (row[0] || "").toString().trim(),
+        date: dateStr,
+        day: (row[2] || "").toString().trim(),
+        platform: (row[3] || "").toString().trim(),
+        contentType: (row[4] || "").toString().trim(),
+        name: (row[5] || "").toString().trim(),
+        topic: (row[6] || "").toString().trim(),
+        priority: (row[7] || "").toString().trim(),
+        hasStories: (row[8] || "").toString().trim(),
+        collaboration: (row[9] || "").toString().trim(),
+        status: (row[10] || "").toString().trim(),
+        uploadTime: (row[11] || "").toString().trim(),
+        notes: (row[12] || "").toString().trim(),
+      });
+    }
+  }
+
+  return results;
+};

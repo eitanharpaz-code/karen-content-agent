@@ -18,6 +18,7 @@ export type VisibilityIntent =
   | "missing_filmed"
   | "content_summary"
   | "category_stage_filter"
+  | "gantt_query"
   | null;
 
 /**
@@ -280,6 +281,17 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   ];
   if (summaryPhrases.some((p) => rawText.includes(p))) {
     return "content_summary";
+  }
+
+// --- Gantt Query ---
+  const ganttPhrases = [
+    "מה בגאנט", "מה יש בגאנט", "מה בתכנון השבוע", "מה מתוכנן השבוע",
+    "מה עולה השבוע", "מה אמור לעלות השבוע", "מה יש השבוע",
+    "מה בגאנט השבוע", "תראי לי את הגאנט", "מה הגאנט",
+    "מה מתוכנן החודש", "מה בגאנט החודש",
+  ];
+  if (ganttPhrases.some((p) => rawText.includes(p))) {
+    return "gantt_query";
   }
 
   // --- Category + Stage Filter - חייב להיות לפני missing_filmed ---
@@ -621,4 +633,24 @@ export const formatCategoryStageResponse = (
   const suffix = tasks.length > 5 ? `\n...ו${tasks.length - 5} עוד` : "";
 
   return `תכנים בקטגוריית ${category} שעדיין לא ${stageLabel}:\n${taskNames}${suffix}`;
+};
+export const formatGanttResponse = (items: any[], period: string): string => {
+  if (items.length === 0) {
+    return `לא מצאתי תכנים מתוכננים ל${period}.`;
+  }
+
+  const lines = items.map((item) => {
+    const name = item.name || item.contentId || "ללא שם";
+    const day = item.day ? ` (${item.day})` : "";
+    const time = item.uploadTime ? ` בשעה ${item.uploadTime}` : "";
+    const platform = item.platform ? ` | ${item.platform}` : "";
+    const status = item.status ? ` | ${item.status}` : "";
+    const stories = item.hasStories === "כן" ? " | + סטורי תומך" : "";
+    const collab = item.collaboration && item.collaboration !== "לא" ? ` | שת"פ: ${item.collaboration}` : "";
+    const warning = item.status === "בתכנון" ? "\n  ⚠️ עדיין לא מוכן" : "";
+
+    return `${item.date}${day}${time}\n  ${name}${platform}${status}${stories}${collab}${warning}`;
+  });
+
+  return `תכנים מתוכננים ל${period}:\n\n${lines.join("\n\n")}`;
 };

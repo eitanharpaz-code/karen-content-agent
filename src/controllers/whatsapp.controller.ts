@@ -52,7 +52,8 @@ import {
   searchTasksByKeyword,
  getAllProductionTasksWithPriority,
   getCategories,
-  findRowIndexByContentId,
+ findRowIndexByContentId,
+  getGanttByDateRange,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -74,7 +75,8 @@ import {
   formatWhatsImportantResponse,
 formatPriorityFilterResponse,
   extractCategoryAndStage,
-  formatCategoryStageResponse,
+ formatCategoryStageResponse,
+  formatGanttResponse,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -466,6 +468,19 @@ const replyText = `מעולה, הטרנד נשמר.
             const replyText = `מצאתי את הסרטון\n"${summary.shortName}"\nהרעיון שלו:\n${summary.idea}`;
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_content_summary", sender });
+          }
+          case "gantt_query": {
+            const now = new Date();
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() - now.getDay() + 1);
+            startOfWeek.setHours(0, 0, 0, 0);
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            endOfWeek.setHours(23, 59, 59, 999);
+            const ganttItems = await getGanttByDateRange(spreadsheetId, startOfWeek, endOfWeek);
+            const replyText = formatGanttResponse(ganttItems, "השבוע");
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_gantt", sender });
           }
           case "category_search": {
             const keyword = extractSearchKeyword(incomingText);
