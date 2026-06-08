@@ -25,6 +25,8 @@ import {
   isViewArchiveCommand,
   isRestoreCommand,
   extractRestoreTarget,
+  isApproveForProductionCommand,
+  extractApproveTarget,
   getTrendText,
 } from "../services/confirmation.service";
 import {
@@ -51,8 +53,9 @@ import {
   searchTasksByKeyword,
  getAllProductionTasksWithPriority,
   getCategories,
- findRowIndexByContentId,
+findRowIndexByContentId,
   getGanttByDateRange,
+  approveContentForProduction,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -554,7 +557,22 @@ if (isViewArchiveCommand(incomingText)) {
       }
       await safeSendWhatsAppMessage(sender, `מעולה, החזרתי את הרעיון "${result.restoredName}" לבנק הרעיונות.`);
       return res.status(200).json({ status: "restored", sender });
-    }    
+    }  
+    if (isApproveForProductionCommand(incomingText)) {
+      const target = extractApproveTarget(incomingText);
+      if (!target) {
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון להוסיף להפקה. נסי לכתוב: תוסיפי את [שם הרעיון] להפקה");
+        return res.status(200).json({ status: "approve_parse_error", sender });
+      }
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const result = await approveContentForProduction(spreadsheetId, target);
+      if (!result) {
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. נסי עם שם קצת יותר מדויק.");
+        return res.status(200).json({ status: "approve_not_found", sender });
+      }
+      await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${result.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
+      return res.status(200).json({ status: "approved_for_production", sender });
+    }  
 if (isArchiveCommand(incomingText)) {
       const target = extractArchiveTarget(incomingText);
       if (!target) {

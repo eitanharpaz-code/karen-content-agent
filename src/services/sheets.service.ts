@@ -9,7 +9,8 @@ const SHEET_NAMES = {
   categories: "קטגוריות",
   eventsTimeline: "ציר אירועים",
   monthlyGantt: "גאנט תוכן",
-  archive: "רעיונות בצד",
+ archive: "רעיונות בצד",
+  approvedContent: "תכנים שאושרו",
 };
 
 const getAuthClient = () => {
@@ -1138,6 +1139,58 @@ let bestScore = 0;
   }
 
   return { success: true, restoredName: (matchRow[1] || contentName).toString() };
+};
+export const approveContentForProduction = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<{ success: boolean; name: string }> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // 1. מצא את הרעיון בבנק רעיונות
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:M`,
+  });
+
+  const rows = response.data.values || [];
+ const rowIndex = rows.findIndex((row, i) => {
+    if (i === 0) return false;
+    const rowName = (row[1] || "").toString().trim();
+    const rowId = (row[0] || "").toString().trim();
+    return rowId === contentId || rowName.includes(contentId) || contentId.includes(rowName);
+  });
+  if (rowIndex === -1) throw new Error(`לא נמצא רעיון עם ID: ${contentId}`);
+
+  const row = rows[rowIndex];
+  const actualContentId = (row[0] || "").toString().trim();
+  const name = (row[1] || "").toString().trim();
+  const summary = (row[2] || "").toString().trim();
+  const category = (row[3] || "").toString().trim();
+  const tone = (row[4] || "").toString().trim();
+  const priority = (row[8] || "").toString().trim();
+  const collab = (row[10] || "").toString().trim();
+  const notes = (row[11] || "").toString().trim();
+  const timestamp = new Date().toISOString();
+
+  // 2. הוסף לתכנים שאושרו
+await appendRowToSheet(spreadsheetId, SHEET_NAMES.approvedContent, [
+    actualContentId, name, summary, category, tone, priority,
+    "ממתין לצילום", collab, notes, timestamp,
+  ]);
+
+  // 3. פתח שורה במשימות הפקה
+await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
+    actualContentId, name, "לא", "לא", "לא", "", "",
+  ]);
+
+  // 4. מחק מבנק רעיונות
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A${rowIndex + 1}:M${rowIndex + 1}`,
+  });
+
+  return { success: true, name };
 };
 export const getGanttByDateRange = async (
   spreadsheetId: string,

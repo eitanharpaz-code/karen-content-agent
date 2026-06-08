@@ -373,6 +373,29 @@ export const isArchiveCommand = (message: string): boolean => {
     (raw.includes("תשמרי") && raw.includes("בצד"))
   );
 };
+export const isApproveForProductionCommand = (message: string): boolean => {
+  const raw = message.trim();
+  return (
+    (raw.includes("תוסיפי") && raw.includes("להפקה")) ||
+    (raw.includes("תוסיף") && raw.includes("להפקה")) ||
+    (raw.includes("להעביר") && raw.includes("להפקה")) ||
+    (raw.includes("תעבירי") && raw.includes("להפקה"))
+  );
+};
+
+export const extractApproveTarget = (message: string): string | null => {
+  const patterns = [
+    /תוסיפי את (.+?) להפקה/i,
+    /תוסיף את (.+?) להפקה/i,
+    /להעביר את (.+?) להפקה/i,
+    /תעבירי את (.+?) להפקה/i,
+  ];
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) return match[1].trim();
+  }
+  return null;
+};
 export const extractArchiveTarget = (message: string): string | null => {
   const patterns = [
     /תעבירי את (.+?) לארכיון/i,
