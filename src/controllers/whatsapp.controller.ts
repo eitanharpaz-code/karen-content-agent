@@ -31,7 +31,6 @@ import {
   getExistingContentIds,
   generateContentId,
   saveContentIdea,
-  createProductionTask,
   findProductionTaskByName,
   updateProductionStatus,
   updateDeadline,
@@ -272,37 +271,18 @@ const replyText = `מעולה, הטרנד נשמר.
             throw new Error(`Failed to save content idea: ${errorMessage}`);
           }
 
-          // STEP 2: Create production task in משימות הפקה (DERIVED SHEET)
-          let taskCreationFailed = false;
-          try {
-            await createProductionTask(
-              spreadsheetId,
-              contentId,
-              pendingDraft.shortName
-            );
-            console.log(`[Sprint 6 Workflow] ✅ DERIVED SHEET (משימות הפקה) write succeeded`);
-          } catch (taskError) {
-            const errorMessage = taskError instanceof Error ? taskError.message : "Unknown error";
-            console.error(`[Sprint 6 Workflow] ⚠️  DERIVED SHEET (משימות הפקה) write FAILED: ${errorMessage}`);
-            taskCreationFailed = true;
-            // Continue - content was saved but task creation failed
-          }
+          // STEP 2: Production task created manually when content is approved for production
+          const taskCreationFailed = false;
 
-          // STEP 3: Send WhatsApp confirmation
-          if (taskCreationFailed) {
-            const replyText = `הרעיון נשמר בהצלחה.\nID: ${contentId}\n\nהערה: קרתה שגיאה בטיפול היומי אך הרעיון שמור.`;
-            await safeSendWhatsAppMessage(sender, replyText);
-            console.log(`[Sprint 6 Workflow] ⚠️  WhatsApp confirmation sent (with warning about task creation failure)`);
-          } else {
-           const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
-            await safeSendWhatsAppMessage(sender, replyText);
-            storePendingQuestion(sender, {
-              questionType: "set_deadline",
-              context: { contentId },
-            });
-            await safeSendWhatsAppMessage(sender, "יש תאריך יעד לסרטון הזה?");
-            console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
-          }
+         // STEP 3: Send WhatsApp confirmation
+          const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
+          await safeSendWhatsAppMessage(sender, replyText);
+          storePendingQuestion(sender, {
+            questionType: "set_deadline",
+            context: { contentId },
+          });
+          await safeSendWhatsAppMessage(sender, "יש תאריך יעד לסרטון הזה?");
+          console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
 
           console.log(`[Sprint 6 Workflow] ✅ COMPLETE: Content ${contentId} confirmed and saved\n`);
 
