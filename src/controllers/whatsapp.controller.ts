@@ -115,7 +115,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
    if (pendingQuestion?.questionType === "set_deadline") {
       const contentId = pendingQuestion.context?.contentId as string;
       clearPendingQuestion(sender);
-      if (isRejectionMessage(incomingText) || incomingText.trim() === "לא") {
+      const looksLikeDate = /\d/.test(incomingText) || 
+        ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"].some(m => incomingText.includes(m));
+      if (isRejectionMessage(incomingText) || !looksLikeDate) {
         await safeSendWhatsAppMessage(sender, "בסדר, אפשר תמיד להוסיף תאריך אחר כך.");
         return res.status(200).json({ status: "deadline_skipped", sender });
       }
