@@ -56,6 +56,7 @@ import {
 findRowIndexByContentId,
   getGanttByDateRange,
   approveContentForProduction,
+  updateGanttStatus,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -667,30 +668,42 @@ if (isDeadlineUpdate(incomingText)) {
           }
 
           // Found exactly one match - update all detected statuses
-          const exactMatch = matchResult as ProductionTaskMatch;
-          const statusUpdates = statusUpdate.statusTypes.map((statusType) => {
-            const columnName = getColumnName(statusType);
-            const columnIndex = getProductionStatusColumnIndex(columnName);
-            if (!columnIndex) {
-              throw new Error(`Invalid column name: ${columnName}`);
-            }
-            return { statusType, columnName, columnIndex };
-          });
-
-          const uniqueUpdates = Array.from(
+         const exactMatch = matchResult as ProductionTaskMatch; 
+         const statusUpdates = statusUpdate.statusTypes
+            .map((statusType) => {
+              const columnName = getColumnName(statusType);
+              const columnIndex = getProductionStatusColumnIndex(columnName);
+              return { statusType, columnName, columnIndex };
+            })
+            .filter((update) => update.columnIndex !== null) as { statusType: string; columnName: string; columnIndex: number }[];
+            const uniqueUpdates = Array.from(
             new Map(statusUpdates.map((update) => [update.columnIndex, update])).values()
           );
-
           console.log(`[Sprint 7 Workflow] Found match: "${exactMatch.row[1]}" at row ${exactMatch.rowIndex}`);
           console.log(`[Sprint 7 Workflow] Updating status columns: ${uniqueUpdates.map((update) => update.columnName).join(", ")}`);
 
-          for (const update of uniqueUpdates) {
+    for (const update of uniqueUpdates) {
+            if (update.columnName === "פורסם") continue; // לא קיים בטאב הפקה
             await updateProductionStatus(spreadsheetId, exactMatch.rowIndex, update.columnIndex);
           }
 
+          // אם הועלה - עדכן גאנט ל"פורסם"
+          if (statusUpdate.statusTypes.includes("uploaded")) {
+            const contentId = (exactMatch.row[0] || "").toString().trim();
+            if (contentId) {
+              try {
+                await updateGanttStatus(spreadsheetId, contentId, "פורסם");
+                console.log(`[Sprint 7 Workflow] ✅ Gantt status updated to פורסם for: ${contentId}`);
+              } catch (ganttError) {
+                console.error(`[Sprint 7 Workflow] ⚠️ Failed to update gantt: ${ganttError}`);
+              }
+            }
+          }
           const contentNameDisplay = exactMatch.row[1] || statusUpdate.contentName;
-          const columnList = uniqueUpdates.map((update) => update.columnName).join(", ");
-          const replyText = `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${columnList}`;
+          const isUploaded = statusUpdate.statusTypes.includes("uploaded");
+          const replyText = isUploaded
+            ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
+            : `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${uniqueUpdates.map((u) => u.columnName).join(", ")}`;
           await safeSendWhatsAppMessage(sender, replyText);
 
           console.log(`[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}\n`);

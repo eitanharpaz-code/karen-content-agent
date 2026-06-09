@@ -572,11 +572,10 @@ export const updateProductionStatus = async (
   const sheets = google.sheets({ version: "v4", auth });
 
   try {
-    const statusColumns = [4, 5, 6, 7, 8]; // D-H are the only allowed status columns
+    const statusColumns = [3, 4, 5]; // C-E are the only allowed status columns
     if (!statusColumns.includes(columnIndex)) {
-      throw new Error(`Invalid status column index ${columnIndex}. Sprint 7 may only update D-H.`);
+      throw new Error(`Invalid status column index ${columnIndex}. May only update C-E.`);
     }
-
     // Convert column index to letter (1->A, 2->B, etc.)
     const columnLetter = String.fromCharCode(64 + columnIndex);
     const cellAddress = `${columnLetter}${rowIndex}`;
@@ -595,20 +594,7 @@ export const updateProductionStatus = async (
     });
 
     console.log(`[Sprint 7] ✅ Successfully updated ${cellAddress} to "כן"`);
-    // Write actual upload timestamp to column L (index 12) when uploaded column is marked
-    if (columnIndex === 8) {
-      const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
-      const timestampRange = `${SHEET_NAMES.productionTasks}!L${rowIndex}`;
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: timestampRange,
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [[israelTime]],
-        },
-      });
-      console.log(`[Sprint 7] ✅ Wrote upload timestamp to L${rowIndex}: ${israelTime}`);
-    }
+    
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Sprint 7] Failed to update production status: ${errorMessage}`);
@@ -620,18 +606,14 @@ export const updateProductionStatus = async (
 // Returns 1-indexed column number
 export const getProductionStatusColumnIndex = (columnName: string): number | null => {
   // Column mapping for משימות הפקה
-  const columnMap: Record<string, number> = {
+ const columnMap: Record<string, number> = {
     "content_id": 1,
     "שם התוכן": 2,
-    "צריך טקסט?": 3,
-    "צולם": 4,
-    "נערך": 5,
-    "קאבר מוכן": 6,
-    "קופי מוכן": 7,
-    "הועלה": 8,
-    "דדליין": 9,
-    "שעת העלאה": 10,
-    "הערות": 11,
+    "צולם": 3,
+    "נערך": 4,
+    "קאבר מוכן": 5,
+    "דדליין הפקה": 6,
+    "הערות": 7,
   };
 
   return columnMap[columnName] || null;
@@ -1238,3 +1220,43 @@ export const getGanttByDateRange = async (
 
   return results;
 };
+export const updateGanttStatus = async (
+  spreadsheetId: string,
+  contentId: string,
+  status: string
+): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `גאנט תוכן!A:K`,
+  });
+
+  const rows = response.data.values || [];
+  const rowIndex = rows.findIndex((row, i) => i > 0 && (row[0] || "").toString().trim() === contentId);
+  if (rowIndex === -1) {
+    console.log(`[Gantt] No gantt row found for contentId: ${contentId}`);
+    return;
+  }
+
+  // עמודה K היא סטטוס (index 10, עמודה 11)
+  const cellAddress = `גאנט תוכן!K${rowIndex + 1}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: cellAddress,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[status]] },
+  });
+
+  console.log(`[Gantt] ✅ Updated status to "${status}" at ${cellAddress}`);
+  // כתוב טיימסטמפ בעמודה M (עמודה 13)
+  const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+  const timestampRange = `גאנט תוכן!N${rowIndex + 1}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: timestampRange,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[israelTime]] },
+  });
+console.log(`[Gantt] ✅ Wrote publish timestamp to N${rowIndex + 1}: ${israelTime}`);};

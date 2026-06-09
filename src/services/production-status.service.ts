@@ -152,27 +152,8 @@ detectionPatterns: ["ערכתי", "ערכנו", "סיימתי לערוך", "סי
 ],
   },
   {
-    statusType: "copy_ready",
-    columnName: "קופי מוכן",
-    detectionPatterns: [
-  "הקאבר והקופי מוכנים",
-  "הקאבר והקופי",
-  "הקופי מוכנים",
-  "הקופי מוכן",
-  "קופי מוכן",
-  "סיימתי לכתוב",
-  "סיימתי את הקופי",
-  "הכנתי קופי",
-  "כתבתי קופי",
-  "טקסט מוכן",
-  "הטקסט מוכן",
-  "קופי סיים",
-  "הקופי",
-],
-  },
-  {
     statusType: "uploaded",
-    columnName: "הועלה",
+    columnName: "פורסם",
     detectionPatterns: ["העליתי", "העלנו", "הסרטון עלה", "הסרטון הועלה", "סרטון עלה", "עלה לאוויר", "יצא לאוויר", "יצא", "פורסם", "פרסמתי", "פרסמנו", "הסרטון פורסם", "העלתי"],
   },
 ];
@@ -270,7 +251,6 @@ export const expandStatusTypesWithDependencies = (statusTypes: ProductionStatusT
         expanded.add("filmed");
         expanded.add("edited");
         expanded.add("cover_ready");
-        expanded.add("copy_ready");
         expanded.add("uploaded");
         break;
       case "edited":
@@ -285,10 +265,6 @@ export const expandStatusTypesWithDependencies = (statusTypes: ProductionStatusT
       case "cover_ready":
         // Cover ready is independent
         expanded.add("cover_ready");
-        break;
-      case "copy_ready":
-        // Copy ready is independent
-        expanded.add("copy_ready");
         break;
     }
   }
