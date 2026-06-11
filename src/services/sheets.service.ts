@@ -730,24 +730,66 @@ export const getContentIdeaSummary = async (
     range: `${SHEET_NAMES.contentLibrary}!A:C`,
   });
   const values = response.data.values || [];
-  const normalized = searchName.trim().toLowerCase();
- const scored = values.slice(1)
-    .map((row) => {
-      const idea = (row[1] || "").toString();
-      const score = getTokenOverlapScore(normalized, idea.toLowerCase());
-      return { row, score };
-    })
-    .filter((entry) => entry.score >= 2)
-    .sort((a, b) => b.score - a.score);
-  const match = scored.length > 0 ? scored[0].row : null;
-  
-  if (!match) return null;
-  const ideaText = (match[1] || "").toString();
-  const shortName = ideaText.split(/\s+/).slice(0, 6).join(" ");
-  return {
-    shortName,
-    idea: ideaText,
-  };
+  const candidates = values.slice(1)
+    .filter((row) => row[1])
+    .map((row) => ({ contentId: (row[0] || "").toString(), idea: row[1].toString() }));
+
+  if (candidates.length === 0) return null;
+
+  try {
+    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.idea}`).join("\n");
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+        max_tokens: 50,
+        messages: [
+          {
+            role: "user",
+            content: `המשתמש מחפש: "${searchName}"
+הנה רשימת הרעיונות:
+${candidateList}
+
+החזר רק את המספר של הרעיון שהכי מתאים לחיפוש, או "0" אם אין התאמה. רק מספר, בלי הסבר.`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json() as any;
+    const resultText = (data.content?.[0]?.text || "0").trim();
+    const index = parseInt(resultText) - 1;
+
+    if (index >= 0 && index < candidates.length) {
+      const ideaText = candidates[index].idea;
+      const shortName = ideaText.split(/\s+/).slice(0, 6).join(" ");
+      console.log(`[Claude Summary] "${searchName}" → "${shortName}"`);
+      return { shortName, idea: ideaText };
+    }
+  } catch (error) {
+    console.error(`[Claude Summary] Error: ${error}`);
+    // Fallback to token overlap
+    const normalized = searchName.trim().toLowerCase();
+    const scored = values.slice(1)
+      .map((row) => {
+        const idea = (row[1] || "").toString();
+        const score = getTokenOverlapScore(normalized, idea.toLowerCase());
+        return { row, score };
+      })
+      .filter((entry) => entry.score >= 2)
+      .sort((a, b) => b.score - a.score);
+    const match = scored.length > 0 ? scored[0].row : null;
+    if (!match) return null;
+    const ideaText = (match[1] || "").toString();
+    return { shortName: ideaText.split(/\s+/).slice(0, 6).join(" "), idea: ideaText };
+  }
+
+  return null;
 };
 // Get all content ideas from בנק רעיונות with priority
 export const getContentIdeasWithPriority = async (spreadsheetId: string): Promise<Map<string, { priority: string; category: string }>> => {
@@ -907,23 +949,60 @@ export const findSimilarContentIdea = async (
   const values = response.data.values || [];
   const normalized = normalizeHebrewText(ideaText).toLowerCase();
 
-  let bestMatch: { contentId: string; idea: string; score: number } | null = null;
+  const candidates = values.slice(1)
+    .filter((row) => row[0] && row[1])
+    .map((row) => ({ contentId: row[0].toString(), idea: row[1].toString() }));
 
-  for (const row of values.slice(1)) {
-    const idea = (row[1] || "").toString();
-    const normalizedIdea = normalizeHebrewText(idea).toLowerCase();
-    const score = getTokenOverlapScore(normalized, normalizedIdea);
+  if (candidates.length === 0) return null;
 
-    if (score >= 2 && (!bestMatch || score > bestMatch.score)) {
-      bestMatch = {
-        contentId: (row[0] || "").toString(),
-        idea,
-        score,
-      };
+  try {
+    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.idea}`).join("\n");
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+        max_tokens: 50,
+        messages: [
+          {
+            role: "user",
+            content: `רעיון חדש: "${ideaText}"
+הנה רעיונות קיימים:
+${candidateList}
+
+האם יש רעיון קיים שדומה מאוד לרעיון החדש (אותו נושא, אותו קונספט)? החזר רק את המספר של הרעיון הדומה, או "0" אם אין רעיון דומה. רק מספר, בלי הסבר.`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json() as any;
+    const resultText = (data.content?.[0]?.text || "0").trim();
+    const index = parseInt(resultText) - 1;
+
+    if (index >= 0 && index < candidates.length) {
+      console.log(`[Claude Duplicate] "${ideaText}" → "${candidates[index].idea}"`);
+      return { contentId: candidates[index].contentId, idea: candidates[index].idea };
     }
+  } catch (error) {
+    console.error(`[Claude Duplicate] Error: ${error}`);
+    // Fallback to token overlap
+    let bestMatch: { contentId: string; idea: string; score: number } | null = null;
+    for (const row of values.slice(1)) {
+      const idea = (row[1] || "").toString();
+      const score = getTokenOverlapScore(normalized, normalizeHebrewText(idea).toLowerCase());
+      if (score >= 2 && (!bestMatch || score > bestMatch.score)) {
+        bestMatch = { contentId: (row[0] || "").toString(), idea, score };
+      }
+    }
+    return bestMatch ? { contentId: bestMatch.contentId, idea: bestMatch.idea } : null;
   }
 
-  return bestMatch ? { contentId: bestMatch.contentId, idea: bestMatch.idea } : null;
+  return null;
 };
 // Archive content idea - move from בנק רעיונות to רעיונות בצד and delete from source
 export const archiveContentIdea = async (
