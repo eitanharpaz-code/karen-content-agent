@@ -1337,17 +1337,64 @@ export const findApprovedContentByName = async (
     }
   }
 
-  // Fallback: token overlap
-  let best: { contentId: string; name: string; score: number } | null = null;
-  for (const row of rows.slice(1)) {
-    const name = (row[1] || "").toString();
-    const score = getTokenOverlapScore(normalized, normalizeHebrewText(name).toLowerCase());
-    if (score >= 1 && (!best || score > best.score)) {
-      best = { contentId: row[0].toString(), name, score };
+  // Fallback: Claude-based matching
+  const candidates = rows.slice(1)
+    .filter((row) => row[0] && row[1])
+    .map((row) => ({ contentId: row[0].toString(), name: row[1].toString() }));
+
+  if (candidates.length === 0) return null;
+
+  try {
+    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+        max_tokens: 50,
+        messages: [
+          {
+            role: "user",
+            content: `המשתמש חיפש: "${contentName}"
+הנה רשימת התכנים הקיימים:
+${candidateList}
+
+החזר רק את המספר של התוכן שהכי מתאים לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json() as any;
+    const resultText = (data.content?.[0]?.text || "0").trim();
+    const index = parseInt(resultText) - 1;
+
+  if (index >= 0 && index < candidates.length) {
+      console.log(`[Claude Matching] "${contentName}" → "${candidates[index].name}"`);
+      // אם השם המחופש מופיע בשם המלא — Claude בטוח
+      const confident = candidates[index].name.toLowerCase().includes(contentName.toLowerCase()) ||
+                        contentName.toLowerCase().split(/\s+/).every((word) => candidates[index].name.toLowerCase().includes(word));
+      return { contentId: candidates[index].contentId, name: candidates[index].name, exact: confident };
     }
+  } catch (error) {
+    console.error(`[Claude Matching] Error: ${error}`);
+    // Fallback to token overlap if Claude fails
+    let best: { contentId: string; name: string; score: number } | null = null;
+    for (const row of rows.slice(1)) {
+      const name = (row[1] || "").toString();
+      const score = getTokenOverlapScore(normalized, normalizeHebrewText(name).toLowerCase());
+      if (score >= 1 && (!best || score > best.score)) {
+        best = { contentId: row[0].toString(), name, score };
+      }
+    }
+    return best ? { contentId: best.contentId, name: best.name, exact: false } : null;
   }
 
-  return best ? { contentId: best.contentId, name: best.name, exact: false } : null;
+  return null;
 };
 
 // Write a new row to גאנט תוכן
