@@ -1562,3 +1562,47 @@ export const updateGanttRowDate = async (
 
   console.log(`[Gantt] ✅ Updated date for ${contentId} to ${newDate} (${newDayName})`);
 };
+// Get approved content that has no gantt entry
+export const getApprovedContentNotInGantt = async (
+  spreadsheetId: string,
+  month: number, // 1-12
+  year: number
+): Promise<{ contentId: string; name: string }[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Get all content IDs in gantt for this month
+  const ganttResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:B`,
+  });
+  const ganttRows = ganttResponse.data.values || [];
+  const ganttContentIds = new Set(
+    ganttRows.slice(1)
+      .filter((row) => {
+        const dateStr = (row[1] || "").toString().trim();
+        const parts = dateStr.split("/");
+        if (parts.length !== 3) return false;
+        return parseInt(parts[1]) === month && parseInt(parts[2]) === year;
+      })
+      .map((row) => (row[0] || "").toString().trim())
+      .filter(Boolean)
+  );
+
+  // Get all approved content
+  const approvedResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.approvedContent}!A:B`,
+  });
+  const approvedRows = approvedResponse.data.values || [];
+
+  return approvedRows.slice(1)
+    .filter((row) => {
+      const contentId = (row[0] || "").toString().trim();
+      return contentId && !ganttContentIds.has(contentId);
+    })
+    .map((row) => ({
+      contentId: (row[0] || "").toString().trim(),
+      name: (row[1] || "").toString().trim(),
+    }));
+};

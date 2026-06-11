@@ -61,11 +61,12 @@ findRowIndexByContentId,
   getGanttThisWeek,
   findApprovedContentByName,
   addRowToGantt,
-  sortGanttByDate,
+ sortGanttByDate,
   updateGanttUploadTime,
   isGanttDateTaken,
   findAvailableDatesInMonth,
   updateGanttRowDate,
+  getApprovedContentNotInGantt,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -225,6 +226,62 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
       await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortNew}" לגאנט ב-${targetDate} (יום ${targetDayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
       return res.status(200).json({ status: "gantt_write_new_date_confirmed", sender });
+    }
+    if (pendingQuestion?.questionType === "monthly_planning") {
+      const { month, year, monthName, remainingContent } = pendingQuestion.context as any;
+      
+      // בדוק אם קרן רוצה לצאת מהתכנון
+      if (isRejectionMessage(incomingText) || ["סיימתי", "עצרי", "זהו", "מספיק"].includes(incomingText.trim())) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `סיימנו את תכנון ${monthName}. אפשר תמיד לחזור ולהוסיף עוד.`);
+        return res.status(200).json({ status: "monthly_planning_done", sender });
+      }
+
+      // בדוק אם זו פקודת gantt_write — חלץ שם ותאריך
+      const params = extractGanttWriteParams(incomingText);
+      if (!params) {
+        // לא הובן — שמור את ה-context ושאל שוב
+        storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
+        await safeSendWhatsAppMessage(sender, `לא הבנתי. נסי לכתוב למשל: תוסיפי את שמלה שלישית ל-3/07`);
+        return res.status(200).json({ status: "monthly_planning_parse_error", sender });
+      }
+
+      const monthlySpreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const match = await findApprovedContentByName(monthlySpreadsheetId, params.contentName);
+      if (!match) {
+        storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
+        await safeSendWhatsAppMessage(sender, `לא מצאתי את "${params.contentName}" בתכנים שאושרו. תנסי שוב.`);
+        return res.status(200).json({ status: "monthly_planning_not_found", sender });
+      }
+
+      const collision = await isGanttDateTaken(monthlySpreadsheetId, params.date);
+      if (collision.taken) {
+        storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
+        const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+        await safeSendWhatsAppMessage(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}". תבחרי תאריך אחר.`);
+        return res.status(200).json({ status: "monthly_planning_collision", sender });
+      }
+
+      const parsedDate = params.date.split("/");
+      const dateObj = new Date(parseInt(parsedDate[2]), parseInt(parsedDate[1]) - 1, parseInt(parsedDate[0]));
+      const dayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][dateObj.getDay()];
+
+      await addRowToGantt(monthlySpreadsheetId, match.contentId, match.name, params.date, dayName);
+      await sortGanttByDate(monthlySpreadsheetId);
+
+      // הסר מהרשימה
+      const updatedRemaining = (remainingContent as any[]).filter((c: any) => c.contentId !== match.contentId);
+
+      if (updatedRemaining.length === 0) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `נשמר. כל התכנים שובצו ב${monthName}.`);
+        return res.status(200).json({ status: "monthly_planning_complete", sender });
+      }
+
+      storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent: updatedRemaining } });
+      const remainingText = updatedRemaining.length === 1 ? "תוכן אחד שעוד לא שובץ" : `${updatedRemaining.length} תכנים שעוד לא שובצו`;
+      await safeSendWhatsAppMessage(sender, `נשמר. יש עוד ${remainingText}. על מה הבא?`);
+      return res.status(200).json({ status: "monthly_planning_item_saved", sender });
     }
     if (pendingQuestion?.questionType === "gantt_upload_time") {
       const { contentName, date } = pendingQuestion.context as any;
@@ -528,9 +585,11 @@ const replyText = `מעולה, הטרנד נשמר.
 
     const visibilityIntent = detectVisibilityIntent(incomingText);
     const questionLikeMessage = isQuestionLikeMessage(incomingText);
+    const activePendingQuestion = getPendingQuestion(sender);
 
     // Sprint 10: Core rule - ANY visibilityIntent is read-only and must be handled before production updates
-    if (visibilityIntent) {
+    // Exception: if monthly_planning is active, let the pending question handler take over
+    if (visibilityIntent && activePendingQuestion?.questionType !== "monthly_planning") {
       try {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
         if (!spreadsheetId) {
@@ -629,6 +688,48 @@ const replyText = `מעולה, הטרנד נשמר.
             const replyText = `מצאתי את הסרטון\n"${summary.shortName}"\nהרעיון שלו:\n${summary.idea}`;
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_content_summary", sender });
+          }
+          case "monthly_planning": {
+            const monthNames: Record<string, number> = {
+              "ינואר": 1, "פברואר": 2, "מרץ": 3, "אפריל": 4,
+              "מאי": 5, "יוני": 6, "יולי": 7, "אוגוסט": 8,
+              "ספטמבר": 9, "אוקטובר": 10, "נובמבר": 11, "דצמבר": 12,
+            };
+            const monthMatch = incomingText.match(/(ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/);
+            if (!monthMatch) {
+              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה חודש. נסי לכתוב: בואי נתכנן את יולי");
+              return res.status(200).json({ status: "monthly_planning_parse_error", sender });
+            }
+            const monthName = monthMatch[1];
+            const month = monthNames[monthName];
+            const now = new Date();
+            const year = month < now.getMonth() + 1 ? now.getFullYear() + 1 : now.getFullYear();
+
+            const [unscheduled, available] = await Promise.all([
+              getApprovedContentNotInGantt(spreadsheetId, month, year),
+              findAvailableDatesInMonth(spreadsheetId, `01/${String(month).padStart(2, "0")}/${year}`),
+            ]);
+
+            if (unscheduled.length === 0) {
+              await safeSendWhatsAppMessage(sender, `כל התכנים שאושרו כבר משובצים ב${monthName}. אם תרצי להוסיף עוד, תוסיפי קודם לתכנים שאושרו.`);
+              return res.status(200).json({ status: "monthly_planning_nothing_to_schedule", sender });
+            }
+
+            storePendingQuestion(sender, {
+              questionType: "monthly_planning",
+              context: {
+                month,
+                year,
+                monthName,
+                remainingContent: unscheduled,
+              },
+            });
+
+            const displayList = unscheduled.slice(0, 5).map((c) => `- ${c.name.split(/\s+/).slice(0, 6).join(" ")}`).join("\n");
+            const suffix = unscheduled.length > 5 ? `\n...ו${unscheduled.length - 5} עוד` : "";
+            const replyText = `יש לך ${unscheduled.length} תכנים מוכנים שעוד לא שובצו ב${monthName}:\n${displayList}${suffix}\n\nיש ${available.length} תאריכים פנויים ב${monthName}.\nעל איזה תוכן תרצי להתחיל?`;
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "monthly_planning_started", sender });
           }
           case "gantt_holes": {
             const now = new Date();

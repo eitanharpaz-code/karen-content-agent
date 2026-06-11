@@ -21,6 +21,7 @@ export type VisibilityIntent =
   | "gantt_query"
   | "gantt_write"
   | "gantt_holes"
+  | "monthly_planning"
   | null;
 
 /**
@@ -315,6 +316,16 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   ];
   if (ganttHolesPhrases.some((p) => rawText.includes(p))) {
     return "gantt_holes";
+  }
+  // --- Monthly Planning Intent ---
+  const monthlyPlanningPatterns = [
+    /בואי נתכנן את (ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/,
+    /בוא נתכנן את (ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/,
+    /נתכנן את (ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/,
+    /תכנון (ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/,
+  ];
+  if (monthlyPlanningPatterns.some((p) => p.test(rawText))) {
+    return "monthly_planning";
   }
 
   // --- Category + Stage Filter - חייב להיות לפני missing_filmed ---
@@ -698,10 +709,11 @@ export const extractGanttWriteParams = (text: string): { contentName: string; da
     : `${dateParts[0].padStart(2, "0")}/${dateParts[1].padStart(2, "0")}/${dateParts[2]}`;
 
   // Extract content name - text between "את" and date/location markers
-  const namePatterns = [
+ const namePatterns = [
     /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+לגאנט/i,
     /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+בתאריך/i,
     /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+ב-\d/i,
+    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+ל-?\d/i,
     /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+\d/i,
   ];
 
