@@ -33,6 +33,10 @@ export const parseDateFromSheet = (dateStr: string): Date | null => {
   if (!dateStr) return null;
   const parts = dateStr.split("/");
   if (parts.length !== 3) return null;
-  const date = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[2], 10);
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+  const date = new Date(year, month, day);
   return isNaN(date.getTime()) ? null : date;
 };

@@ -57,6 +57,15 @@ findRowIndexByContentId,
   getGanttByDateRange,
   approveContentForProduction,
   updateGanttStatus,
+  getGanttNotPublished,
+  getGanttThisWeek,
+  findApprovedContentByName,
+  addRowToGantt,
+  sortGanttByDate,
+  updateGanttUploadTime,
+  isGanttDateTaken,
+  findAvailableDatesInMonth,
+  updateGanttRowDate,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -80,6 +89,7 @@ formatPriorityFilterResponse,
   extractCategoryAndStage,
  formatCategoryStageResponse,
   formatGanttResponse,
+  extractGanttWriteParams,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -113,7 +123,168 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
-   if (pendingQuestion?.questionType === "set_deadline") {
+   if (pendingQuestion?.questionType === "gantt_collision") {
+      const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName } = pendingQuestion.context as any;
+      clearPendingQuestion(sender);
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      if (isConfirmationMessage(incomingText)) {
+        // קרן רוצה להחליף — כניסת Y לתאריך, הזזת X למקום חדש
+        const available = await findAvailableDatesInMonth(spreadsheetId, newDate);
+        const suggested = available[0];
+
+        if (!suggested) {
+          await addRowToGantt(spreadsheetId, newContentId, newContentName, newDate, newDayName);
+          await sortGanttByDate(spreadsheetId);
+          storePendingQuestion(sender, {
+            questionType: "gantt_upload_time",
+            context: { contentName: newContentName, date: newDate },
+          });
+          const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortNew}" ב-${newDate}.\nלא מצאתי חור פנוי אחר באותו חודש ל-"${existingName.split(/\s+/).slice(0, 6).join(" ")}" — אפשר לעדכן ידנית.\nבאיזו שעה לתכנן את ההעלאה?`);
+          return res.status(200).json({ status: "gantt_collision_replaced_no_slot", sender });
+        }
+
+        const suggestedParts = suggested.split("/");
+        const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()];
+        const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
+
+        storePendingQuestion(sender, {
+          questionType: "gantt_move_existing",
+          context: {
+            newContentId, newContentName, newDate, newDayName,
+            existingContentId, existingName,
+            suggestedDate: suggested, suggestedDayName,
+          },
+        });
+        await safeSendWhatsAppMessage(sender, `אעביר את "${shortExisting}" ל-${suggested} (יום ${suggestedDayName}). מאשרת?`);
+        return res.status(200).json({ status: "gantt_collision_suggest_move", sender });
+      }
+
+      if (isRejectionMessage(incomingText)) {
+        // קרן לא רוצה להחליף — מחפש מקום חדש ל-Y
+        const available = await findAvailableDatesInMonth(spreadsheetId, newDate);
+        const suggested = available[0];
+
+        if (!suggested) {
+          await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי באותו חודש. תוכלי לבחור תאריך ידנית.`);
+          return res.status(200).json({ status: "gantt_collision_no_slot", sender });
+        }
+
+        const suggestedParts = suggested.split("/");
+        const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()];
+        const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
+
+        storePendingQuestion(sender, {
+          questionType: "gantt_write_new_date",
+          context: { newContentId, newContentName, suggestedDate: suggested, suggestedDayName },
+        });
+        await safeSendWhatsAppMessage(sender, `הזמן הפנוי הקרוב הוא ${suggested} (יום ${suggestedDayName}). נכניס את "${shortNew}" שם?`);
+        return res.status(200).json({ status: "gantt_collision_suggest_new_date", sender });
+      }
+    }
+
+    if (pendingQuestion?.questionType === "gantt_move_existing") {
+      const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName, suggestedDate, suggestedDayName } = pendingQuestion.context as any;
+      clearPendingQuestion(sender);
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      const targetDate = isConfirmationMessage(incomingText) ? suggestedDate : incomingText.trim();
+      const targetParts = targetDate.split("/");
+      const targetDayName = isConfirmationMessage(incomingText) ? suggestedDayName : ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(targetParts[2]), parseInt(targetParts[1]) - 1, parseInt(targetParts[0])).getDay()];
+
+      await updateGanttRowDate(spreadsheetId, existingContentId, targetDate, targetDayName);
+      await addRowToGantt(spreadsheetId, newContentId, newContentName, newDate, newDayName);
+      await sortGanttByDate(spreadsheetId);
+      storePendingQuestion(sender, {
+        questionType: "gantt_upload_time",
+        context: { contentName: newContentName, date: newDate },
+      });
+      const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
+      const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
+      await safeSendWhatsAppMessage(sender, `מעולה! העברתי את "${shortExisting}" ל-${targetDate} והוספתי את "${shortNew}" ל-${newDate}.\nבאיזו שעה לתכנן את ההעלאה?`);
+      return res.status(200).json({ status: "gantt_move_confirmed", sender });
+    }
+
+    if (pendingQuestion?.questionType === "gantt_write_new_date") {
+      const { newContentId, newContentName, suggestedDate, suggestedDayName } = pendingQuestion.context as any;
+      clearPendingQuestion(sender);
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      const targetDate = isConfirmationMessage(incomingText) ? suggestedDate : incomingText.trim();
+      const targetParts = targetDate.split("/");
+      const targetDayName = isConfirmationMessage(incomingText) ? suggestedDayName : ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(targetParts[2]), parseInt(targetParts[1]) - 1, parseInt(targetParts[0])).getDay()];
+
+      await addRowToGantt(spreadsheetId, newContentId, newContentName, targetDate, targetDayName);
+      await sortGanttByDate(spreadsheetId);
+      storePendingQuestion(sender, {
+        questionType: "gantt_upload_time",
+        context: { contentName: newContentName, date: targetDate },
+      });
+      const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
+      await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortNew}" לגאנט ב-${targetDate} (יום ${targetDayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
+      return res.status(200).json({ status: "gantt_write_new_date_confirmed", sender });
+    }
+    if (pendingQuestion?.questionType === "gantt_upload_time") {
+      const { contentName, date } = pendingQuestion.context as any;
+      clearPendingQuestion(sender);
+      if (isRejectionMessage(incomingText)) {
+        await safeSendWhatsAppMessage(sender, "בסדר, אפשר לעדכן שעה אחר כך ישירות בגיליון.");
+        return res.status(200).json({ status: "gantt_upload_time_skipped", sender });
+      }
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      await updateGanttUploadTime(spreadsheetId, contentName, date, incomingText.trim());
+      const shortTimeName = contentName.split(/\s+/).slice(0, 6).join(" ");
+      await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את שעת ההעלאה של "${shortTimeName}" ל-${incomingText.trim()}.`);
+      return res.status(200).json({ status: "gantt_upload_time_set", sender });
+    }
+    if (pendingQuestion?.questionType === "confirm_gantt_write") {
+      const { contentId, contentName, date, dayName } = pendingQuestion.context as any;
+      clearPendingQuestion(sender);
+      if (isRejectionMessage(incomingText)) {
+        // הצג 5 הכי דומים
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const auth = (await import("../services/sheets.service")).getCategories;
+        const { findApprovedContentByName } = await import("../services/sheets.service");
+        const similar = await findApprovedContentByName(spreadsheetId, contentName);
+        await safeSendWhatsAppMessage(sender, "בסדר. תנסי שוב עם השם המדויק כפי שהוא מופיע בתכנים שאושרו.");
+        return res.status(200).json({ status: "gantt_write_cancelled", sender });
+      }
+      if (isConfirmationMessage(incomingText)) {
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        
+        // בדיקת התנגשות גם בזרימת התאמה חלקית
+        const collision = await isGanttDateTaken(spreadsheetId, date);
+        if (collision.taken) {
+          const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+          const shortNew = contentName.split(/\s+/).slice(0, 6).join(" ");
+          storePendingQuestion(sender, {
+            questionType: "gantt_collision",
+            context: {
+              newContentId: contentId,
+              newContentName: contentName,
+              newDate: date,
+              newDayName: dayName,
+              existingContentId: collision.existingContentId,
+              existingName: collision.existingName,
+            },
+          });
+          await safeSendWhatsAppMessage(sender, `ב-${date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+          return res.status(200).json({ status: "gantt_collision_detected", sender });
+        }
+
+        await addRowToGantt(spreadsheetId, contentId, contentName, date, dayName);
+        await sortGanttByDate(spreadsheetId);
+        storePendingQuestion(sender, {
+          questionType: "gantt_upload_time",
+          context: { contentName, date },
+        });
+        const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
+        await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortConfirmName}" לגאנט ב-${date} (יום ${dayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
+        return res.status(200).json({ status: "gantt_write_confirmed", sender });
+      }
+    }
+    if (pendingQuestion?.questionType === "set_deadline") {
       const contentId = pendingQuestion.context?.contentId as string;
       clearPendingQuestion(sender);
       const looksLikeDate = /\d/.test(incomingText) || 
@@ -418,9 +589,12 @@ const replyText = `מעולה, הטרנד נשמר.
           case "missing_copy":
             tasks = await getTasksMissingCopy(spreadsheetId);
             break;
-          case "not_uploaded":
-            tasks = await getTasksNotUploaded(spreadsheetId);
-            break;
+          case "not_uploaded": {
+            const ganttItems = await getGanttNotPublished(spreadsheetId);
+            const replyText = formatGanttResponse(ganttItems, "עדיין לא פורסמו");
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
+          }
           case "stuck_workflow":
             tasks = await getStuckTasks(spreadsheetId);
             break;
@@ -455,6 +629,69 @@ const replyText = `מעולה, הטרנד נשמר.
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_content_summary", sender });
           }
+          case "gantt_write": {
+            const params = extractGanttWriteParams(incomingText);
+            if (!params) {
+              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב למשל: תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06");
+              return res.status(200).json({ status: "gantt_write_parse_error", sender });
+            }
+
+            const match = await findApprovedContentByName(spreadsheetId, params.contentName);
+
+            // חשב שם יום
+            const parsedDate = params.date.split("/");
+            const dateObj = new Date(
+              parseInt(parsedDate[2]),
+              parseInt(parsedDate[1]) - 1,
+              parseInt(parsedDate[0])
+            );
+            const dayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][dateObj.getDay()];
+
+            if (!match) {
+              await safeSendWhatsAppMessage(sender, `לא מצאתי תוכן בשם "${params.contentName}" בתכנים שאושרו. תבדקי את השם ותנסי שוב.`);
+              return res.status(200).json({ status: "gantt_write_not_found", sender });
+            }
+
+            if (match.exact) {
+              // בדיקת התנגשות
+              const collision = await isGanttDateTaken(spreadsheetId, params.date);
+              if (collision.taken) {
+                const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+                const shortNew = match.name.split(/\s+/).slice(0, 6).join(" ");
+                storePendingQuestion(sender, {
+                  questionType: "gantt_collision",
+                  context: {
+                    newContentId: match.contentId,
+                    newContentName: match.name,
+                    newDate: params.date,
+                    newDayName: dayName,
+                    existingContentId: collision.existingContentId,
+                    existingName: collision.existingName,
+                  },
+                });
+                await safeSendWhatsAppMessage(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+                return res.status(200).json({ status: "gantt_collision_detected", sender });
+              }
+
+              await addRowToGantt(spreadsheetId, match.contentId, match.name, params.date, dayName);
+              await sortGanttByDate(spreadsheetId);
+              storePendingQuestion(sender, {
+                questionType: "gantt_upload_time",
+                context: { contentName: match.name, date: params.date },
+              });
+              const shortName = match.name.split(/\s+/).slice(0, 6).join(" ");
+              await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortName}" לגאנט ב-${params.date} (יום ${dayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
+              return res.status(200).json({ status: "gantt_write_success", sender });
+            }
+
+            // התאמה חלקית — שאל לאישור
+            storePendingQuestion(sender, {
+              questionType: "confirm_gantt_write",
+              context: { contentId: match.contentId, contentName: match.name, date: params.date, dayName },
+            });
+            await safeSendWhatsAppMessage(sender, `לא מצאתי "${params.contentName}", האם התכוונת ל-"${match.name}"?`);
+            return res.status(200).json({ status: "gantt_write_confirm_needed", sender });
+          }
           case "gantt_query": {
             const now = new Date();
             const startOfWeek = new Date(now);
@@ -478,12 +715,41 @@ const replyText = `מעולה, הטרנד נשמר.
             break;
           }
           case "whats_important": {
-            const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
-            const highNotUploaded = allTasks.filter((t) => t.priority === "גבוה" && t.uploaded !== "כן" && !t.isTrend);
+            const [allTasks, ganttThisWeek] = await Promise.all([
+              getAllProductionTasksWithPriority(spreadsheetId),
+              getGanttThisWeek(spreadsheetId),
+            ]);
+            const highNotUploaded: any[] = [];
             const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
             const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
-            const thisWeek = allTasks.filter((t) => t.deadlineDate !== null && isThisWeek(t.deadline) && t.uploaded !== "כן");
-            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek);
+            const notFilmedThisWeek = ganttThisWeek
+              .filter((item) => {
+                const match = allTasks.find((t) => t.contentId === item.contentId);
+                return match ? match.filmed !== "כן" : true;
+              })
+              .map((item) => ({
+                taskName: item.name,
+                deadlineDayName: item.day,
+              }));
+            const thisWeek = ganttThisWeek.map((item) => ({
+              contentId: item.contentId,
+              taskName: item.name,
+              needsText: "לא",
+              filmed: "לא",
+              edited: "לא",
+              coverReady: "לא",
+              copyReady: "לא",
+              uploaded: "לא",
+              deadline: item.date,
+              uploadTime: item.uploadTime || "",
+              notes: item.notes || "",
+              priority: item.priority || "בינוני",
+              category: "",
+              isTrend: false,
+              deadlineDate: null,
+              deadlineDayName: item.day,
+            }));
+            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek, notFilmedThisWeek);
             await safeSendWhatsAppMessage(sender, replyText);
             
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });

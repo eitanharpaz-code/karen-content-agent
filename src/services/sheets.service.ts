@@ -1136,11 +1136,13 @@ export const approveContentForProduction = async (
   });
 
   const rows = response.data.values || [];
- const rowIndex = rows.findIndex((row, i) => {
+ const normalizedSearch = normalizeHebrewText(contentId).toLowerCase();
+  const rowIndex = rows.findIndex((row, i) => {
     if (i === 0) return false;
-    const rowName = (row[1] || "").toString().trim();
+    const rowName = normalizeHebrewText((row[1] || "").toString().trim()).toLowerCase();
     const rowId = (row[0] || "").toString().trim();
-    return rowId === contentId || rowName.includes(contentId) || contentId.includes(rowName);
+    const score = getTokenOverlapScore(normalizedSearch, rowName);
+    return rowId === contentId || rowName.includes(normalizedSearch) || normalizedSearch.includes(rowName) || score >= 2;
   });
   if (rowIndex === -1) throw new Error(`לא נמצא רעיון עם ID: ${contentId}`);
 
@@ -1260,3 +1262,303 @@ export const updateGanttStatus = async (
     requestBody: { values: [[israelTime]] },
   });
 console.log(`[Gantt] ✅ Wrote publish timestamp to N${rowIndex + 1}: ${israelTime}`);};
+// Get gantt rows that are NOT published (status ≠ "פורסם")
+export const getGanttNotPublished = async (spreadsheetId: string): Promise<any[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `גאנט תוכן!A:M`,
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length < 2) return [];
+
+  return rows.slice(1).filter((row) => {
+    const status = (row[10] || "").toString().trim();
+    return status !== "פורסם";
+  }).map((row) => ({
+    contentId: (row[0] || "").toString().trim(),
+    date: (row[1] || "").toString().trim(),
+    day: (row[2] || "").toString().trim(),
+    platform: (row[3] || "").toString().trim(),
+    contentType: (row[4] || "").toString().trim(),
+    taskName: (row[5] || "").toString().trim(),
+    name: (row[5] || "").toString().trim(),
+    topic: (row[6] || "").toString().trim(),
+    priority: (row[7] || "").toString().trim(),
+    hasStories: (row[8] || "").toString().trim(),
+    collaboration: (row[9] || "").toString().trim(),
+    status: (row[10] || "").toString().trim(),
+    uploadTime: (row[11] || "").toString().trim(),
+    notes: (row[12] || "").toString().trim(),
+  }));
+};
+
+// Get gantt rows scheduled for this week that are NOT published
+export const getGanttThisWeek = async (spreadsheetId: string): Promise<any[]> => {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay() + 1);
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  const all = await getGanttNotPublished(spreadsheetId);
+  return all.filter((item) => {
+    const parsed = parseDateFromSheet(item.date);
+    if (!parsed) return false;
+    return parsed >= startOfWeek && parsed <= endOfWeek;
+  });
+};
+// Find approved content by name with token overlap fallback
+export const findApprovedContentByName = async (
+  spreadsheetId: string,
+  contentName: string
+): Promise<{ contentId: string; name: string; exact: boolean } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.approvedContent}!A:B`,
+  });
+
+  const rows = response.data.values || [];
+  const normalized = normalizeHebrewText(contentName).toLowerCase();
+
+  // Try exact match first
+  for (const row of rows.slice(1)) {
+    const name = (row[1] || "").toString();
+    if (normalizeHebrewText(name).toLowerCase() === normalized) {
+      return { contentId: row[0].toString(), name, exact: true };
+    }
+  }
+
+  // Fallback: token overlap
+  let best: { contentId: string; name: string; score: number } | null = null;
+  for (const row of rows.slice(1)) {
+    const name = (row[1] || "").toString();
+    const score = getTokenOverlapScore(normalized, normalizeHebrewText(name).toLowerCase());
+    if (score >= 1 && (!best || score > best.score)) {
+      best = { contentId: row[0].toString(), name, score };
+    }
+  }
+
+  return best ? { contentId: best.contentId, name: best.name, exact: false } : null;
+};
+
+// Write a new row to גאנט תוכן
+export const addRowToGantt = async (
+  spreadsheetId: string,
+  contentId: string,
+  contentName: string,
+  date: string,
+  dayName: string,
+  uploadTime: string = ""
+): Promise<void> => {
+  // Pull priority and collab from תכנים שאושרו
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const approvedResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.approvedContent}!A:J`,
+  });
+  const approvedRows = approvedResponse.data.values || [];
+  const approvedRow = approvedRows.slice(1).find((row) => (row[0] || "").toString().trim() === contentId);
+  const priority = approvedRow ? (approvedRow[5] || "").toString().trim() : "";
+  const collab = approvedRow ? (approvedRow[7] || "").toString().trim() : "";
+
+  await appendRowToSheet(spreadsheetId, SHEET_NAMES.monthlyGantt, [
+    contentId,       // A - content_id
+    date,            // B - תאריך
+    dayName,         // C - יום
+    "אינסטגרם",      // D - פלטפורמה
+    "ריל",           // E - סוג תוכן
+    contentName,     // F - שם התוכן/קונספט
+    "",              // G - נושא/פרק
+    priority,        // H - רמת עדיפות
+    "",              // I - סטוריז תומכים
+    collab || "לא",  // J - שת"פ/חסות
+    "בתכנון",        // K - סטטוס
+    uploadTime,      // L - שעת העלאה
+    "",              // M - הערות
+  ]);
+};
+// Sort גאנט תוכן by date column (column B, index 1) ascending
+export const sortGanttByDate = async (spreadsheetId: string): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Get sheet ID for גאנט תוכן
+  const metadata = await getSpreadsheetMetadata(spreadsheetId);
+  const ganttSheet = metadata.sheets?.find((s) => s.title === SHEET_NAMES.monthlyGantt);
+  if (!ganttSheet || ganttSheet.sheetId === undefined) {
+    console.log("[Gantt Sort] Could not find גאנט תוכן sheet ID");
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          sortRange: {
+            range: {
+              sheetId: ganttSheet.sheetId,
+              startRowIndex: 1, // skip header
+              startColumnIndex: 0,
+              endColumnIndex: 14,
+            },
+            sortSpecs: [
+              {
+                dimensionIndex: 1, // column B = תאריך
+                sortOrder: "ASCENDING",
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  console.log("[Gantt Sort] ✅ Sorted גאנט תוכן by date");
+};
+// Update upload time (column L) for a gantt row by content name and date
+export const updateGanttUploadTime = async (
+  spreadsheetId: string,
+  contentName: string,
+  date: string,
+  uploadTime: string
+): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:F`,
+  });
+
+  const rows = response.data.values || [];
+  const rowIndex = rows.findIndex((row, i) => {
+    if (i === 0) return false;
+    return (row[1] || "").toString().trim() === date &&
+           (row[5] || "").toString().trim() === contentName;
+  });
+
+  if (rowIndex === -1) {
+    console.log(`[Gantt] Could not find row for ${contentName} on ${date}`);
+    return;
+  }
+
+  const cellAddress = `${SHEET_NAMES.monthlyGantt}!L${rowIndex + 1}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: cellAddress,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[uploadTime]] },
+  });
+
+  console.log(`[Gantt] ✅ Updated upload time for "${contentName}" to ${uploadTime}`);
+};
+// Check if a date is already taken in the gantt
+export const isGanttDateTaken = async (
+  spreadsheetId: string,
+  date: string // format: dd/mm/yyyy
+): Promise<{ taken: boolean; existingName: string; existingContentId: string }> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:F`,
+  });
+
+  const rows = response.data.values || [];
+  const match = rows.slice(1).find((row) => (row[1] || "").toString().trim() === date);
+
+  return {
+    taken: !!match,
+    existingName: match ? (match[5] || "").toString().trim() : "",
+    existingContentId: match ? (match[0] || "").toString().trim() : "",
+  };
+};
+
+// Find available dates in the same month that have no gantt entry
+export const findAvailableDatesInMonth = async (
+  spreadsheetId: string,
+  date: string // format: dd/mm/yyyy
+): Promise<string[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const parts = date.split("/");
+  const month = parseInt(parts[1]) - 1;
+  const year = parseInt(parts[2]);
+  const requestedDay = parseInt(parts[0]);
+
+  // Get all taken dates in gantt
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!B:B`,
+  });
+
+  const rows = response.data.values || [];
+  const takenDates = new Set(rows.slice(1).map((row) => (row[0] || "").toString().trim()));
+
+  // Find all days in the month that are not taken
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const available: string[] = [];
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${String(day).padStart(2, "0")}/${String(month + 1).padStart(2, "0")}/${year}`;
+    if (!takenDates.has(dateStr)) {
+      available.push(dateStr);
+    }
+  }
+
+  // Sort by proximity to requested date
+  available.sort((a, b) => {
+    const dayA = Math.abs(parseInt(a.split("/")[0]) - requestedDay);
+    const dayB = Math.abs(parseInt(b.split("/")[0]) - requestedDay);
+    return dayA - dayB;
+  });
+
+  return available;
+};
+
+// Update a gantt row's date and day
+export const updateGanttRowDate = async (
+  spreadsheetId: string,
+  contentId: string,
+  newDate: string,
+  newDayName: string
+): Promise<void> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:A`,
+  });
+
+  const rows = response.data.values || [];
+  const rowIndex = rows.findIndex((row, i) => i > 0 && (row[0] || "").toString().trim() === contentId);
+  if (rowIndex === -1) return;
+
+  const sheetRow = rowIndex + 1;
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: [
+        { range: `${SHEET_NAMES.monthlyGantt}!B${sheetRow}`, values: [[newDate]] },
+        { range: `${SHEET_NAMES.monthlyGantt}!C${sheetRow}`, values: [[newDayName]] },
+      ],
+    },
+  });
+
+  console.log(`[Gantt] ✅ Updated date for ${contentId} to ${newDate} (${newDayName})`);
+};

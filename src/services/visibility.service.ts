@@ -19,6 +19,7 @@ export type VisibilityIntent =
   | "content_summary"
   | "category_stage_filter"
   | "gantt_query"
+  | "gantt_write"
   | null;
 
 /**
@@ -294,6 +295,18 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     return "gantt_query";
   }
 
+  // --- Gantt Write Intent ---
+  const ganttWritePhrases = [
+    "תוסיפי את", "תוסיפי ל", "תשבצי את", "תשבצי ל",
+    "תכניסי את", "תכניסי ל", "לגאנט", "לתאריך",
+  ];
+  const hasGanttWritePhrase = ganttWritePhrases.some((p) => rawText.includes(p));
+  const hasDatePattern = /\d{1,2}[./]\d{1,2}/.test(rawText);
+  const isGanttWrite = hasGanttWritePhrase && rawText.includes("גאנט") && (rawText.includes("לגאנט") || hasDatePattern);
+  if (isGanttWrite) {
+    return "gantt_write";
+  }
+
   // --- Category + Stage Filter - חייב להיות לפני missing_filmed ---
  const categoryStagePatterns = [
     /מה לא .{2,10} ב.{2,15}/,
@@ -463,7 +476,8 @@ export const formatWhatsImportantResponse = (
   highPriorityNotUploaded: ProductionTaskRowExtended[],
   stuckTasks: ProductionTaskRowExtended[],
   trendTasks: ProductionTaskRowExtended[],
-  thisWeekTasks: ProductionTaskRowExtended[]
+  thisWeekTasks: ProductionTaskRowExtended[],
+  notFilmedThisWeek: { taskName: string; deadlineDayName: string }[] = []
 ): string => {
   const lines: string[] = [];
   if (thisWeekTasks.length > 0) {
@@ -492,14 +506,15 @@ export const formatWhatsImportantResponse = (
    highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
   }
 
-  if (stuckTasks.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push("תקוע - צולם ועדיין לא נערך:");
-   stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
-  }
-
   if (lines.length === 0) {
     lines.push("הכל נראה בסדר כרגע.");
+  }
+
+  if (stuckTasks.length > 0 || notFilmedThisWeek.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("הפקה — צריך לטפל:");
+    stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)} (צולם, עדיין לא נערך)`));
+    notFilmedThisWeek.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)} (עוד לא צולם, אמור לעלות ${t.deadlineDayName ? "ביום " + t.deadlineDayName : "השבוע"})`));
   }
 
   if (trendTasks.length > 0) {
@@ -639,7 +654,9 @@ export const formatGanttResponse = (items: any[], period: string): string => {
     return `לא מצאתי תכנים מתוכננים ל${period}.`;
   }
 
-  const lines = items.map((item) => {
+  const displayItems = items.slice(0, 8);
+  const suffix = items.length > 8 ? `\n\n...ו${items.length - 8} תכנים נוספים בגיליון` : "";
+  const lines = displayItems.map((item) => {
     const name = item.name || item.contentId || "ללא שם";
     const day = item.day ? ` (${item.day})` : "";
     const time = item.uploadTime ? ` בשעה ${item.uploadTime}` : "";
@@ -652,5 +669,39 @@ export const formatGanttResponse = (items: any[], period: string): string => {
     return `${item.date}${day}${time}\n  ${name}${platform}${status}${stories}${collab}${warning}`;
   });
 
-  return `תכנים מתוכננים ל${period}:\n\n${lines.join("\n\n")}`;
+  return `תכנים מתוכננים ל${period}:\n\n${lines.join("\n\n")}${suffix}`;
+};
+// Extract content name and date from gantt write command
+// e.g. "תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06" → { contentName: "זוגיות בתקופת חתונה", date: "15/06" }
+export const extractGanttWriteParams = (text: string): { contentName: string; date: string } | null => {
+  const raw = text.trim();
+
+  // Try to extract date first (dd/mm or dd.mm or dd/mm/yyyy)
+  const dateMatch = raw.match(/(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/);
+  if (!dateMatch) return null;
+  const date = dateMatch[1].replace(/\./g, "/");
+
+  // Normalize date to dd/mm/yyyy
+  const dateParts = date.split("/");
+  const normalizedDate = dateParts.length === 2
+    ? `${dateParts[0].padStart(2, "0")}/${dateParts[1].padStart(2, "0")}/${new Date().getFullYear()}`
+    : `${dateParts[0].padStart(2, "0")}/${dateParts[1].padStart(2, "0")}/${dateParts[2]}`;
+
+  // Extract content name - text between "את" and date/location markers
+  const namePatterns = [
+    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+לגאנט/i,
+    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+בתאריך/i,
+    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+ב-\d/i,
+    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+\d/i,
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = raw.match(pattern);
+    if (match && match[1]) {
+      return { contentName: match[1].trim(), date: normalizedDate };
+    }
+  }
+
+  console.log(`[GanttWrite] No pattern matched for: "${raw}"`);
+  return null;
 };
