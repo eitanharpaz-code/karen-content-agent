@@ -20,6 +20,7 @@ export type VisibilityIntent =
   | "category_stage_filter"
   | "gantt_query"
   | "gantt_write"
+  | "gantt_holes"
   | null;
 
 /**
@@ -305,6 +306,15 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   const isGanttWrite = hasGanttWritePhrase && rawText.includes("גאנט") && (rawText.includes("לגאנט") || hasDatePattern);
   if (isGanttWrite) {
     return "gantt_write";
+  }
+  // --- Gantt Holes Intent ---
+  const ganttHolesPhrases = [
+    "מה החורים בגאנט", "אילו ימים פנויים", "מה פנוי בגאנט",
+    "אילו תאריכים פנויים", "מה הפנויים בגאנט", "חורים בגאנט",
+    "ימים פנויים בגאנט", "תאריכים פנויים בגאנט",
+  ];
+  if (ganttHolesPhrases.some((p) => rawText.includes(p))) {
+    return "gantt_holes";
   }
 
   // --- Category + Stage Filter - חייב להיות לפני missing_filmed ---
@@ -704,4 +714,24 @@ export const extractGanttWriteParams = (text: string): { contentName: string; da
 
   console.log(`[GanttWrite] No pattern matched for: "${raw}"`);
   return null;
+};
+// Format available dates (holes) in gantt for current month
+export const formatGanttHolesResponse = (availableDates: string[]): string => {
+  if (availableDates.length === 0) {
+    return "אין תאריכים פנויים החודש בגאנט — החודש מלא.";
+  }
+
+  const dayNames = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+  const lines = availableDates.slice(0, 10).map((date) => {
+    const parts = date.split("/");
+    const dayName = dayNames[new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
+    return `- ${date} (יום ${dayName})`;
+  });
+
+  const suffix = availableDates.length > 10
+    ? `\n...ועוד ${availableDates.length - 10} תאריכים פנויים`
+    : "";
+
+  return `תאריכים פנויים החודש בגאנט:\n${lines.join("\n")}${suffix}`;
 };

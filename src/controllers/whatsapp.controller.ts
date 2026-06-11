@@ -88,8 +88,9 @@ import {
 formatPriorityFilterResponse,
   extractCategoryAndStage,
  formatCategoryStageResponse,
-  formatGanttResponse,
+formatGanttResponse,
   extractGanttWriteParams,
+  formatGanttHolesResponse,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -628,6 +629,23 @@ const replyText = `מעולה, הטרנד נשמר.
             const replyText = `מצאתי את הסרטון\n"${summary.shortName}"\nהרעיון שלו:\n${summary.idea}`;
             await safeSendWhatsAppMessage(sender, replyText);
             return res.status(200).json({ status: "visibility_content_summary", sender });
+          }
+          case "gantt_holes": {
+            const now = new Date();
+            const currentMonth = String(now.getMonth() + 1).padStart(2, "0");
+            const currentYear = now.getFullYear();
+            const firstOfMonth = `01/${currentMonth}/${currentYear}`;
+            const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const futureAvailable = available.filter((date) => {
+              const parts = date.split("/");
+              const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+              return d >= today;
+            });
+            const replyText = formatGanttHolesResponse(futureAvailable);
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_gantt_holes", sender });
           }
           case "gantt_write": {
             const params = extractGanttWriteParams(incomingText);
