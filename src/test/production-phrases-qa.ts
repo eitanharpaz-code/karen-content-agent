@@ -16,6 +16,12 @@ const testCases = [
   { text: "פרסמנו את הסרטון על השמלה", expected: "uploaded" },
   { text: "יצא לאוויר הסרטון על הלוקים", expected: "uploaded" },
   { text: "הסרטון פורסם", expected: "uploaded" },
+
+  // Sprint 11: Fast Track detection with "על" pattern and new content
+  { text: "צילמתי וערכתי סרטון חדש על סיור לוקיישנים לחתונה בתל אביב", expected: "filmed" }, // Will set both filmed+edited
+  { text: "צילמתי וערכתי סרטון חדש על זוגיות", expected: "filmed" }, // Simplified version
+  { text: "צילמתי סרטון חדש על שמלה שלישית", expected: "filmed" },
+  { text: "ערכתי סרטון חדש על קטגוריית קפריסין", expected: "edited" },
 ];
 
 console.log("בודק ביטויי הפקה:\n");
@@ -25,5 +31,8 @@ for (const { text, expected } of testCases) {
   console.log(`${ok} "${text}"`);
   if (detected?.statusType !== expected) {
     console.log(`   צפוי: ${expected} | קיבל: ${detected?.statusType || "null"}`);
+  }
+  if (detected?.contentName) {
+    console.log(`   Content: "${detected.contentName}"`);
   }
 }

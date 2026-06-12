@@ -238,7 +238,7 @@ const STATUS_PREFIX_CLEANUP = /^(?:מוכן|מוכנים|סיימתי|סיימנ
  * - filmed → filmed only
  * - cover_ready → cover_ready only
  * - copy_ready → copy_ready only
- * 
+ *
  * Results are deduplicated.
  */
 export const expandStatusTypesWithDependencies = (statusTypes: ProductionStatusType[]): ProductionStatusType[] => {
@@ -318,6 +318,13 @@ const extractContentName = (message: string, afterIndex: number): string => {
   cleaned = cleaned.replace(/^(?:ל(?:־)?|עבור|בשביל|על|את)\s*/i, "").trim();
   cleaned = cleaned.replace(/^(?:ה|את|על|של|שלי|שלך)\s+/i, "").trim();
   cleaned = cleaned.replace(/^['"]|['"]$/g, "").trim();
+
+  // Extract content after " על " or " עם " (mid-text separators for content topics)
+  // e.g., "סרטון חדש על סיור לוקיישנים" → "סיור לוקיישנים"
+  const separatorMatch = cleaned.match(/\s+(?:על|עם)\s+(.+)/i);
+  if (separatorMatch && separatorMatch[1]) {
+    cleaned = separatorMatch[1].trim();
+  }
 
   const endIndex = cleaned.search(/[.,!?;:]/);
   if (endIndex > 0) {

@@ -90,13 +90,19 @@ export const appendRowToSheet = async (
 
   console.log(`[Sheets] Writing to sheet: "${sheetName}"`);
   console.log(`[Sheets] Row payload: ${JSON.stringify(values)}`);
-  
+
   try {
-    // Use sheet name only (without cell reference) to ensure append works correctly across all columns
-    // This prevents the append from updating a partially-filled last row
+    const quotedSheetName = `'${sheetName.replace(/'/g, "''")}'`;
+    const appendRange =
+      sheetName === SHEET_NAMES.contentLibrary
+        ? `${quotedSheetName}!A:K`
+        : sheetName;
+
+    console.log(`[Sheets] Append range: "${appendRange}"`);
+
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: sheetName,
+      range: appendRange,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [values],
@@ -111,19 +117,43 @@ export const appendRowToSheet = async (
   }
 };
 
-// Get all existing Content IDs from בנק רעיונות
+// Get all existing Content IDs globally.
+// Content_ID must never be reused after moving between sheets.
 export const getExistingContentIds = async (spreadsheetId: string): Promise<string[]> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:A`,
+  const ranges = [
+    `${SHEET_NAMES.contentLibrary}!A:A`,
+    `${SHEET_NAMES.approvedContent}!A:A`,
+    `${SHEET_NAMES.productionTasks}!A:A`,
+    `${SHEET_NAMES.monthlyGantt}!A:A`,
+  ];
+
+  const responses = await Promise.all(
+    ranges.map((range) =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range,
+      })
+    )
+  );
+
+  const ids = new Set<string>();
+
+  responses.forEach((response) => {
+    const values = response.data.values || [];
+
+    // Skip header row, filter out empty cells
+    values.slice(1).forEach((row) => {
+      const id = (row[0] || "").toString().trim();
+      if (id) {
+        ids.add(id);
+      }
+    });
   });
 
-  const values = response.data.values || [];
-  // Skip header row, filter out empty cells
-  return values.slice(1).map((row) => row[0]).filter(Boolean);
+  return Array.from(ids);
 };
 
 export type CategoryRegistryEntry = {
@@ -358,31 +388,70 @@ export const saveContentIdea = async (
   spreadsheetId: string,
   contentId: string,
   idea: string,
+  summary: string,
   category: string,
   tone: string,
   priority: string
 ): Promise<void> => {
   console.log(`[Sprint 6] Step 1: Saving content idea to בנק רעיונות`);
   console.log(`[Sprint 6] Content_ID: ${contentId}`);
-  
+
+  const requiresShoot = /(?:בלי צילום|ללא צילום|לא דורש צילום|לא דורשת צילום|טקסט בלבד|סטורי בלבד|רק סטורי|רק טקסט)/.test(idea)
+    ? "לא"
+    : "כן";
+
+  const collab = /(?:שת["״׳]?פ|שיתוף פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח)/.test(idea)
+    ? "כן"
+    : "לא";
+
   const contentRow = [
-    contentId,           // Content_ID
-    idea,                // רעיון
-    category,            // קטגוריה
-    tone,                // טון רגשי
-    "",                  // הוק / פתיח (empty for now)
-    "",                  // מתאים ל... (empty for now)
-    "לא",                // דורש יום צילום? (default "לא")
-    priority,            // רמת עדיפות
-    "רעיון",             // סטטוס (default "רעיון")
-    "",                  // שת״פ / חסות (empty for now)
-    "",                  // הערות
+    contentId,              // A - Content_ID
+    idea,                   // B - רעיון
+    summary,                // C - סיכום
+    category,               // D - קטגוריה
+    tone,                   // E - טון רגשי
+    priority,               // F - רמת עדיפות
+    requiresShoot,          // G - דורש יום צילום?
+    collab,                 // H - שת״פ / חסות
+    "רעיון",               // I - סטטוס
+    "",                    // J - הערות
+    new Date().toISOString(), // K - timestamp
   ];
 
   console.log(`[Sprint 6] saveContentIdea -> target="${SHEET_NAMES.contentLibrary}", content_id=${contentId}`);
   console.log(`[Sprint 6] saveContentIdea -> rowPayload=${JSON.stringify(contentRow)}`);
 
-  await appendRowToSheet(spreadsheetId, SHEET_NAMES.contentLibrary, contentRow);
+  // For בנק רעיונות, do NOT use values.append.
+  // Google Sheets may detect a table starting at G and append to G:Q.
+  // Instead, find the next non-empty row and write explicitly to A:K.
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const existingResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:Q`,
+  });
+
+  const existingRows = existingResponse.data.values || [];
+  const lastNonEmptyIndex = existingRows.reduce((lastIndex, row, index) => {
+    const hasAnyValue = row.some((cell) => String(cell || "").trim() !== "");
+    return hasAnyValue ? index : lastIndex;
+  }, 0);
+
+  const nextRow = lastNonEmptyIndex + 2;
+  const targetRange = `'${SHEET_NAMES.contentLibrary}'!A${nextRow}:K${nextRow}`;
+
+  console.log(`[Sprint 6] saveContentIdea -> explicit targetRange=${targetRange}`);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: targetRange,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [contentRow],
+    },
+  });
+
   console.log(`[Sprint 6] ✅ Content idea saved successfully to בנק רעיונות`);
 };
 
@@ -394,19 +463,15 @@ export const createProductionTask = async (
 ): Promise<void> => {
   console.log(`[Sprint 6] Step 2: Creating production task in משימות הפקה`);
   console.log(`[Sprint 6] Content_ID: ${contentId}, Task name: ${contentName}`);
-  
+
   const taskRow = [
-    contentId,           // content_id
-    contentName,         // שם התוכן
-    "לא",                // צריך טקסט? (default "לא")
-    "לא",                // צולם (default "לא")
-    "לא",                // נערך (default "לא")
-    "לא",                // קאבר מוכן (default "לא")
-    "לא",                // קופי מוכן (default "לא")
-    "לא",                // הועלה (default "לא")
-    "",                  // דדליין (empty for now)
-    "",                  // שעת העלאה (empty for now)
-    "",                  // הערות
+    contentId,           // A - content_id
+    contentName,         // B - שם התוכן
+    "לא",                // C - צולם
+    "לא",                // D - נערך
+    "לא",                // E - קאבר מוכן
+    "",                  // F - דדליין הפקה
+    "",                  // G - הערות
   ];
 
   console.log(`[Sprint 6] createProductionTask -> target="${SHEET_NAMES.productionTasks}", content_id=${contentId}`);
@@ -451,23 +516,23 @@ export const findProductionTaskByName = async (
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${SHEET_NAMES.productionTasks}!A:K`, // Get content_id and content name columns
+      range: `${SHEET_NAMES.productionTasks}!A:G`, // Get content_id and content name columns
     });
 
     const rows = response.data.values || [];
-    
+
     // Normalize the incoming search term with both Hebrew and punctuation normalization
     const normalizedSearchName = normalizeHebrewText(contentName);
     const punctuationNormalizedSearch = removePunctuationForMatching(normalizedSearchName);
-    
+
     console.log(`[Sprint 7] Searching for content: "${contentName}"`);
     console.log(`[Sprint 7] Normalized search term: "${normalizedSearchName}"`);
     console.log(`[Sprint 7] Punctuation-normalized search: "${punctuationNormalizedSearch}"`);
-    
+
     const exactMatches: Array<{ rowIndex: number; row: string[] }> = [];
     const includesMatches: Array<{ rowIndex: number; row: string[] }> = [];
     const scoredMatches: Array<{ rowIndex: number; row: string[]; score: number }> = [];
-    
+
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       const sheetRowNumber = i + 1; // Google Sheets rows are 1-indexed, header occupies row 1
@@ -475,7 +540,7 @@ export const findProductionTaskByName = async (
         const sheetContentName = row[1].toString();
         const normalizedTaskName = normalizeHebrewText(sheetContentName);
         const punctuationNormalizedTask = removePunctuationForMatching(normalizedTaskName);
-        
+
         console.log(`[Sprint 7] Array index ${i} → Google Sheets row ${sheetRowNumber}: "${sheetContentName}" → normalized: "${normalizedTaskName}"`);
 
         // Try exact normalized match
@@ -572,10 +637,33 @@ ${candidateList}
         const index = parseInt(resultText) - 1;
 
         if (index >= 0 && index < candidates.length) {
-          console.log(`[Claude Matching] "${contentName}" → "${candidates[index].name}" (row ${candidates[index].rowIndex})`);
+          const candidateName = candidates[index].name;
+          console.log(`[Claude Matching] "${contentName}" → "${candidateName}" (row ${candidates[index].rowIndex})`);
+
+          // Safety check: if user says this is new content, require meaningful (non-generic) overlap
+          const newContentIndicators = ["סרטון חדש", "תוכן חדש", "רעיון חדש", "צילמתי", "ערכתי", "חדש"];
+          const isNewContent = newContentIndicators.some((indicator) => contentName.includes(indicator));
+
+          if (isNewContent) {
+            // Generic/topic words to ignore when calculating meaningful overlap
+            const genericWords = ["חדש", "חדשה", "תל", "אביב", "תל אביב", "חתונה", "חתונות", "זוגיות", "שמלה", "שמלות", "סרטון", "תוכן"];
+
+            // Tokenize normalized names and filter out generic words
+            const searchTokens = normalizedSearchName.split(/\s+/).filter((t) => t && !genericWords.includes(t));
+            const candidateTokens = normalizeHebrewText(candidateName).split(/\s+/).filter((t) => t && !genericWords.includes(t));
+
+            // Count meaningful overlap (tokens that appear in both after filtering generics)
+            const meaningfulOverlap = searchTokens.filter((token) => candidateTokens.includes(token)).length;
+
+            if (meaningfulOverlap === 0) {
+              console.log(`[Claude Matching] Rejected weak generic match for new content: "${contentName}" → "${candidateName}"`);
+              return null; // Return null to allow Fast Track flow
+            }
+          }
+
           // If search term appears in the matched name — Claude is confident
-          const confident = candidates[index].name.toLowerCase().includes(contentName.toLowerCase()) ||
-                            contentName.toLowerCase().split(/\s+/).every((word) => candidates[index].name.toLowerCase().includes(word));
+          const confident = candidateName.toLowerCase().includes(contentName.toLowerCase()) ||
+                            contentName.toLowerCase().split(/\s+/).every((word) => candidateName.toLowerCase().includes(word));
           return { rowIndex: candidates[index].rowIndex, row: candidates[index].row };
         }
       } catch (claudeError) {
@@ -643,7 +731,7 @@ export const updateProductionStatus = async (
     });
 
     console.log(`[Sprint 7] ✅ Successfully updated ${cellAddress} to "כן"`);
-    
+
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Sprint 7] Failed to update production status: ${errorMessage}`);
@@ -691,7 +779,7 @@ export const getAllProductionTasks = async (spreadsheetId: string): Promise<Prod
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.productionTasks}!A:K`,
+    range: `${SHEET_NAMES.productionTasks}!A:G`,
   });
 
   const values = response.data.values || [];
@@ -699,15 +787,15 @@ export const getAllProductionTasks = async (spreadsheetId: string): Promise<Prod
   return values.slice(1).map((row) => ({
     contentId: row[0] || "",
     taskName: row[1] || "",
-    needsText: row[2] || "לא",
-    filmed: row[3] || "לא",
-    edited: row[4] || "לא",
-    coverReady: row[5] || "לא",
-    copyReady: row[6] || "לא",
-    uploaded: row[7] || "לא",
-    deadline: row[8] || "",
-    uploadTime: row[9] || "",
-    notes: row[10] || "",
+    needsText: "לא",
+    filmed: row[2] || "לא",
+    edited: row[3] || "לא",
+    coverReady: row[4] || "לא",
+    copyReady: "כן",
+    uploaded: "לא",
+    deadline: row[5] || "",
+    uploadTime: "",
+    notes: row[6] || "",
   }));
 };
 // Get tasks missing filming: filmed != כן
@@ -847,7 +935,7 @@ export const getContentIdeasWithPriority = async (spreadsheetId: string): Promis
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:H`,
+    range: `${SHEET_NAMES.contentLibrary}!A:F`,
   });
 
   const values = response.data.values || [];
@@ -855,8 +943,8 @@ export const getContentIdeasWithPriority = async (spreadsheetId: string): Promis
 
   values.slice(1).forEach((row) => {
     const contentId = row[0] || "";
-    const category = row[2] || "";
-    const priority = row[7] || "בינוני";
+    const category = row[3] || "";
+    const priority = row[5] || "בינוני";
     if (contentId) {
       map.set(contentId, { priority, category });
     }
@@ -969,7 +1057,7 @@ export const updateDeadline = async (
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
-  const range = `${SHEET_NAMES.productionTasks}!I${rowIndex}`;
+  const range = `${SHEET_NAMES.productionTasks}!F${rowIndex}`;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -1253,24 +1341,40 @@ let bestScore = 0;
 export const approveContentForProduction = async (
   spreadsheetId: string,
   contentId: string
-): Promise<{ success: boolean; name: string }> => {
+): Promise<{ success: boolean; name: string; contentId: string }> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
   // 1. מצא את הרעיון בבנק רעיונות
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:M`,
+    range: `${SHEET_NAMES.contentLibrary}!A:K`,
   });
 
   const rows = response.data.values || [];
- const normalizedSearch = normalizeHebrewText(contentId).toLowerCase();
+  const rawSearch = contentId.toString().trim();
+  const normalizedSearch = normalizeHebrewText(rawSearch).toLowerCase();
+
   const rowIndex = rows.findIndex((row, i) => {
     if (i === 0) return false;
-    const rowName = normalizeHebrewText((row[1] || "").toString().trim()).toLowerCase();
+
     const rowId = (row[0] || "").toString().trim();
+    const rawRowName = (row[1] || "").toString().trim();
+
+    // Never match fully empty rows.
+    // Without this guard, normalizedSearch.includes("") is always true.
+    if (!rowId && !rawRowName) return false;
+
+    // Exact Content_ID match should work even if the name is empty.
+    if (rowId && rowId === rawSearch) return true;
+
+    // Name-based matching only if the row has an actual name.
+    if (!rawRowName) return false;
+
+    const rowName = normalizeHebrewText(rawRowName).toLowerCase();
     const score = getTokenOverlapScore(normalizedSearch, rowName);
-    return rowId === contentId || rowName.includes(normalizedSearch) || normalizedSearch.includes(rowName) || score >= 2;
+
+    return rowName.includes(normalizedSearch) || normalizedSearch.includes(rowName) || score >= 2;
   });
   if (rowIndex === -1) throw new Error(`לא נמצא רעיון עם ID: ${contentId}`);
 
@@ -1280,9 +1384,9 @@ export const approveContentForProduction = async (
   const summary = (row[2] || "").toString().trim();
   const category = (row[3] || "").toString().trim();
   const tone = (row[4] || "").toString().trim();
-  const priority = (row[8] || "").toString().trim();
-  const collab = (row[10] || "").toString().trim();
-  const notes = (row[11] || "").toString().trim();
+  const priority = (row[5] || "").toString().trim();
+  const collab = (row[7] || "").toString().trim();
+  const notes = (row[9] || "").toString().trim();
   const timestamp = new Date().toISOString();
 
   // 2. הוסף לתכנים שאושרו
@@ -1299,10 +1403,10 @@ await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
   // 4. מחק מבנק רעיונות
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A${rowIndex + 1}:M${rowIndex + 1}`,
+    range: `${SHEET_NAMES.contentLibrary}!A${rowIndex + 1}:K${rowIndex + 1}`,
   });
 
-  return { success: true, name };
+  return { success: true, name, contentId: actualContentId };
 };
 export const getGanttByDateRange = async (
   spreadsheetId: string,
@@ -1380,16 +1484,23 @@ export const updateGanttStatus = async (
   });
 
   console.log(`[Gantt] ✅ Updated status to "${status}" at ${cellAddress}`);
-  // כתוב טיימסטמפ בעמודה M (עמודה 13)
-  const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
-  const timestampRange = `גאנט תוכן!N${rowIndex + 1}`;
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: timestampRange,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[israelTime]] },
-  });
-console.log(`[Gantt] ✅ Wrote publish timestamp to N${rowIndex + 1}: ${israelTime}`);};
+
+  // Write publish timestamp only when the content is actually published.
+  // "מוכן" should not fill column N.
+  if (status === "פורסם") {
+    const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+    const timestampRange = `גאנט תוכן!N${rowIndex + 1}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: timestampRange,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[israelTime]] },
+    });
+
+    console.log(`[Gantt] ✅ Wrote publish timestamp to N${rowIndex + 1}: ${israelTime}`);
+  }
+};
 // Get gantt rows that are NOT published (status ≠ "פורסם")
 export const getGanttNotPublished = async (spreadsheetId: string): Promise<any[]> => {
   const auth = getAuthClient();
@@ -1525,6 +1636,48 @@ ${candidateList}
   return null;
 };
 
+// Update status in תכנים שאושרו by Content_ID
+export const updateApprovedContentStatusById = async (
+  spreadsheetId: string,
+  contentId: string,
+  status: "ממתין לצילום" | "ממתין לעריכה" | "מוכן לעלייה" | "פורסם"
+): Promise<boolean> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.approvedContent}!A:G`,
+  });
+
+  const rows = response.data.values || [];
+  const normalizedContentId = contentId.toString().trim();
+
+  for (let i = 1; i < rows.length; i++) {
+    const rowContentId = (rows[i][0] || "").toString().trim();
+
+    if (rowContentId === normalizedContentId) {
+      const rowIndex = i + 1; // Google Sheets is 1-indexed
+      const range = `${SHEET_NAMES.approvedContent}!G${rowIndex}`;
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[status]],
+        },
+      });
+
+      console.log(`[Approved Content] ✅ Updated status for ${contentId} to "${status}"`);
+      return true;
+    }
+  }
+
+  console.warn(`[Approved Content] ⚠️ Could not find Content_ID ${contentId} in תכנים שאושרו`);
+  return false;
+};
+
 // Write a new row to גאנט תוכן
 export const addRowToGantt = async (
   spreadsheetId: string,
@@ -1532,7 +1685,8 @@ export const addRowToGantt = async (
   contentName: string,
   date: string,
   dayName: string,
-  uploadTime: string = ""
+  uploadTime: string = "",
+  status: "בתכנון" | "מוכן" | "בזמן אמת" | "פורסם" = "בתכנון"
 ): Promise<void> => {
   // Pull priority and collab from תכנים שאושרו
   const auth = getAuthClient();
@@ -1557,7 +1711,7 @@ export const addRowToGantt = async (
     priority,        // H - רמת עדיפות
     "",              // I - סטוריז תומכים
     collab || "לא",  // J - שת"פ/חסות
-    "בתכנון",        // K - סטטוס
+    status,          // K - סטטוס
     uploadTime,      // L - שעת העלאה
     "",              // M - הערות
   ]);

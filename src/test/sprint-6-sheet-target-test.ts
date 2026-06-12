@@ -12,7 +12,8 @@ const main = async () => {
 
     const contentId = `TEST-${Date.now()}`;
     const contentName = "תוכן בדיקה משימות הפקה";
-    const idea = "בדיקת כתיבת שורה לבנק רעיונות"
+    const idea = "בדיקת כתיבת שורה לבנק רעיונות";
+    const summary = "סיכום בדיקה";
     const category = "General";
     const tone = "casual";
     const priority = "Medium";
@@ -25,18 +26,18 @@ const main = async () => {
     console.log(`   payload: ${JSON.stringify([
       contentId,
       idea,
+      summary,
       category,
       tone,
-      "",
-      "",
-      "לא",
       priority,
+      "כן",
+      "לא",
       "רעיון",
       "",
-      "",
+      new Date().toISOString(),
     ])}`);
 
-    await saveContentIdea(spreadsheetId, contentId, idea, category, tone, priority);
+    await saveContentIdea(spreadsheetId, contentId, idea, summary, category, tone, priority);
 
     console.log(`\n2) Writing task row to משימות הפקה:`);
     console.log(`   target sheet: משימות הפקה`);
@@ -46,10 +47,6 @@ const main = async () => {
       "לא",
       "לא",
       "לא",
-      "לא",
-      "לא",
-      "לא",
-      "",
       "",
       "",
     ])}`);
