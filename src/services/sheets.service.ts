@@ -855,25 +855,22 @@ export const getTasksEditedAndNotUploaded = async (spreadsheetId: string): Promi
   return tasks.filter((task) => task.edited === "כן" && !publishedIds.has(task.contentId));
 };
 
-// Get stuck tasks: deterministic patterns
-// Pattern 1: filmed but not edited
-// Pattern 2: edited but not uploaded
-// Pattern 3: not filmed and not edited (idle)
+// Get stuck tasks: content that started production but is blocked before ready.
+// "Edited but not uploaded" is not stuck. It belongs to ready-to-upload / gantt views.
 export const getStuckTasks = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
+
   return tasks.filter((task) => {
     // Filmed but not edited
     if (task.filmed === "כן" && task.edited !== "כן") {
       return true;
     }
-    // Edited but not uploaded
-    if (task.edited === "כן" && task.uploaded !== "כן") {
+
+    // Filmed/edited but missing cover
+    if (task.filmed === "כן" && task.edited === "כן" && task.coverReady !== "כן") {
       return true;
     }
-    // Cover/copy missing in later stages
-    if (task.filmed === "כן" && (task.coverReady !== "כן" || task.copyReady !== "כן")) {
-      return true;
-    }
+
     return false;
   });
 };

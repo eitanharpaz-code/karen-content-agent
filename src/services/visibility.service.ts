@@ -538,51 +538,160 @@ export const formatWhatsImportantResponse = (
   notFilmedThisWeek: { taskName: string; deadlineDayName: string }[] = []
 ): string => {
   const lines: string[] = [];
-  if (thisWeekTasks.length > 0) {
-    lines.push("השבוע אמורים לעלות:");
-    thisWeekTasks.slice(0, 5).forEach((t) => {
-     const shortName = shortenTaskName(t.taskName);
-      lines.push(`- ${shortName} (יום ${t.deadlineDayName})`);
-      if (t.filmed !== "כן") {
-        lines.push(`  *שימי לב, את הסרטון הזה עדיין לא צילמת*`);
-      } else if (t.edited !== "כן") {
-        lines.push(`  *שימי לב, את הסרטון הזה עדיין לא ערכת*`);
-      } else if (t.coverReady !== "כן") {
-        lines.push(`  *שימי לב, עדיין חסר קאבר*`);
-      } else if (t.copyReady !== "כן") {
-        lines.push(`  *שימי לב, עדיין חסר קופי*`);
-      }
+
+  const upcomingItems = thisWeekTasks.slice(0, 5);
+
+  if (
+    upcomingItems.length === 0 &&
+    stuckTasks.length === 0 &&
+    notFilmedThisWeek.length === 0 &&
+    highPriorityNotUploaded.length === 0 &&
+    trendTasks.length === 0
+  ) {
+    return "כרגע אין משהו שנראה דחוף. זה דווקא מצב טוב.\nאם בא לך להתקדם, הייתי בודקת מה עוד לא צולם.";
+  }
+
+  if (upcomingItems.length > 0) {
+    const intro =
+      thisWeekTasks.length === 1
+        ? "בימים הקרובים יש דבר אחד בגאנט."
+        : `בימים הקרובים יש ${thisWeekTasks.length} דברים בגאנט.`;
+
+    lines.push(intro);
+    lines.push("");
+    lines.push("מה עולה בקרוב:");
+
+    upcomingItems.forEach((t) => {
+      const shortName = shortenTaskName(t.taskName);
+      const day = t.deadlineDayName ? `יום ${t.deadlineDayName}` : "בימים הקרובים";
+      const time = t.uploadTime ? `, ${t.uploadTime}` : "";
+      lines.push(`- ${shortName} (${day}${time})`);
     });
+
     if (thisWeekTasks.length > 5) {
-      lines.push(`בנוסף את מתוכננת להעלות עוד ${thisWeekTasks.length - 5} סרטונים, לצפייה בהם כנסי לגוגל שיטס`);
+      lines.push(`ועוד ${thisWeekTasks.length - 5} דברים שלא הצגתי כאן כדי לא להעמיס.`);
+    }
+  }
+
+  const productionIssues: Array<{
+    contentId?: string;
+    taskName: string;
+    shortName: string;
+    status: string;
+    action: string;
+  }> = [];
+
+  const addProductionIssue = (
+    task: ProductionTaskRowExtended,
+    status: string,
+    action: string
+  ) => {
+    const shortName = shortenTaskName(task.taskName);
+
+    const alreadyExists = productionIssues.some((issue) => {
+      if (task.contentId && issue.contentId) {
+        return issue.contentId === task.contentId;
+      }
+
+      return issue.shortName === shortName;
+    });
+
+    if (!alreadyExists) {
+      productionIssues.push({
+        contentId: task.contentId,
+        taskName: task.taskName,
+        shortName,
+        status,
+        action,
+      });
+    }
+  };
+
+  thisWeekTasks.forEach((t) => {
+    if (t.filmed !== "כן") {
+      addProductionIssue(
+        t,
+        "עוד לא צולם",
+        `לצלם את "${shortenTaskName(t.taskName)}", כי הוא יושב בימים הקרובים ועוד לא התחיל.`
+      );
+    } else if (t.edited !== "כן") {
+      addProductionIssue(
+        t,
+        "צולם, מחכה לעריכה",
+        `לערוך את "${shortenTaskName(t.taskName)}", כי הצילום כבר מאחורייך.`
+      );
+    } else if (t.coverReady !== "כן") {
+      addProductionIssue(
+        t,
+        "חסר קאבר",
+        `לסגור קאבר ל-"${shortenTaskName(t.taskName)}". זה קטן, אבל תוקע העלאה.`
+      );
+    } else if (t.copyReady !== "כן") {
+      addProductionIssue(
+        t,
+        "חסר קופי",
+        `לסגור קופי ל-"${shortenTaskName(t.taskName)}". זה הדבר האחרון לפני העלאה.`
+      );
+    }
+  });
+
+  stuckTasks.forEach((t) => {
+    addProductionIssue(
+      t,
+      "צולם, מחכה לעריכה",
+      `לערוך את "${shortenTaskName(t.taskName)}", כי הצילום כבר מאחורייך.`
+    );
+  });
+
+  if (productionIssues.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("מה דורש טיפול:");
+
+    productionIssues.slice(0, 5).forEach((issue) => {
+      lines.push(`- ${issue.shortName} - ${issue.status}`);
+    });
+
+    if (productionIssues.length > 5) {
+      lines.push(`ועוד ${productionIssues.length - 5} דברים שלא הצגתי כאן כדי לא להעמיס.`);
     }
   }
 
   if (highPriorityNotUploaded.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push("תכנים בעדיפות גבוהה שעוד לא עלו:");
-   highPriorityNotUploaded.slice(0, 5).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
-  }
+    const highPriorityToShow = highPriorityNotUploaded
+      .filter((t) => !thisWeekTasks.some((upcoming) => upcoming.contentId === t.contentId))
+      .slice(0, 3);
 
-  if (lines.length === 0) {
-    lines.push("הכל נראה בסדר כרגע.");
-  }
-
-  if (stuckTasks.length > 0 || notFilmedThisWeek.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push("הפקה — צריך לטפל:");
-    stuckTasks.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)} (צולם, עדיין לא נערך)`));
-    notFilmedThisWeek.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)} (עוד לא צולם, אמור לעלות ${t.deadlineDayName ? "ביום " + t.deadlineDayName : "השבוע"})`));
+    if (highPriorityToShow.length > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push("עוד דברים בעדיפות גבוהה שלא עלו:");
+      highPriorityToShow.forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
+    }
   }
 
   if (trendTasks.length > 0) {
-    lines.push(`\nוגם יש ${trendTasks.length} טרנדים שעדיין לא עלו:`);
-    trendTasks.forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
+    if (lines.length > 0) lines.push("");
+
+    const trendLine =
+      trendTasks.length === 1
+        ? "יש גם טרנד אחד שעדיין לא עלה:"
+        : `יש גם ${trendTasks.length} טרנדים שעדיין לא עלו:`;
+
+    lines.push(trendLine);
+    trendTasks.slice(0, 3).forEach((t) => lines.push(`- ${shortenTaskName(t.taskName)}`));
+  }
+
+  if (productionIssues.length > 0) {
+    lines.push("");
+    lines.push("הדבר הראשון שהייתי סוגרת עכשיו:");
+    lines.push(productionIssues[0].action);
+  } else if (upcomingItems.length > 0) {
+    lines.push("");
+    lines.push("הדבר הראשון שהייתי עושה עכשיו:");
+    lines.push(`לוודא ש-"${shortenTaskName(upcomingItems[0].taskName)}" באמת מוכן לעלות.`);
   }
 
   return lines.join("\n");
 };
-
 export const formatPriorityFilterResponse = (
   tasks: ProductionTaskRowExtended[],
   priority: string
@@ -618,55 +727,131 @@ export const formatOpenIdeasResponse = (ideas: Array<{
 };
 
 export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: VisibilityIntent): string => {
-  if (tasks.length === 0) {
-    switch (intent) {
+  const getVisibilityCopy = (currentIntent: VisibilityIntent) => {
+    switch (currentIntent) {
       case "missing_edit":
-       return "אין כרגע משהו שמחכה לעריכה.";
+        return {
+          empty: "אין כרגע משהו שמחכה לעריכה.",
+          titleSingular: "יש תוכן אחד שמחכה לעריכה.",
+          titlePlural: (count: number) => `יש ${count} תכנים שמחכים לעריכה.`,
+          listTitle: "הראשונים לטיפול:",
+          nextAction: (name: string) => `הייתי מתחילה מלערוך את "${name}".`,
+        };
+
+      case "edited_not_uploaded":
+        return {
+          empty: "אין כרגע משהו שערוך ומחכה לעלות.",
+          titleSingular: "יש תוכן אחד שכבר ערוך ומחכה לעלות.",
+          titlePlural: (count: number) => `יש ${count} תכנים שכבר ערוכים ומחכים לעלות.`,
+          listTitle: "מה מוכן לעלייה:",
+          nextAction: (name: string) => `הייתי בודקת אם "${name}" מוכן גם בקאבר ובקופי, ואז לשבץ להעלאה.`,
+        };
+
       case "missing_cover":
-        return "אין כרגע תוכן שחסר לו קאבר.";
+        return {
+          empty: "אין כרגע תוכן שחסר לו קאבר.",
+          titleSingular: "יש תוכן אחד שחסר לו קאבר.",
+          titlePlural: (count: number) => `יש ${count} תכנים שחסר להם קאבר.`,
+          listTitle: "מה צריך קאבר:",
+          nextAction: (name: string) => `הייתי סוגרת קודם קאבר ל-"${name}". זה קטן, אבל יכול לתקוע העלאה.`,
+        };
+
       case "missing_copy":
-        return "אין כרגע תוכן שחסר לו קופי.";
+        return {
+          empty: "אין כרגע תוכן שחסר לו קופי.",
+          titleSingular: "יש תוכן אחד שחסר לו קופי.",
+          titlePlural: (count: number) => `יש ${count} תכנים שחסר להם קופי.`,
+          listTitle: "מה צריך קופי:",
+          nextAction: (name: string) => `הייתי סוגרת קודם קופי ל-"${name}". זה בדרך כלל הדבר האחרון לפני העלאה.`,
+        };
+
       case "not_uploaded":
-       return "נראה שאין כרגע משהו שעדיין לא עלה.";
+        return {
+          empty: "נראה שאין כרגע משהו שמחכה לעלות.",
+          titleSingular: "יש תוכן אחד שעדיין לא עלה.",
+          titlePlural: (count: number) => `יש ${count} תכנים שעדיין לא עלו.`,
+          listTitle: "מה מחכה לעלות:",
+          nextAction: (name: string) => `הייתי בודקת קודם את "${name}" ואם הוא מוכן, משבצת אותו בגאנט.`,
+        };
+
       case "stuck_workflow":
-       return "לא נראה שיש כרגע תוכן תקוע.";
+        return {
+          empty: "לא נראה שיש כרגע תוכן תקוע.",
+          titleSingular: "יש תוכן אחד שנראה תקוע.",
+          titlePlural: (count: number) => `יש ${count} תכנים שנראים תקועים.`,
+          listTitle: "מה תקוע:",
+          nextAction: (name: string) => `הייתי פותחת קודם את "${name}" ובודקת מה חסר כדי לשחרר אותו.`,
+        };
+
       case "missing_filmed":
-        return "אין כרגע תוכן שעוד לא צולם.";
+        return {
+          empty: "אין כרגע תוכן שעוד לא צולם.",
+          titleSingular: "יש תוכן אחד שעוד לא צולם.",
+          titlePlural: (count: number) => `יש ${count} תכנים שעוד לא צולמו.`,
+          listTitle: "מה צריך צילום:",
+          nextAction: (name: string) => `הייתי מתחילה מלצלם את "${name}".`,
+        };
+
       case "category_search":
-        return "לא נמצא תוכן בקטגוריה זו.";
+        return {
+          empty: "לא מצאתי תוכן בקטגוריה הזו.",
+          titleSingular: "מצאתי תוכן אחד בקטגוריה הזו.",
+          titlePlural: (count: number) => `מצאתי ${count} תכנים בקטגוריה הזו.`,
+          listTitle: "מה מצאתי:",
+          nextAction: (name: string) => `הייתי בודקת קודם את "${name}".`,
+        };
+
       default:
-        return "לא נמצא תוכן רלוונטי.";
+        return {
+          empty: "לא מצאתי תוכן רלוונטי.",
+          titleSingular: "מצאתי תוכן אחד.",
+          titlePlural: (count: number) => `מצאתי ${count} תכנים.`,
+          listTitle: "מה מצאתי:",
+          nextAction: (name: string) => `הייתי מתחילה מ-"${name}".`,
+        };
     }
+  };
+
+  const copy = getVisibilityCopy(intent);
+
+  if (tasks.length === 0) {
+    return copy.empty;
   }
 
-  // Format short list of task names
-  const taskNames = tasks
-   .map((task) => `- ${shortenTaskName(task.taskName)}`)
-    .slice(0, 5)
+  const displayTasks = tasks.slice(0, 5);
+  const firstTaskName = shortenTaskName(displayTasks[0].taskName);
+
+  const title =
+    tasks.length === 1
+      ? copy.titleSingular
+      : copy.titlePlural(tasks.length);
+
+  const taskNames = displayTasks
+    .map((task) => `- ${shortenTaskName(task.taskName)}`)
     .join("\n");
 
-  const suffix = tasks.length > 5 ? `\n...ו${tasks.length - 5} עוד` : "";
+  const suffix =
+    tasks.length > 5
+      ? `\nועוד ${tasks.length - 5} דברים שלא הצגתי כאן כדי לא להעמיס.`
+      : "";
 
-  switch (intent) {
-    case "missing_edit":
-      return `עוד נשאר לערוך:\n${taskNames}${suffix}`;
-    case "edited_not_uploaded":
-      return `כבר נערך ומחכה לעלות:\n${taskNames}${suffix}`;
-    case "missing_cover":
-      return `התכנים שעדיין בלי קאבר:\n${taskNames}${suffix}`;
-    case "missing_copy":
-      return `התכנים שעדיין בלי קופי:\n${taskNames}${suffix}`;
-    case "not_uploaded":
-     return `התכנים שעדיין מחכים לעלות:\n${taskNames}${suffix}`;
-    case "stuck_workflow":
-     return `מה שנראה שתקוע כרגע:\n${taskNames}${suffix}`;
-    case "missing_filmed":
-      return `התכנים שעדיין לא צולמו:\n${taskNames}${suffix}`;
-    case "category_search":
-      return `תכנים בקטגוריה:\n${taskNames}${suffix}`;
-    default:
-      return taskNames;
+  const lines = [
+    title,
+    "",
+    copy.listTitle,
+    taskNames + suffix,
+  ];
+
+    if (tasks.length > 5) {
+    lines.push("");
+    lines.push("זו רשימה רחבה, אז לא הייתי בוחרת ממנה אוטומטית מה ראשון.");
+    lines.push("כדי לתעדף לפי גאנט וקרבה להעלאה, תשאלי: מה דחוף.");
+  } else {
+    lines.push("");
+    lines.push(copy.nextAction(firstTaskName));
   }
+
+  return lines.join("\n");
 };
 // Extract category and stage from a category_stage_filter query
 // e.g. "מה לא צולם בקפריסין" → { category: "קפריסין", stage: "filmed" }
@@ -729,26 +914,51 @@ export const formatCategoryStageResponse = (
   return `תכנים בקטגוריית ${category} שעדיין לא ${stageLabel}:\n${taskNames}${suffix}`;
 };
 export const formatGanttResponse = (items: any[], period: string): string => {
+  const isNotUploadedView = period.includes("לא פורסמו") || period.includes("לא עלו");
+
   if (items.length === 0) {
-    return `לא מצאתי תכנים מתוכננים ל${period}.`;
+    return isNotUploadedView
+      ? "אין כרגע תכנים בגאנט שמחכים לעלות."
+      : `לא מצאתי תכנים מתוכננים ל${period}.`;
   }
 
-  const displayItems = items.slice(0, 8);
-  const suffix = items.length > 8 ? `\n\n...ו${items.length - 8} תכנים נוספים בגיליון` : "";
-  const lines = displayItems.map((item) => {
-    const name = item.name || item.contentId || "ללא שם";
-    const day = item.day ? ` (${item.day})` : "";
-    const time = item.uploadTime ? ` בשעה ${item.uploadTime}` : "";
-    const platform = item.platform ? ` | ${item.platform}` : "";
-    const status = item.status ? ` | ${item.status}` : "";
-    const stories = item.hasStories === "כן" ? " | + סטורי תומך" : "";
-    const collab = item.collaboration && item.collaboration !== "לא" ? ` | שת"פ: ${item.collaboration}` : "";
-    const warning = item.status === "בתכנון" ? "\n  ⚠️ עדיין לא מוכן" : "";
+  const displayItems = items.slice(0, 5);
 
-    return `${item.date}${day}${time}\n  ${name}${platform}${status}${stories}${collab}${warning}`;
+  const title = isNotUploadedView
+    ? `יש ${items.length} תכנים בגאנט שעדיין לא עלו.`
+    : `יש ${items.length} תכנים מתוכננים ל${period}.`;
+
+  const listTitle = isNotUploadedView
+    ? "מה מחכה לעלות:"
+    : "מה מתוכנן:";
+
+  const lines: string[] = [title, "", listTitle];
+
+  displayItems.forEach((item) => {
+    const name = shortenTaskName(item.name || item.contentId || "ללא שם");
+    const day = item.day ? `יום ${item.day}` : "";
+    const date = item.date || "";
+    const time = item.uploadTime ? `, ${item.uploadTime}` : "";
+    const status = item.status ? ` - ${item.status}` : "";
+
+    const datePart = [date, day].filter(Boolean).join(" ");
+    lines.push(`- ${name} (${datePart}${time})${status}`);
+
+    if (item.status === "בתכנון") {
+      lines.push("  עדיין לא מוכן.");
+    }
   });
 
-  return `תכנים מתוכננים ל${period}:\n\n${lines.join("\n\n")}${suffix}`;
+  if (items.length > 5) {
+    lines.push(`ועוד ${items.length - 5} דברים שלא הצגתי כאן כדי לא להעמיס.`);
+  }
+
+  if (isNotUploadedView) {
+    lines.push("");
+    lines.push("כדי להבין מה באמת דחוף מתוך זה, תשאלי: מה דחוף.");
+  }
+
+  return lines.join("\n");
 };
 // Extract content name and date from gantt write command
 // e.g. "תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06" → { contentName: "זוגיות בתקופת חתונה", date: "15/06" }

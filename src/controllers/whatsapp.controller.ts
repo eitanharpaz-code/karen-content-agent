@@ -54,12 +54,12 @@ import {
  getAllProductionTasksWithPriority,
   getCategories,
 findRowIndexByContentId,
-  getGanttByDateRange,
-  approveContentForProduction,
+approveContentForProduction,
   updateGanttStatus,
   getGanttNotPublished,
   getGanttReadyToUpload,
   getGanttThisWeek,
+  getGanttByDateRange,
   findApprovedContentByName,
   addRowToGantt,
  sortGanttByDate,
@@ -1021,40 +1021,64 @@ const replyText = `מעולה, הטרנד נשמר.
             break;
           }
           case "whats_important": {
-            const [allTasks, ganttThisWeek] = await Promise.all([
-              getAllProductionTasksWithPriority(spreadsheetId),
-              getGanttThisWeek(spreadsheetId),
-            ]);
-            const highNotUploaded: any[] = [];
-            const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
-            const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
-            const notFilmedThisWeek = ganttThisWeek
-              .filter((item) => {
-                const match = allTasks.find((t) => t.contentId === item.contentId);
-                return match ? match.filmed !== "כן" : true;
-              })
-              .map((item) => ({
-                taskName: item.name,
-                deadlineDayName: item.day,
-              }));
-            const thisWeek = ganttThisWeek.map((item) => ({
-              contentId: item.contentId,
-              taskName: item.name,
-              needsText: "לא",
-              filmed: "לא",
-              edited: "לא",
-              coverReady: "לא",
-              copyReady: "לא",
-              uploaded: "לא",
-              deadline: item.date,
-              uploadTime: item.uploadTime || "",
-              notes: item.notes || "",
-              priority: item.priority || "בינוני",
-              category: "",
-              isTrend: false,
-              deadlineDate: null,
-              deadlineDayName: item.day,
-            }));
+         const today = new Date();
+today.setHours(0, 0, 0, 0);
+
+const tenDaysFromNow = new Date(today);
+tenDaysFromNow.setDate(today.getDate() + 10);
+tenDaysFromNow.setHours(23, 59, 59, 999);
+
+const [allTasks, ganttUpcoming] = await Promise.all([
+  getAllProductionTasksWithPriority(spreadsheetId),
+  getGanttByDateRange(spreadsheetId, today, tenDaysFromNow),
+]);
+
+const productionById = new Map(
+  allTasks.map((task) => [task.contentId, task])
+);
+
+const thisWeek = ganttUpcoming
+  .filter((item) => item.status !== "פורסם")
+  .map((item) => {
+    const productionTask = productionById.get(item.contentId);
+    const ganttStatus = item.status || "";
+
+    const ganttLooksReady =
+      ganttStatus === "מוכן" ||
+      ganttStatus === "פורסם" ||
+      ganttStatus === "בזמן אמת";
+
+    const fallbackProductionStatus = ganttLooksReady ? "כן" : "לא";
+
+    return {
+      contentId: item.contentId,
+      taskName: item.name,
+      needsText: productionTask?.needsText || "לא",
+      filmed: productionTask?.filmed || fallbackProductionStatus,
+      edited: productionTask?.edited || fallbackProductionStatus,
+      coverReady: productionTask?.coverReady || fallbackProductionStatus,
+      copyReady: productionTask?.copyReady || "כן",
+      uploaded: item.status === "פורסם" ? "כן" : "לא",
+      deadline: item.date,
+      uploadTime: item.uploadTime || "",
+      notes: item.notes || productionTask?.notes || "",
+      priority: item.priority || productionTask?.priority || "בינוני",
+      category: productionTask?.category || "",
+      isTrend: item.contentId?.startsWith("TRD-") || productionTask?.isTrend || false,
+      deadlineDate: null,
+      deadlineDayName: item.day,
+    };
+  });
+const highNotUploaded: any[] = [];
+const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
+const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
+
+const notFilmedThisWeek = thisWeek
+  .filter((item) => item.filmed !== "כן")
+  .map((item) => ({
+    taskName: item.taskName,
+    deadlineDayName: item.deadlineDayName,
+  }));
             const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek, notFilmedThisWeek);
             await safeSendWhatsAppMessage(sender, replyText);
 
