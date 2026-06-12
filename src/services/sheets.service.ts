@@ -534,7 +534,56 @@ export const findProductionTaskByName = async (
       return { ambiguous: true, matches: includesMatches };
     }
 
+    // Claude-based matching for ambiguous cases
     if (scoredMatches.length > 0) {
+      try {
+        const candidates = scoredMatches.map((match) => ({
+          rowIndex: match.rowIndex,
+          row: match.row,
+          name: (match.row[1] || "").toString(),
+        }));
+
+        const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
+        const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+            max_tokens: 50,
+            messages: [
+              {
+                role: "user",
+                content: `המשתמש חיפש: "${contentName}"
+הנה רשימת המשימות המועמדות:
+${candidateList}
+
+החזר רק את המספר של המשימה שהכי מתאימה לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`,
+              },
+            ],
+          }),
+        });
+
+        const data = await claudeResponse.json() as any;
+        const resultText = (data.content?.[0]?.text || "0").trim();
+        const index = parseInt(resultText) - 1;
+
+        if (index >= 0 && index < candidates.length) {
+          console.log(`[Claude Matching] "${contentName}" → "${candidates[index].name}" (row ${candidates[index].rowIndex})`);
+          // If search term appears in the matched name — Claude is confident
+          const confident = candidates[index].name.toLowerCase().includes(contentName.toLowerCase()) ||
+                            contentName.toLowerCase().split(/\s+/).every((word) => candidates[index].name.toLowerCase().includes(word));
+          return { rowIndex: candidates[index].rowIndex, row: candidates[index].row };
+        }
+      } catch (claudeError) {
+        console.error(`[Claude Matching] Error: ${claudeError}. Falling back to token overlap.`);
+        // Continue to token overlap fallback below
+      }
+
+      // Token overlap fallback if Claude fails
       const highestScore = Math.max(...scoredMatches.map((match) => match.score));
       const bestMatches = scoredMatches.filter((match) => match.score === highestScore);
 
