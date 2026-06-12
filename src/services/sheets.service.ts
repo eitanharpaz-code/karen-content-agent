@@ -1732,3 +1732,38 @@ export const getApprovedContentNotInGantt = async (
       name: (row[1] || "").toString().trim(),
     }));
 };
+// Fast Track — save directly to תכנים שאושרו with all fields ready
+export const saveFastTrackContent = async (
+  spreadsheetId: string,
+  contentId: string,
+  shortName: string,
+  summary: string,
+  category: string,
+  tone: string,
+  priority: string
+): Promise<void> => {
+  const timestamp = new Date().toISOString();
+
+  await appendRowToSheet(spreadsheetId, SHEET_NAMES.approvedContent, [
+    contentId,
+    shortName,
+    summary,
+    category,
+    tone,
+    priority,
+    "מוכן לעלייה",
+    "",
+    "",
+    timestamp,
+  ]);
+
+  await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
+    contentId,
+    shortName,
+    "כן",
+    "כן",
+    "כן",
+    "",
+    "",
+  ]);
+};

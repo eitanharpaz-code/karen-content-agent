@@ -67,6 +67,7 @@ findRowIndexByContentId,
   findAvailableDatesInMonth,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
+  saveFastTrackContent,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -488,7 +489,57 @@ const replyText = `מעולה, הטרנד נשמר.
             !!pendingDraft.categoryExplicit
           );
           console.log(`[Sprint 6 Workflow] Generated Content_ID: ${contentId}`);
+          // Fast Track — שמירה לתכנים שאושרו במקום בנק רעיונות
+          if ((pendingDraft as any).isFastTrack) {
+            const now = new Date();
+            const month = now.getMonth() + 1;
+            const year = now.getFullYear();
+            const timestamp = now.toISOString();
 
+            await saveFastTrackContent(
+              spreadsheetId,
+              contentId,
+              pendingDraft.shortName,
+              pendingDraft.summary,
+              pendingDraft.category,
+              pendingDraft.tone,
+              pendingDraft.priority
+            );
+
+            // חפש חור פנוי בגאנט
+            const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
+            const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const futureAvailable = available.filter((date) => {
+              const parts = date.split("/");
+              const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+              return d >= today;
+            });
+
+            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.\nID: ${contentId}`;
+            await safeSendWhatsAppMessage(sender, replyText);
+
+            if (futureAvailable.length > 0) {
+              const suggested = futureAvailable[0];
+              const parts = suggested.split("/");
+              const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
+              storePendingQuestion(sender, {
+                questionType: "confirm_gantt_write",
+                context: {
+                  contentId,
+                  contentName: pendingDraft.shortName,
+                  date: suggested,
+                  dayName: suggestedDayName,
+                },
+              });
+              await safeSendWhatsAppMessage(sender, `הזמן הפנוי הקרוב הוא ${suggested} (יום ${suggestedDayName}). נכניס לגאנט?`);
+            } else {
+              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר לשבץ ידנית.");
+            }
+
+            return res.status(200).json({ status: "fast_track_saved", sender, contentId });
+          }
           // STEP 1: Save to בנק רעיונות (Content Library) - PRIMARY SHEET
           try {
             await saveContentIdea(
@@ -1031,6 +1082,26 @@ if (isDeadlineUpdate(incomingText)) {
           const matchResult = await findProductionTaskByName(spreadsheetId, statusUpdate.contentName);
 
           if (!matchResult) {
+            // Fast Track — תוכן לא קיים בהפקה, קרן צילמה ספונטנית
+            const isReadyUpdate = statusUpdate.statusTypes.includes("filmed") || statusUpdate.statusTypes.includes("edited");
+            if (isReadyUpdate) {
+              const draft = await createContentDraft(statusUpdate.contentName);
+              const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
+              storePendingConfirmation(sender, draftSummary);
+              const replyText = `לא מצאתי את "${statusUpdate.contentName}" בהפקה — נראה שצילמת ספונטנית, יופי!
+
+יצרתי דראפט:
+שם קצר: ${draft.shortName}
+קטגוריה: ${displayCategory(draft.category)}
+טון: ${displayTone(draft.tone)}
+עדיפות: ${displayPriority(draft.priority)}
+סיכום: ${draft.summary}
+
+אחרי אישור אכניס ישירות לתכנים שאושרו ואחפש תאריך בגאנט. זה בסדר?`;
+              await safeSendWhatsAppMessage(sender, replyText);
+              return res.status(200).json({ status: "fast_track_draft_created", sender });
+            }
+
             const replyText = "לא בטוחה איזה תוכן רצית לעדכן.\nתכתבי לי שוב את שם הסרטון ונמשיך.";
             await safeSendWhatsAppMessage(sender, replyText);
             console.log(`[Sprint 7 Workflow] No production task found for: ${statusUpdate.contentName}`);
