@@ -806,8 +806,8 @@ export const getTasksMissingFilmed = async (spreadsheetId: string): Promise<Prod
 // Get tasks that need editing: filmed but not edited
 export const getTasksMissingEdit = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
-  // Sprint 10 fix: return all tasks that are not marked as edited (no longer require filmed === "כן")
-  return tasks.filter((task) => task.edited !== "כן");
+  // "מחכה לעריכה" means it was filmed but not edited yet.
+  return tasks.filter((task) => task.filmed === "כן" && task.edited !== "כן");
 };
 
 // Get tasks missing cover: cover ready != כן
@@ -829,8 +829,30 @@ export const getTasksNotUploaded = async (spreadsheetId: string): Promise<Produc
 };
 
 export const getTasksEditedAndNotUploaded = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
-  const tasks = await getAllProductionTasks(spreadsheetId);
-  return tasks.filter((task) => task.edited === "כן" && task.uploaded !== "כן");
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const [tasks, ganttResponse] = await Promise.all([
+    getAllProductionTasks(spreadsheetId),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.monthlyGantt}!A:K`,
+    }),
+  ]);
+
+  const ganttRows = ganttResponse.data.values || [];
+  const publishedIds = new Set<string>();
+
+  ganttRows.slice(1).forEach((row) => {
+    const contentId = (row[0] || "").toString().trim();
+    const status = (row[10] || "").toString().trim();
+
+    if (contentId && status === "פורסם") {
+      publishedIds.add(contentId);
+    }
+  });
+
+  return tasks.filter((task) => task.edited === "כן" && !publishedIds.has(task.contentId));
 };
 
 // Get stuck tasks: deterministic patterns
@@ -855,6 +877,52 @@ export const getStuckTasks = async (spreadsheetId: string): Promise<ProductionTa
     return false;
   });
 };
+export type OpenContentIdea = {
+  contentId: string;
+  idea: string;
+  summary: string;
+  category: string;
+  tone: string;
+  priority: string;
+  requiresShoot: string;
+  collaboration: string;
+  status: string;
+  notes: string;
+};
+
+export const getOpenContentIdeas = async (spreadsheetId: string): Promise<OpenContentIdea[]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length < 2) return [];
+
+  return rows.slice(1)
+    .filter((row) => {
+      const contentId = (row[0] || "").toString().trim();
+      const idea = (row[1] || "").toString().trim();
+      const status = (row[8] || "").toString().trim();
+      return contentId && idea && status !== "ארכיון";
+    })
+    .map((row) => ({
+      contentId: (row[0] || "").toString().trim(),
+      idea: (row[1] || "").toString().trim(),
+      summary: (row[2] || "").toString().trim(),
+      category: (row[3] || "").toString().trim(),
+      tone: (row[4] || "").toString().trim(),
+      priority: (row[5] || "").toString().trim(),
+      requiresShoot: (row[6] || "").toString().trim(),
+      collaboration: (row[7] || "").toString().trim(),
+      status: (row[8] || "").toString().trim(),
+      notes: (row[9] || "").toString().trim(),
+    }));
+};
+
 // Get content idea summary by name - returns shortName and idea text
 export const getContentIdeaSummary = async (
   spreadsheetId: string,
@@ -928,27 +996,40 @@ ${candidateList}
 
   return null;
 };
-// Get all content ideas from בנק רעיונות with priority
+// Get content metadata from both בנק רעיונות and תכנים שאושרו.
+// Approved content is important because once an idea moves to production,
+// it is removed from בנק רעיונות.
 export const getContentIdeasWithPriority = async (spreadsheetId: string): Promise<Map<string, { priority: string; category: string }>> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:F`,
-  });
+  const [ideasResponse, approvedResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.contentLibrary}!A:F`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.approvedContent}!A:F`,
+    }),
+  ]);
 
-  const values = response.data.values || [];
   const map = new Map<string, { priority: string; category: string }>();
 
-  values.slice(1).forEach((row) => {
-    const contentId = row[0] || "";
-    const category = row[3] || "";
-    const priority = row[5] || "בינוני";
-    if (contentId) {
-      map.set(contentId, { priority, category });
-    }
-  });
+  const addRowsToMap = (values: any[][]) => {
+    values.slice(1).forEach((row) => {
+      const contentId = (row[0] || "").toString().trim();
+      const category = (row[3] || "").toString().trim();
+      const priority = (row[5] || "בינוני").toString().trim();
+
+      if (contentId) {
+        map.set(contentId, { priority, category });
+      }
+    });
+  };
+
+  addRowsToMap(ideasResponse.data.values || []);
+  addRowsToMap(approvedResponse.data.values || []);
 
   return map;
 };
@@ -1533,6 +1614,14 @@ export const getGanttNotPublished = async (spreadsheetId: string): Promise<any[]
     uploadTime: (row[11] || "").toString().trim(),
     notes: (row[12] || "").toString().trim(),
   }));
+};
+
+// Get gantt rows that are ready to upload.
+// Source of truth for questions like:
+// "מה ערכתי ולא עלה?", "מה מוכן לעלייה?"
+export const getGanttReadyToUpload = async (spreadsheetId: string): Promise<any[]> => {
+  const items = await getGanttNotPublished(spreadsheetId);
+  return items.filter((item) => item.status === "מוכן");
 };
 
 // Get gantt rows scheduled for this week that are NOT published

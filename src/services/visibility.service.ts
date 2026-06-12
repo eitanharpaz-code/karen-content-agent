@@ -22,12 +22,13 @@ export type VisibilityIntent =
   | "gantt_write"
   | "gantt_holes"
   | "monthly_planning"
+  | "ideas_list"
   | null;
 
 /**
  * Normalize a task-status target for matching.
  * Cleans up formatting issues that prevent matching against stored task names.
- * 
+ *
  * Removes:
  * - Line breaks (replaced with spaces)
  * - Surrounding quotes (", ', ״, ׳)
@@ -116,13 +117,13 @@ export const extractStatusQueryTarget = (text: string): string | null => {
       if (!target) {
         continue;
       }
-      
+
       // Normalize the target to handle formatting issues (quotes, line breaks, prefixes, etc.)
       target = normalizeTaskStatusTargetForMatching(target);
       if (!target) {
         continue;
       }
-      
+
       const tokenCount = target.split(/\s+/).filter(Boolean).length;
 
       // Skip single-word targets if the pattern requires multi-word
@@ -141,23 +142,53 @@ export const formatTaskStatusResponse = (task: { row: string[] }): string => {
   const contentId = task.row[0] || "";
   const taskName = task.row[1] || "תוכן";
   const displayName = contentId ? `${taskName} (${contentId})` : taskName;
-  const filmed = task.row[3] || "לא";
-  const edited = task.row[4] || "לא";
-  const coverReady = task.row[5] || "לא";
-  const copyReady = task.row[6] || "לא";
-  const uploaded = task.row[7] || "לא";
+
+  // משימות הפקה schema:
+  // A content_id, B שם התוכן, C צולם, D נערך, E קאבר מוכן, F דדליין, G הערות
+  const filmed = task.row[2] || "לא";
+  const edited = task.row[3] || "לא";
+  const coverReady = task.row[4] || "לא";
+  const deadline = task.row[5] || "";
+
+  const deadlineLine = deadline ? `\nדדליין הפקה: ${deadline}` : "";
 
   return `${displayName}:
 צולם: ${filmed}
 נערך: ${edited}
-קאבר מוכן: ${coverReady}
-קופי מוכן: ${copyReady}
-הועלה: ${uploaded}`;
+קאבר מוכן: ${coverReady}${deadlineLine}`;
 };
 
 export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   // Use raw text for intent detection to avoid filler word removal
   const rawText = text.toLowerCase();
+
+  const isNewIdeaText =
+    rawText.includes("יש לי רעיון") ||
+    rawText.includes("רעיון חדש") ||
+    rawText.includes("תוסיפי רעיון") ||
+    rawText.includes("שמרי רעיון") ||
+    rawText.includes("תכתבי רעיון");
+
+  const ideaListPhrases = [
+    "איזה רעיונות יש לי",
+    "מה הרעיונות שיש לי",
+    "מה יש לי ברעיונות",
+    "מה יש בבנק רעיונות",
+    "מה יש לי בבנק",
+    "תראי לי רעיונות",
+    "תציגי לי רעיונות",
+    "רשימת רעיונות",
+    "רעיונות לתוכן שיש לי",
+    "איזה רעיונות לתוכן יש לי",
+  ];
+
+  const looksLikeIdeaListQuestion =
+    ideaListPhrases.some((p) => rawText.includes(p)) ||
+    (/^(איזה|מה|תראי|תציגי|הראי|רשימת).{0,25}רעיונות/.test(rawText));
+
+  if (!isNewIdeaText && looksLikeIdeaListQuestion) {
+    return "ideas_list";
+  }
 
   const taskStatusTarget = extractStatusQueryTarget(text);
   if (taskStatusTarget) {
@@ -173,6 +204,12 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה ערוך ועדיין לא עלה",
     "מה כבר ערכתי ולא העליתי",
     "מה כבר ערכתי ולא עלה",
+    "מה מוכן לעלייה",
+    "מה מוכן לעליה",
+    "מה מוכן לעלות",
+    "מה כבר מוכן",
+    "מה מוכן ולא עלה",
+    "מה מוכן ועוד לא פורסם",
   ];
   if (editedNotUploadedPhrases.some((p) => rawText.includes(p))) {
     return "edited_not_uploaded";
@@ -439,7 +476,7 @@ export const isQuestionLikeMessage = (text: string): boolean => {
   }
 
   const normalized = trimmed.toLowerCase();
-  
+
   // Check for trailing question mark
   if (trimmed.endsWith("?")) {
     return true;
@@ -558,6 +595,28 @@ export const formatPriorityFilterResponse = (
   const suffix = filtered.length > 5 ? `\n...ו${filtered.length - 5} עוד` : "";
   return `תכנים בעדיפות ${priority}:\n${taskNames}${suffix}`;
 };
+export const formatOpenIdeasResponse = (ideas: Array<{
+  contentId: string;
+  idea: string;
+  summary?: string;
+  category?: string;
+  priority?: string;
+}>): string => {
+  if (ideas.length === 0) {
+    return "אין כרגע רעיונות פתוחים בבנק.";
+  }
+
+  const lines = ideas.slice(0, 10).map((idea) => {
+    const category = idea.category ? ` / ${idea.category}` : "";
+    const priority = idea.priority ? ` / עדיפות ${idea.priority}` : "";
+    const summary = idea.summary ? `\n  ${idea.summary}` : "";
+    return `- ${idea.idea} (${idea.contentId}${category}${priority})${summary}`;
+  });
+
+  const suffix = ideas.length > 10 ? `\n...ו${ideas.length - 10} עוד` : "";
+  return `יש לך ${ideas.length} רעיונות פתוחים:\n${lines.join("\n")}${suffix}`;
+};
+
 export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: VisibilityIntent): string => {
   if (tasks.length === 0) {
     switch (intent) {
@@ -601,8 +660,7 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
      return `התכנים שעדיין מחכים לעלות:\n${taskNames}${suffix}`;
     case "stuck_workflow":
      return `מה שנראה שתקוע כרגע:\n${taskNames}${suffix}`;
-    case "category_search":
-     case "missing_filmed":
+    case "missing_filmed":
       return `התכנים שעדיין לא צולמו:\n${taskNames}${suffix}`;
     case "category_search":
       return `תכנים בקטגוריה:\n${taskNames}${suffix}`;

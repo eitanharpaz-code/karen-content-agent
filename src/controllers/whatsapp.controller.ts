@@ -58,6 +58,7 @@ findRowIndexByContentId,
   approveContentForProduction,
   updateGanttStatus,
   getGanttNotPublished,
+  getGanttReadyToUpload,
   getGanttThisWeek,
   findApprovedContentByName,
   addRowToGantt,
@@ -68,6 +69,7 @@ findRowIndexByContentId,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
   saveFastTrackContent,
+  getOpenContentIdeas,
   updateApprovedContentStatusById,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
@@ -94,6 +96,7 @@ formatPriorityFilterResponse,
 formatGanttResponse,
   extractGanttWriteParams,
   formatGanttHolesResponse,
+  formatOpenIdeasResponse,
 } from "../services/visibility.service";
 import {
   cleanIdeaPrefix,
@@ -798,9 +801,32 @@ const replyText = `מעולה, הטרנד נשמר.
 
         let tasks: any[] = [];
         switch (visibilityIntent) {
-          case "edited_not_uploaded":
-            tasks = await getTasksEditedAndNotUploaded(spreadsheetId);
-            break;
+          case "ideas_list": {
+            const ideas = await getOpenContentIdeas(spreadsheetId);
+            const replyText = formatOpenIdeasResponse(ideas);
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_ideas_list", sender, intent: visibilityIntent, count: ideas.length });
+          }
+          case "edited_not_uploaded": {
+            const readyItems = await getGanttReadyToUpload(spreadsheetId);
+
+            if (readyItems.length === 0) {
+              await safeSendWhatsAppMessage(sender, "אין כרגע תכנים שערוכים ומחכים לעלות.");
+              return res.status(200).json({ status: "visibility_ready_to_upload_empty", sender, intent: visibilityIntent });
+            }
+
+            const lines = readyItems.slice(0, 5).map((item) => {
+              const date = item.date ? ` — ${item.date}` : "";
+              const time = item.uploadTime ? ` בשעה ${item.uploadTime}` : "";
+              return `- ${item.name}${date}${time}`;
+            });
+
+            const suffix = readyItems.length > 5 ? `\n...ו${readyItems.length - 5} עוד` : "";
+            const replyText = `כבר ערוך ומחכה לעלות:\n${lines.join("\n")}${suffix}`;
+
+            await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_ready_to_upload", sender, intent: visibilityIntent });
+          }
           case "missing_edit":
             tasks = await getTasksMissingEdit(spreadsheetId);
             break;
