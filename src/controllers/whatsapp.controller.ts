@@ -117,6 +117,61 @@ const safeSendWhatsAppMessage = async (to: string, message: string): Promise<voi
   }
 };
 
+
+const normalizeGeneralChatText = (text: string): string =>
+  text
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.,…]/g, "")
+    .replace(/[״"]/g, "")
+    .replace(/\s+/g, " ");
+
+const isGeneralChatOrHelpMessage = (text: string): boolean => {
+  const raw = normalizeGeneralChatText(text);
+
+  const exactGeneralMessages = [
+    "היי",
+    "הי",
+    "שלום",
+    "בוקר טוב",
+    "צהריים טובים",
+    "ערב טוב",
+    "לילה טוב",
+    "מה קורה",
+    "מה נשמע",
+    "מה העניינים",
+    "מה המצב",
+    "עזרה",
+    "help",
+    "מה אפשר לעשות",
+    "מה את יודעת לעשות",
+    "מה את יכולה לעשות",
+    "איך משתמשים",
+    "איך זה עובד",
+    "מה הפקודות",
+    "פקודות",
+    "תזכירי לי מה אפשר לעשות",
+  ];
+
+  return exactGeneralMessages.includes(raw);
+};
+
+const buildGeneralHelpResponse = (): string =>
+  [
+    "אני פה :)",
+    "",
+    "אפשר לכתוב לי למשל:",
+    "- מה דחוף",
+    "- בואי נתכנן את יוני",
+    "- יש לי רעיון ל...",
+    "- תוסיפי את ... להפקה",
+    "- צילמתי את ... / ערכתי את ...",
+    "- מה צריך שיבוץ לגאנט",
+    "",
+    "מה בא לך לעשות?",
+  ].join("\n");
+
+
 export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   const sender = (req.body.From || req.body.from || "").toString();
   const incomingText = (req.body.Body || req.body.body || "").toString();
@@ -2120,6 +2175,12 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     // Don't create content from meta-conversation messages
     const existingDraft = getPendingConfirmation(sender);
     console.log(`[Route Debug] pendingConfirmation: ${existingDraft ? "exists" : "null"}`);
+
+    if (!existingDraft && isGeneralChatOrHelpMessage(incomingText)) {
+      await safeSendWhatsAppMessage(sender, buildGeneralHelpResponse());
+      return res.status(200).json({ status: "general_help", sender });
+    }
+
     if (isMetaConversation(incomingText)) {
       const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
       await safeSendWhatsAppMessage(sender, clarificationPrompt);
