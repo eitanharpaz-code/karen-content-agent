@@ -373,14 +373,25 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const alternatives = available
-          .filter((candidateDate) => candidateDate !== date)
-          .filter((candidateDate) => {
-            const parts = candidateDate.split("/");
-            const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-            return parsed >= today;
-          })
-          .slice(0, 5);
+        const earliestGanttDate = new Date();
+earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
+earliestGanttDate.setHours(0, 0, 0, 0);
+
+const alternatives = available
+  .filter((candidateDate) => candidateDate !== date)
+  .filter((candidateDate) => {
+    const parts = candidateDate.split("/");
+    const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    return parsed >= earliestGanttDate;
+  })
+  .sort((a, b) => {
+    const aParts = a.split("/");
+    const bParts = b.split("/");
+    const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
+    const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
+    return aDate.getTime() - bDate.getTime();
+  })
+  .slice(0, 5);
 
         if (alternatives.length === 0) {
           await safeSendWhatsAppMessage(sender, "בסדר. לא מצאתי עוד תאריכים פנויים באותו חודש. אפשר לשבץ ידנית עם תאריך אחר.");
@@ -700,8 +711,19 @@ ${draft.summary}
           const taskCreationFailed = false;
 
          // STEP 3: Send WhatsApp confirmation
-          const replyText = `מעולה, שמרתי את הרעיון.\nID: ${contentId}`;
-          await safeSendWhatsAppMessage(sender, replyText);
+          const replyText = [
+  "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
+  "",
+  `שם: ${pendingDraft.shortName}`,
+  `ID: ${contentId}`,
+  "",
+  "כרגע זה עדיין רעיון, לא משימת הפקה.",
+  "",
+  "כשתרצי לקדם אותו להפקה, תכתבי:",
+  `תוסיפי את ${pendingDraft.shortName} להפקה`,
+].join("\n");
+
+await safeSendWhatsAppMessage(sender, replyText);
           console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
 
           console.log(`[Sprint 6 Workflow] ✅ COMPLETE: Content ${contentId} confirmed and saved\n`);
@@ -1108,12 +1130,12 @@ ${updatedDraft.summary}
             break;
           }
           case "whats_important": {
-         const today = new Date();
-today.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-const tenDaysFromNow = new Date(today);
-tenDaysFromNow.setDate(today.getDate() + 10);
-tenDaysFromNow.setHours(23, 59, 59, 999);
+  const tenDaysFromNow = new Date(today);
+  tenDaysFromNow.setDate(today.getDate() + 10);
+  tenDaysFromNow.setHours(23, 59, 59, 999);
 
 const [allTasks, ganttUpcoming] = await Promise.all([
   getAllProductionTasksWithPriority(spreadsheetId),
@@ -1268,14 +1290,16 @@ if (isViewArchiveCommand(incomingText)) {
       const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
 
       const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const earliestGanttDate = new Date();
+      earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
+      earliestGanttDate.setHours(0, 0, 0, 0);
 
       const futureAvailable = available.filter((candidateDate) => {
-        const parts = candidateDate.split("/");
-        const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-        return parsed >= today;
-      });
+      const parts = candidateDate.split("/");
+      const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      return parsed >= earliestGanttDate;
+      
+    });
 
       if (futureAvailable.length > 0) {
         const suggested = futureAvailable[0];
@@ -1293,7 +1317,19 @@ if (isViewArchiveCommand(incomingText)) {
           },
         });
 
-        await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלשבץ את "${result.name}" לתאריך הזה?\nהסטטוס בגאנט יהיה "בתכנון", כי הסרטון עדיין לא סומן כמוכן לעלייה.\n\nאפשר לענות כן / לא.`);
+        await safeSendWhatsAppMessage(
+  sender,
+  [
+    "מצאתי לו חור פנוי קרוב בגאנט:",
+    `${suggested}, יום ${suggestedDayName}.`,
+    "",
+    `לשבץ את "${result.name}" לתאריך הזה?`,
+    "",
+    "הוא ייכנס כבתכנון, כי עדיין צריך לסמן צילום, עריכה וקאבר.",
+    "",
+    "אפשר לענות כן או לא.",
+  ].join("\n")
+);
       } else {
         await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר לשבץ ידנית.");
       }
