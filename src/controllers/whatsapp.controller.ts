@@ -386,7 +386,12 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   storePendingQuestion(sender, {
     questionType: "gantt_upload_time",
-    context: { contentName: newContentName, date: targetDate },
+    context: {
+      contentId: newContentId,
+      contentName: newContentName,
+      date: targetDate,
+      monthlyPlanning,
+    },
   });
 
   const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
@@ -493,20 +498,51 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   }
 
   // אם קרן כתבה שם של תוכן אחר מהרשימה
-  const normalizedChoice = incomingText.trim().toLowerCase();
+  const normalizeMonthlyPlanningText = (value: string): string =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[״"]/g, "")
+      .replace(/\s+/g, " ");
+
+  const getContentDisplayName = (content: any): string =>
+    (
+      content.name ||
+      content.idea ||
+      content.shortName ||
+      content.contentName ||
+      ""
+    )
+      .toString()
+      .trim();
+
+  const normalizedChoice = normalizeMonthlyPlanningText(incomingText);
 
   const chosenContent = (remainingContent as any[]).find((content) => {
-    const contentName = (content.name || "").toLowerCase();
-    const shortContentName = contentName.split(/\s+/).slice(0, 6).join(" ");
+    const displayName = getContentDisplayName(content);
+
+    if (!displayName) {
+      return false;
+    }
+
+    const normalizedName = normalizeMonthlyPlanningText(displayName);
+    const shortContentName = normalizedName.split(/\s+/).slice(0, 6).join(" ");
+
+    const choiceWords = normalizedChoice.split(/\s+/).filter((word) => word.length > 1);
+    const nameWords = normalizedName.split(/\s+/).filter(Boolean);
+    const matchedWords = choiceWords.filter((word) => nameWords.includes(word));
 
     return (
-      contentName.includes(normalizedChoice) ||
+      normalizedName.includes(normalizedChoice) ||
       normalizedChoice.includes(shortContentName) ||
-      shortContentName.includes(normalizedChoice)
+      shortContentName.includes(normalizedChoice) ||
+      (choiceWords.length > 0 && matchedWords.length === choiceWords.length) ||
+      (choiceWords.length >= 3 && matchedWords.length >= 3)
     );
   });
 
   if (chosenContent) {
+    const chosenContentName = getContentDisplayName(chosenContent);
     const monthlySpreadsheetId = process.env.GOOGLE_SHEETS_ID!;
     const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
 
@@ -545,14 +581,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       questionType: "confirm_gantt_write",
       context: {
         contentId: chosenContent.contentId,
-        contentName: chosenContent.name,
+        contentName: chosenContentName,
         date: suggestedDate,
         dayName: suggestedDayName,
         ganttStatus: "בתכנון",
+        monthlyPlanning: {
+          month,
+          year,
+          monthName,
+          remainingContent,
+        },
       },
     });
 
-    const shortName = chosenContent.name.split(/\s+/).slice(0, 6).join(" ");
+    const shortName = chosenContentName.split(/\s+/).slice(0, 6).join(" ");
 
     await safeSendWhatsAppMessage(
       sender,
@@ -632,8 +674,67 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   return res.status(200).json({ status: "monthly_planning_item_saved", sender });
 }
     if (pendingQuestion?.questionType === "gantt_upload_time") {
-      const { contentName, date } = pendingQuestion.context as any;
+      const { contentId, contentName, date, monthlyPlanning } = pendingQuestion.context as any;
       const rawTimeInput = incomingText.trim();
+
+      const continueMonthlyPlanning = async (prefixMessage: string) => {
+        if (!monthlyPlanning) {
+          await safeSendWhatsAppMessage(sender, prefixMessage);
+          return res.status(200).json({ status: "gantt_upload_time_done", sender });
+        }
+
+        const { month, year, monthName, remainingContent } = monthlyPlanning;
+
+        const updatedRemaining = (remainingContent as any[]).filter(
+          (c: any) => c.contentId !== contentId
+        );
+
+        if (updatedRemaining.length === 0) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              prefixMessage,
+              "",
+              `סגרנו את תכנון ${monthName}. כל התכנים מהרשימה שובצו.`,
+            ].join("\n")
+          );
+          return res.status(200).json({ status: "monthly_planning_complete_after_upload_time", sender });
+        }
+
+        storePendingQuestion(sender, {
+          questionType: "monthly_planning",
+          context: {
+            month,
+            year,
+            monthName,
+            remainingContent: updatedRemaining,
+          },
+        });
+
+        const displayList = updatedRemaining
+          .slice(0, 5)
+          .map((c: any) => `- ${c.name.split(/\s+/).slice(0, 6).join(" ")}`)
+          .join("\n");
+
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            prefixMessage,
+            "",
+            `נשארו עוד ${updatedRemaining.length} תכנים שלא שובצו ב${monthName}.`,
+            "",
+            "מה עוד מחכה לשיבוץ:",
+            displayList,
+            "",
+            "על מה הבא?",
+            "אפשר לכתוב שם של תוכן מהרשימה.",
+            "אם לא בא לך להמשיך עכשיו, כתבי: סיימתי",
+          ].join("\n")
+        );
+
+        return res.status(200).json({ status: "monthly_planning_continue_after_upload_time", sender });
+      };
 
       const skipUploadTime =
         isRejectionMessage(rawTimeInput) ||
@@ -641,8 +742,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (skipUploadTime) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "בסדר, אפשר לעדכן שעה אחר כך ישירות בגיליון.");
-        return res.status(200).json({ status: "gantt_upload_time_skipped", sender });
+        return await continueMonthlyPlanning("בסדר, אפשר לעדכן שעה אחר כך ישירות בגיליון.");
       }
 
       const timeMatch = rawTimeInput.match(/^([01]?\d|2[0-3])(?::([0-5]\d))?$/);
@@ -660,9 +760,12 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       clearPendingQuestion(sender);
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       await updateGanttUploadTime(spreadsheetId, contentName, date, normalizedUploadTime);
+
       const shortTimeName = contentName.split(/\s+/).slice(0, 6).join(" ");
-      await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את שעת ההעלאה של "${shortTimeName}" ל-${normalizedUploadTime}.`);
-      return res.status(200).json({ status: "gantt_upload_time_set", sender });
+
+      return await continueMonthlyPlanning(
+        `מעולה, עדכנתי את שעת ההעלאה של "${shortTimeName}" ל-${normalizedUploadTime}.`
+      );
     }
     if (pendingQuestion?.questionType === "confirm_gantt_write") {
       const { contentId, contentName, date, dayName, ganttStatus, monthlyPlanning } = pendingQuestion.context as any;
@@ -799,7 +902,7 @@ await sortGanttByDate(spreadsheetId);
 
 storePendingQuestion(sender, {
   questionType: "gantt_upload_time",
-  context: { contentName, date },
+  context: { contentId, contentName, date, monthlyPlanning },
 });
 
 const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
