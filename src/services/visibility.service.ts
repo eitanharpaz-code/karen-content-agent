@@ -150,12 +150,33 @@ export const formatTaskStatusResponse = (task: { row: string[] }): string => {
   const coverReady = task.row[4] || "לא";
   const deadline = task.row[5] || "";
 
-  const deadlineLine = deadline ? `\nדדליין הפקה: ${deadline}` : "";
+  const isReadyToUpload = filmed === "כן" && edited === "כן";
 
-  return `${displayName}:
-צולם: ${filmed}
-נערך: ${edited}
-קאבר מוכן: ${coverReady}${deadlineLine}`;
+  const coverLine =
+    coverReady === "כן"
+      ? "קאבר / Thumbnail: כן"
+      : isReadyToUpload
+        ? "קאבר / Thumbnail: לא סומן, לא חוסם העלאה"
+        : "קאבר / Thumbnail: לא סומן";
+
+  const lines = [
+    `${displayName}:`,
+    `צולם: ${filmed}`,
+    `נערך: ${edited}`,
+    coverLine,
+  ];
+
+  if (deadline) {
+    lines.push(`דדליין הפקה: ${deadline}`);
+  }
+
+  if (isReadyToUpload) {
+    lines.push("");
+    lines.push("מבחינת צילום ועריכה - מוכן לעלייה.");
+    lines.push("את ה-thumbnail אפשר לסגור ממש לפני ההעלאה.");
+  }
+
+  return lines.join("\n");
 };
 
 export const detectVisibilityIntent = (text: string): VisibilityIntent => {
