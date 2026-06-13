@@ -372,7 +372,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   clearPendingQuestion(sender);
 
-  await addRowToGantt(
+  const productionDeadline = await addRowToGantt(
     spreadsheetId,
     newContentId,
     newContentName,
@@ -393,12 +393,18 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   await safeSendWhatsAppMessage(
     sender,
-    `מעולה, הוספתי את "${shortNew}" לגאנט ב-${targetDate} (יום ${targetDayName}).\nבאיזו שעה לתכנן את ההעלאה?`
+    [
+      `מעולה, הוספתי את "${shortNew}" לגאנט ב-${targetDate} (יום ${targetDayName}).`,
+      productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
+      "",
+      "באיזו שעה לתכנן את ההעלאה?",
+    ].filter(Boolean).join("\n")
   );
 
   return res.status(200).json({ status: "gantt_write_new_date_confirmed", sender });
 }
-    if (pendingQuestion?.questionType === "monthly_planning") {
+    
+if (pendingQuestion?.questionType === "monthly_planning") {
   const { month, year, monthName, remainingContent } = pendingQuestion.context as any;
 
   // יציאה מתכנון חודש
@@ -661,7 +667,24 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     if (pendingQuestion?.questionType === "confirm_gantt_write") {
       const { contentId, contentName, date, dayName, ganttStatus, monthlyPlanning } = pendingQuestion.context as any;
       clearPendingQuestion(sender);
-      if (isRejectionMessage(incomingText)) {
+const rawAnswer = incomingText.trim();
+
+if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עזבי כרגע"].includes(rawAnswer)) {
+  const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
+
+  await safeSendWhatsAppMessage(
+    sender,
+    [
+      `סבבה, השארתי את "${shortName}" בהפקה בלי תאריך עלייה.`,
+      "",
+      "זה יופיע כמשהו שצריך שיבוץ, כדי שלא ייפול בין הכיסאות.",
+    ].join("\n")
+  );
+
+  return res.status(200).json({ status: "gantt_write_postponed", sender });
+}
+
+if (isRejectionMessage(incomingText)) {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
         const available = await findAvailableDatesInMonth(spreadsheetId, date);
@@ -762,14 +785,34 @@ const alternatives = available
           return res.status(200).json({ status: "gantt_collision_detected", sender });
         }
 
-        await addRowToGantt(spreadsheetId, contentId, contentName, date, dayName, "", ganttStatus || "בתכנון");
-        await sortGanttByDate(spreadsheetId);
-        storePendingQuestion(sender, {
-          questionType: "gantt_upload_time",
-          context: { contentName, date },
-        });
-        const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
-        await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortConfirmName}" לגאנט ב-${date} (יום ${dayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
+        const productionDeadline = await addRowToGantt(
+  spreadsheetId,
+  contentId,
+  contentName,
+  date,
+  dayName,
+  "",
+  ganttStatus || "בתכנון"
+);
+
+await sortGanttByDate(spreadsheetId);
+
+storePendingQuestion(sender, {
+  questionType: "gantt_upload_time",
+  context: { contentName, date },
+});
+
+const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
+
+await safeSendWhatsAppMessage(
+  sender,
+  [
+    `מעולה, הוספתי את "${shortConfirmName}" לגאנט ב-${date} (יום ${dayName}).`,
+    productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
+    "",
+    "באיזו שעה לתכנן את ההעלאה?",
+  ].filter(Boolean).join("\n")
+);
         return res.status(200).json({ status: "gantt_write_confirmed", sender });
       }
     }
@@ -1491,13 +1534,27 @@ const replyText = [
   tenDaysFromNow.setDate(today.getDate() + 10);
   tenDaysFromNow.setHours(23, 59, 59, 999);
 
-const [allTasks, ganttUpcoming] = await Promise.all([
+const allGanttStart = new Date(2000, 0, 1);
+const allGanttEnd = new Date(2100, 11, 31);
+
+const [allTasks, ganttUpcoming, allGanttItems] = await Promise.all([
   getAllProductionTasksWithPriority(spreadsheetId),
   getGanttByDateRange(spreadsheetId, today, tenDaysFromNow),
+  getGanttByDateRange(spreadsheetId, allGanttStart, allGanttEnd),
 ]);
 
 const productionById = new Map(
   allTasks.map((task) => [task.contentId, task])
+);
+
+const ganttContentIds = new Set(
+  allGanttItems
+    .map((item) => item.contentId)
+    .filter(Boolean)
+);
+
+const productionWithoutGantt = allTasks.filter(
+  (task) => task.contentId && !ganttContentIds.has(task.contentId)
 );
 
 const thisWeek = ganttUpcoming
@@ -1542,7 +1599,14 @@ const notFilmedThisWeek = thisWeek
     taskName: item.taskName,
     deadlineDayName: item.deadlineDayName,
   }));
-            const replyText = formatWhatsImportantResponse(highNotUploaded, stuck, trends, thisWeek, notFilmedThisWeek);
+            const replyText = formatWhatsImportantResponse(
+  highNotUploaded,
+  stuck,
+  trends,
+  thisWeek,
+  notFilmedThisWeek,
+  productionWithoutGantt
+);
             await safeSendWhatsAppMessage(sender, replyText);
 
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });

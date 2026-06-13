@@ -556,7 +556,8 @@ export const formatWhatsImportantResponse = (
   stuckTasks: ProductionTaskRowExtended[],
   trendTasks: ProductionTaskRowExtended[],
   thisWeekTasks: ProductionTaskRowExtended[],
-  notFilmedThisWeek: { taskName: string; deadlineDayName: string }[] = []
+  notFilmedThisWeek: { taskName: string; deadlineDayName: string }[] = [],
+  productionWithoutGantt: ProductionTaskRowExtended[] = []
 ): string => {
   const lines: string[] = [];
 
@@ -566,6 +567,7 @@ export const formatWhatsImportantResponse = (
     upcomingItems.length === 0 &&
     stuckTasks.length === 0 &&
     notFilmedThisWeek.length === 0 &&
+    productionWithoutGantt.length === 0 &&
     highPriorityNotUploaded.length === 0 &&
     trendTasks.length === 0
   ) {
@@ -677,6 +679,19 @@ export const formatWhatsImportantResponse = (
     }
   }
 
+  if (productionWithoutGantt.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("צריך שיבוץ לגאנט:");
+
+    productionWithoutGantt.slice(0, 3).forEach((t) => {
+      lines.push(`- ${shortenTaskName(t.taskName)} - בהפקה אבל בלי תאריך עלייה`);
+    });
+
+    if (productionWithoutGantt.length > 3) {
+      lines.push(`ועוד ${productionWithoutGantt.length - 3} תכנים שצריך לשבץ.`);
+    }
+  }
+
   if (highPriorityNotUploaded.length > 0) {
     const highPriorityToShow = highPriorityNotUploaded
       .filter((t) => !thisWeekTasks.some((upcoming) => upcoming.contentId === t.contentId))
@@ -705,6 +720,10 @@ export const formatWhatsImportantResponse = (
     lines.push("");
     lines.push("הדבר הראשון שהייתי סוגרת עכשיו:");
     lines.push(productionIssues[0].action);
+  } else if (productionWithoutGantt.length > 0) {
+    lines.push("");
+    lines.push("הדבר הראשון שהייתי סוגרת עכשיו:");
+    lines.push(`לשבץ את "${shortenTaskName(productionWithoutGantt[0].taskName)}" לגאנט, כי הוא כבר בהפקה אבל אין לו תאריך עלייה.`);
   } else if (upcomingItems.length > 0) {
     lines.push("");
     lines.push("הדבר הראשון שהייתי עושה עכשיו:");

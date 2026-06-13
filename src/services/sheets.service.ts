@@ -1765,6 +1765,69 @@ export const updateApprovedContentStatusById = async (
 };
 
 // Write a new row to גאנט תוכן
+const formatDateForSheet = (date: Date): string => {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+
+  return `${day}/${month}/${year}`;
+};
+
+const calculateProductionDeadlineFromGanttDate = (ganttDate: string): string | null => {
+  const parts = ganttDate.split("/");
+
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const year = parseInt(parts[2], 10);
+
+  const uploadDate = new Date(year, month - 1, day);
+
+  if (Number.isNaN(uploadDate.getTime())) {
+    return null;
+  }
+
+  const deadlineDate = new Date(uploadDate);
+  deadlineDate.setDate(uploadDate.getDate() - 1);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (deadlineDate < today) {
+    return formatDateForSheet(uploadDate);
+  }
+
+  return formatDateForSheet(deadlineDate);
+};
+
+const updateProductionDeadlineForGanttItem = async (
+  spreadsheetId: string,
+  contentId: string,
+  ganttDate: string
+): Promise<string | null> => {
+  const productionDeadline = calculateProductionDeadlineFromGanttDate(ganttDate);
+
+  if (!productionDeadline) {
+    return null;
+  }
+
+  const productionRowIndex = await findRowIndexByContentId(spreadsheetId, contentId);
+
+  if (!productionRowIndex) {
+    console.log(`[Gantt] No production task found for content_id=${contentId}. Skipping production deadline update.`);
+    return null;
+  }
+
+  await updateDeadline(spreadsheetId, productionRowIndex, productionDeadline);
+
+  console.log(`[Gantt] ✅ Production deadline updated for content_id=${contentId}: ${productionDeadline}`);
+
+  return productionDeadline;
+};
+
 export const addRowToGantt = async (
   spreadsheetId: string,
   contentId: string,
@@ -1773,16 +1836,19 @@ export const addRowToGantt = async (
   dayName: string,
   uploadTime: string = "",
   status: "בתכנון" | "מוכן" | "בזמן אמת" | "פורסם" = "בתכנון"
-): Promise<void> => {
+): Promise<string | null> => {
   // Pull priority and collab from תכנים שאושרו
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
+
   const approvedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${SHEET_NAMES.approvedContent}!A:J`,
   });
+
   const approvedRows = approvedResponse.data.values || [];
   const approvedRow = approvedRows.slice(1).find((row) => (row[0] || "").toString().trim() === contentId);
+
   const priority = approvedRow ? (approvedRow[5] || "").toString().trim() : "";
   const collab = approvedRow ? (approvedRow[7] || "").toString().trim() : "";
 
@@ -1801,6 +1867,14 @@ export const addRowToGantt = async (
     uploadTime,      // L - שעת העלאה
     "",              // M - הערות
   ]);
+
+  const productionDeadline = await updateProductionDeadlineForGanttItem(
+    spreadsheetId,
+    contentId,
+    date
+  );
+
+  return productionDeadline;
 };
 // Sort גאנט תוכן by date column (column B, index 1) ascending
 export const sortGanttByDate = async (spreadsheetId: string): Promise<void> => {
