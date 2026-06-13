@@ -488,13 +488,29 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           const draft = await createContentDraft(originalInput);
           const draftSummary = { ...draft, originalUserInput: originalInput };
           storePendingConfirmation(sender, draftSummary);
-          const replyText = `יש פה כיוון טוב.
-שם קצר: ${draft.shortName}
-קטגוריה: ${displayCategory(draft.category)}
-טון: ${displayTone(draft.tone)}
-עדיפות: ${displayPriority(draft.priority)}
-סיכום: ${draft.summary}
-זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
+          const categoryText = displayCategory(draft.category);
+const toneText = displayTone(draft.tone);
+const rawPriorityText = displayPriority(draft.priority);
+const priorityText =
+  rawPriorityText === "גבוה" ? "גבוהה" :
+  rawPriorityText === "בינוני" ? "בינונית" :
+  rawPriorityText === "נמוך" ? "נמוכה" :
+  rawPriorityText;
+
+const replyText = `יש פה כיוון טוב.
+
+הייתי שומרת את זה ככה:
+
+שם: ${draft.shortName}
+קטגוריה: ${categoryText}
+טון: ${toneText}
+עדיפות: ${priorityText}
+
+הכיוון:
+${draft.summary}
+
+לשמור ככה?
+אם לא, תגידי לי מה לשנות.`;
           await safeSendWhatsAppMessage(sender, replyText);
           return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
         }
@@ -549,15 +565,29 @@ const replyText = `מעולה, הטרנד נשמר.
       };
       storePendingConfirmation(sender, draftSummary);
 
-      const replyText = `יאללה, פתחתי רעיון חדש.
+      const categoryText = displayCategory(draft.category);
+const toneText = displayTone(draft.tone);
+const rawPriorityText = displayPriority(draft.priority);
+const priorityText =
+  rawPriorityText === "גבוה" ? "גבוהה" :
+  rawPriorityText === "בינוני" ? "בינונית" :
+  rawPriorityText === "נמוך" ? "נמוכה" :
+  rawPriorityText;
 
-שם קצר: ${draft.shortName}
-קטגוריה: ${displayCategory(draft.category)}
-טון: ${displayTone(draft.tone)}
-עדיפות: ${displayPriority(draft.priority)}
-סיכום: ${draft.summary}
+const replyText = `יאללה, בניתי טיוטה לרעיון חדש.
 
-זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
+הייתי שומרת את זה ככה:
+
+שם: ${draft.shortName}
+קטגוריה: ${categoryText}
+טון: ${toneText}
+עדיפות: ${priorityText}
+
+הכיוון:
+${draft.summary}
+
+לשמור ככה?
+אם לא, תגידי לי מה לשנות.`;
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "new_idea_started", sender, draft: draftSummary });
     }
@@ -704,44 +734,101 @@ const replyText = `מעולה, הטרנד נשמר.
       }
     }
 
-    // Check if this is an edit request
-   if (
-      isEditRequest(incomingText) &&
-      !isDeadlineUpdate(incomingText) &&
-      !isProductionStatusUpdate(incomingText)
-    ) {
-      const pendingDraft = getPendingConfirmation(sender);
-      if (pendingDraft) {
-        const edit = parseEditRequest(incomingText);
-        if (edit) {
-          const updatedDraft = applyEditToDraft(pendingDraft, edit);
-          storePendingConfirmation(sender, updatedDraft);
+   // Check if this is an edit request
+if (
+  isEditRequest(incomingText) &&
+  !isDeadlineUpdate(incomingText) &&
+  !isProductionStatusUpdate(incomingText)
+) {
+  const pendingDraft = getPendingConfirmation(sender);
 
-          // Send updated draft summary
-          const replyText = `קיבלתי, עדכנתי את הרעיון.
+  if (pendingDraft) {
+    const edit = parseEditRequest(incomingText);
 
-שם קצר: ${updatedDraft.shortName}
-קטגוריה: ${displayCategory(updatedDraft.category)}
-טון: ${displayTone(updatedDraft.tone)}
-עדיפות: ${displayPriority(updatedDraft.priority)}
-סיכום: ${updatedDraft.summary}
+    if (edit) {
+      let updatedDraft = applyEditToDraft(pendingDraft, edit);
 
-זה בסדר עכשיו?`;
-          await safeSendWhatsAppMessage(sender, replyText);
-          return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
-        } else {
-          // FIX 4: Better clarification response for unclear edits
-          const clarificationPrompt = generateClarificationPrompt(true);
-          await safeSendWhatsAppMessage(sender, clarificationPrompt);
-          return res.status(200).json({ status: "edit_not_understood", sender });
+      const editText = incomingText.trim();
+
+      const explicitNameMatch = editText.match(
+        /(?:השם\s+(?:יהיה|יהייה)|שם\s+(?:יהיה|יהייה)|תקראי לזה|תקרא לזה|קראי לזה|קרא לזה|שיקראו לזה)\s+(.+?)(?:,|\.|$)/i
+      );
+
+      if (explicitNameMatch?.[1]) {
+        const cleanedName = explicitNameMatch[1]
+          .trim()
+          .replace(/^יהיה\s+/i, "")
+          .replace(/^יהייה\s+/i, "")
+          .replace(/^ל/i, "")
+          .trim()
+          .split(/\s+/)
+          .slice(0, 6)
+          .join(" ");
+
+        if (cleanedName) {
+          updatedDraft.shortName = cleanedName;
         }
-      } else {
-        const clarificationPrompt = generateClarificationPrompt(false);
-        await safeSendWhatsAppMessage(sender, clarificationPrompt);
-        return res.status(200).json({ status: "no_pending_for_edit", sender });
       }
+
+      const wantsFunny =
+        editText.includes("יותר מצחיק") ||
+        editText.includes("מצחיק") ||
+        editText.includes("הומור") ||
+        editText.includes("קליל") ||
+        editText.includes("פחות כבד");
+
+      if (wantsFunny) {
+        updatedDraft.tone = "מצחיק" as any;
+
+        if (editText.includes("פחות כבד") || editText.includes("קליל")) {
+          const baseSummary = updatedDraft.summary
+            .replace(/^תוכן על\s*/i, "")
+            .replace(/^סרטון על\s*/i, "")
+            .trim();
+
+          updatedDraft.summary = `סרטון קליל ומצחיק על ${baseSummary}, עם יותר הומור עצמי ופחות תחושה כבדה.`;
+        }
+      }
+
+      storePendingConfirmation(sender, updatedDraft);
+
+      const updatedCategoryText = displayCategory(updatedDraft.category);
+      const updatedToneText = displayTone(updatedDraft.tone);
+      const updatedRawPriorityText = displayPriority(updatedDraft.priority);
+      const updatedPriorityText =
+        updatedRawPriorityText === "גבוה" ? "גבוהה" :
+        updatedRawPriorityText === "בינוני" ? "בינונית" :
+        updatedRawPriorityText === "נמוך" ? "נמוכה" :
+        updatedRawPriorityText;
+
+      const replyText = `קיבלתי, עדכנתי את הרעיון.
+
+עכשיו הייתי שומרת את זה ככה:
+
+שם: ${updatedDraft.shortName}
+קטגוריה: ${updatedCategoryText}
+טון: ${updatedToneText}
+עדיפות: ${updatedPriorityText}
+
+הכיוון:
+${updatedDraft.summary}
+
+לשמור ככה?
+אם לא, תגידי לי מה עוד לשנות.`;
+
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
     }
 
+    const clarificationPrompt = generateClarificationPrompt(true);
+    await safeSendWhatsAppMessage(sender, clarificationPrompt);
+    return res.status(200).json({ status: "edit_not_understood", sender });
+  }
+
+  const clarificationPrompt = generateClarificationPrompt(false);
+  await safeSendWhatsAppMessage(sender, clarificationPrompt);
+  return res.status(200).json({ status: "no_pending_for_edit", sender });
+}
     // ===== VISIBILITY INTENT DETECTION =====
     console.log(`[Route Debug] About to detect visibility intent...`);
     const visibilityIntent = detectVisibilityIntent(incomingText);
@@ -1303,19 +1390,39 @@ if (isDeadlineUpdate(incomingText)) {
               const draft = await createContentDraft(statusUpdate.contentName);
               const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
               storePendingConfirmation(sender, draftSummary);
-              const replyText = `לא מצאתי את "${statusUpdate.contentName}" בהפקה — נראה שצילמת ספונטנית, יופי!
+              const fastTrackCategoryText = displayCategory(draft.category);
+const fastTrackToneText = displayTone(draft.tone);
+const fastTrackRawPriorityText = displayPriority(draft.priority);
+const fastTrackPriorityText =
+  fastTrackRawPriorityText === "גבוה" ? "גבוהה" :
+  fastTrackRawPriorityText === "בינוני" ? "בינונית" :
+  fastTrackRawPriorityText === "נמוך" ? "נמוכה" :
+  fastTrackRawPriorityText;
 
-יצרתי דראפט:
-שם קצר: ${draft.shortName}
-קטגוריה: ${displayCategory(draft.category)}
-טון: ${displayTone(draft.tone)}
-עדיפות: ${displayPriority(draft.priority)}
-סיכום: ${draft.summary}
+const replyText = [
+  "לא מצאתי את זה בהפקה - נראה שצילמת משהו ספונטני, יופי.",
+  "",
+  "יצרתי טיוטה לתוכן מהיר.",
+  "",
+  "הייתי שומרת את זה ככה:",
+  "",
+  `שם: ${draft.shortName}`,
+  `קטגוריה: ${fastTrackCategoryText}`,
+  `טון: ${fastTrackToneText}`,
+  `עדיפות: ${fastTrackPriorityText}`,
+  "",
+  "הכיוון:",
+  draft.summary,
+  "",
+  "אחרי אישור אכניס את זה ישר לתכנים שאושרו ואחפש לזה תאריך בגאנט.",
+  "",
+  "לשמור ככה?",
+  "אם לא, תגידי לי מה לשנות.",
+].join("\n");
 
-אחרי אישור אכניס ישירות לתכנים שאושרו ואחפש תאריך בגאנט. זה בסדר?`;
-              await safeSendWhatsAppMessage(sender, replyText);
-              return res.status(200).json({ status: "fast_track_draft_created", sender });
-            }
+await safeSendWhatsAppMessage(sender, replyText);
+return res.status(200).json({ status: "fast_track_draft_created", sender });
+}
 
             const replyText = "לא בטוחה איזה תוכן רצית לעדכן.\nתכתבי לי שוב את שם הסרטון ונמשיך.";
             await safeSendWhatsAppMessage(sender, replyText);
@@ -1469,16 +1576,28 @@ if (isDeadlineUpdate(incomingText)) {
 
     if (existingDraft && isContinuation) {
       // Treat as edit/continuation context
+      const continuationCategoryText = displayCategory(existingDraft.category);
+      const continuationToneText = displayTone(existingDraft.tone);
+      const continuationRawPriorityText = displayPriority(existingDraft.priority);
+      const continuationPriorityText =
+  continuationRawPriorityText === "גבוה" ? "גבוהה" :
+  continuationRawPriorityText === "בינוני" ? "בינונית" :
+  continuationRawPriorityText === "נמוך" ? "נמוכה" :
+  continuationRawPriorityText;
+
       const replyText = `זה דווקא יכול להתחבר ממש טוב.
 
-רעיון עדכון:
-שם קצר: ${existingDraft.shortName}
-קטגוריה: ${displayCategory(existingDraft.category)}
-טון: ${displayTone(existingDraft.tone)}
-עדיפות: ${displayPriority(existingDraft.priority)}
-סיכום: ${existingDraft.summary}
+      כרגע הייתי שומרת את הרעיון ככה:
+      שם: ${existingDraft.shortName}
+    קטגוריה: ${continuationCategoryText}
+    טון: ${continuationToneText}
+    עדיפות: ${continuationPriorityText}
 
-זה בסדר? או תרצי לשנות משהו?`;
+הכיוון:
+${existingDraft.summary}
+
+לשמור ככה?
+אם לא, תגידי לי מה עוד לשנות.`;
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "continuation_acknowledged", sender, draft: existingDraft });
     }
@@ -1522,13 +1641,28 @@ if (isDeadlineUpdate(incomingText)) {
       originalUserInput: cleanedUserInput,
     };
     storePendingConfirmation(sender, draftSummary);
-    const replyText = `יש פה כיוון טוב.
-שם קצר: ${draft.shortName}
-קטגוריה: ${displayCategory(draft.category)}
-טון: ${displayTone(draft.tone)}
-עדיפות: ${displayPriority(draft.priority)}
-סיכום: ${draft.summary}
-זה בסדר? אשר כדי לשמור או אמור לי מה לשנות.`;
+    const categoryText = displayCategory(draft.category);
+const toneText = displayTone(draft.tone);
+const priorityText =
+  displayPriority(draft.priority) === "גבוה" ? "גבוהה" :
+  displayPriority(draft.priority) === "בינוני" ? "בינונית" :
+  displayPriority(draft.priority) === "נמוך" ? "נמוכה" :
+  displayPriority(draft.priority);
+
+const replyText = `יש פה כיוון טוב.
+
+הייתי שומרת את זה ככה:
+
+שם: ${draft.shortName}
+קטגוריה: ${categoryText}
+טון: ${toneText}
+עדיפות: ${priorityText}
+
+הכיוון:
+${draft.summary}
+
+לשמור ככה?
+אם לא, תגידי לי מה לשנות.`;
     await safeSendWhatsAppMessage(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 
