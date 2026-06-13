@@ -1,4 +1,5 @@
 import { ProductionStatusType, StatusUpdateRequest, ProductionStatusMapping } from "../types/production-status.types";
+import { normalizeUserDateInput } from "../utils/date-utils";
 
 // Hebrew normalization utilities for deterministic matching
 // Include both regular and sofit forms of filler words
@@ -360,8 +361,8 @@ export const isDeadlineUpdate = (message: string): boolean => {
 
 export const extractDeadlineUpdate = (message: string): { contentName: string; deadline: string } | null => {
   const patterns = [
-    /תשני את הדדליין של (.+?) ל[־-]?(.+)/i,
     /תשני את הדדליין של (.+?) לתאריך (.+)/i,
+    /תשני את הדדליין של (.+?) ל[־-]?(.+)/i,
     /עדכני את הדדליין של (.+?) ל[־-]?(.+)/i,
     /שני את הדדליין של (.+?) ל[־-]?(.+)/i,
     /הדדליין של (.+?) הוא (.+)/i,
@@ -370,9 +371,19 @@ export const extractDeadlineUpdate = (message: string): { contentName: string; d
   for (const pattern of patterns) {
     const match = message.match(pattern);
     if (match) {
+      const rawDeadline = match[2].trim();
+      const numericDateMatch = rawDeadline.match(/\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?/);
+      const normalizedDeadline = numericDateMatch
+        ? normalizeUserDateInput(numericDateMatch[0])
+        : null;
+
+      if (numericDateMatch && !normalizedDeadline) {
+        return null;
+      }
+
       return {
         contentName: match[1].trim(),
-        deadline: match[2].trim().replace(/[?!.]/g, ""),
+        deadline: normalizedDeadline || rawDeadline.replace(/[?!.]+$/g, ""),
       };
     }
   }

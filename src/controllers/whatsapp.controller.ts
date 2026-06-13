@@ -108,7 +108,7 @@ import {
   hasEditConfidence,
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
-import { isThisWeek } from "../utils/date-utils";
+import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
 
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
@@ -308,12 +308,20 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
     if (pendingQuestion?.questionType === "gantt_move_existing") {
       const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName, suggestedDate, suggestedDayName, ganttStatus } = pendingQuestion.context as any;
-      clearPendingQuestion(sender);
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const confirmedSuggestedDate = isConfirmationMessage(incomingText);
+      const targetDate = confirmedSuggestedDate
+        ? suggestedDate
+        : normalizeUserDateInput(incomingText.trim());
 
-      const targetDate = isConfirmationMessage(incomingText) ? suggestedDate : incomingText.trim();
+      if (!targetDate) {
+        await safeSendWhatsAppMessage(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
+        return res.status(200).json({ status: "gantt_move_invalid_date", sender });
+      }
+
+      clearPendingQuestion(sender);
       const targetParts = targetDate.split("/");
-      const targetDayName = isConfirmationMessage(incomingText) ? suggestedDayName : ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(targetParts[2]), parseInt(targetParts[1]) - 1, parseInt(targetParts[0])).getDay()];
+      const targetDayName = confirmedSuggestedDate ? suggestedDayName : ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(targetParts[2]), parseInt(targetParts[1]) - 1, parseInt(targetParts[0])).getDay()];
 
       await updateGanttRowDate(spreadsheetId, existingContentId, targetDate, targetDayName);
       await addRowToGantt(spreadsheetId, newContentId, newContentName, newDate, newDayName, "", ganttStatus || "בתכנון");
@@ -425,10 +433,10 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     if (numericChoice !== null && alternatives[numericChoice - 1]) {
       targetDate = alternatives[numericChoice - 1];
     } else {
-      targetDate = rawAnswer;
+      targetDate = normalizeUserDateInput(rawAnswer) || "";
     }
 
-    if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(targetDate)) {
+    if (!targetDate) {
       storePendingQuestion(sender, {
         questionType: "gantt_write_new_date",
         context: originalContext,
@@ -456,26 +464,6 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       parseInt(targetParts[1]) - 1,
       parseInt(targetParts[0])
     );
-
-    if (Number.isNaN(parsedTarget.getTime())) {
-      storePendingQuestion(sender, {
-        questionType: "gantt_write_new_date",
-        context: originalContext,
-      });
-
-      await safeSendWhatsAppMessage(
-        sender,
-        [
-          "התאריך לא נראה תקין.",
-          "תכתבי תאריך בפורמט 18/06/2026 או מספר מהרשימה.",
-          "",
-          "אם תרצי לבחור תוכן אחר, כתבי: תוכן אחר",
-          "אם תרצי לעצור, כתבי: ביטול",
-        ].join("\n")
-      );
-
-      return res.status(200).json({ status: "gantt_write_new_date_invalid_date", sender });
-    }
 
     targetDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][parsedTarget.getDay()];
   }
@@ -1044,19 +1032,31 @@ await safeSendWhatsAppMessage(
     }
     if (pendingQuestion?.questionType === "set_deadline") {
       const contentId = pendingQuestion.context?.contentId as string;
-      clearPendingQuestion(sender);
-      const looksLikeDate = /\d/.test(incomingText) ||
-        ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"].some(m => incomingText.includes(m));
-      if (isRejectionMessage(incomingText) || !looksLikeDate) {
+      const rawDeadline = incomingText.trim();
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
         await safeSendWhatsAppMessage(sender, "בסדר, אפשר תמיד להוסיף תאריך אחר כך.");
         return res.status(200).json({ status: "deadline_skipped", sender });
       }
+
+      const normalizedDeadline = normalizeUserDateInput(rawDeadline);
+      const hasMonthName = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"].some(m => rawDeadline.includes(m));
+
+      if (!normalizedDeadline && !hasMonthName) {
+        await safeSendWhatsAppMessage(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
+        return res.status(200).json({ status: "deadline_invalid_date", sender });
+      }
+
+      const deadline = normalizedDeadline || rawDeadline;
+      clearPendingQuestion(sender);
+
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
       if (spreadsheetId && contentId) {
         const rowIndex = await findRowIndexByContentId(spreadsheetId, contentId);
         if (rowIndex) {
-          await updateDeadline(spreadsheetId, rowIndex, incomingText.trim());
-          await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את הדדליין ל-${incomingText.trim()}.`);
+          await updateDeadline(spreadsheetId, rowIndex, deadline);
+          await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את הדדליין ל-${deadline}.`);
         } else {
           await safeSendWhatsAppMessage(sender, "לא מצאתי את המשימה בגיליון, אפשר לעדכן ידנית.");
         }
@@ -1668,6 +1668,16 @@ const replyText = [
           case "gantt_write": {
             const params = extractGanttWriteParams(incomingText);
             if (!params) {
+              const suppliedDate = incomingText.match(/\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?/)?.[0];
+
+              if (suppliedDate && !normalizeUserDateInput(suppliedDate)) {
+                await safeSendWhatsAppMessage(
+                  sender,
+                  `התאריך ${suppliedDate} לא תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.`
+                );
+                return res.status(200).json({ status: "gantt_write_invalid_date", sender });
+              }
+
               await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב למשל: תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06");
               return res.status(200).json({ status: "gantt_write_parse_error", sender });
             }

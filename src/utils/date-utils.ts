@@ -7,15 +7,46 @@ export const getHebrewDayName = (date: Date): string => {
   return days[date.getDay()];
 };
 
+export const normalizeUserDateInput = (
+  input: string,
+  fallbackYear: number = new Date().getFullYear()
+): string | null => {
+  const match = input.trim().match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2}|\d{4}))?$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = match[3]
+    ? Number(match[3].length === 2 ? `20${match[3]}` : match[3])
+    : fallbackYear;
+
+  const parsed = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+};
+
+export const parseDateFromSheet = (dateStr: string): Date | null => {
+  if (!dateStr) return null;
+
+  const normalized = normalizeUserDateInput(dateStr);
+  if (!normalized) return null;
+
+  const [day, month, year] = normalized.split("/").map(Number);
+  return new Date(year, month - 1, day);
+};
+
 export const isThisWeek = (dateStr: string): boolean => {
-  if (!dateStr) return false;
-  
-  // Parse DD/MM/YYYY format
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return false;
-  
-  const date = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-  if (isNaN(date.getTime())) return false;
+  const date = parseDateFromSheet(dateStr);
+  if (!date) return false;
 
   const now = new Date();
   const startOfWeek = new Date(now);
@@ -27,16 +58,4 @@ export const isThisWeek = (dateStr: string): boolean => {
   endOfWeek.setHours(23, 59, 59, 999);
 
   return date >= startOfWeek && date <= endOfWeek;
-};
-
-export const parseDateFromSheet = (dateStr: string): Date | null => {
-  if (!dateStr) return null;
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
-  const day = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1;
-  const year = parseInt(parts[2], 10);
-  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-  const date = new Date(year, month, day);
-  return isNaN(date.getTime()) ? null : date;
 };

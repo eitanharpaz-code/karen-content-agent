@@ -1,5 +1,5 @@
 import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
-import { isThisWeek } from "../utils/date-utils";
+import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
 
 // Sprint 10: Visibility Intent Detection
 // Deterministic routing for natural Hebrew visibility queries
@@ -369,7 +369,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "תכניסי את", "תכניסי ל", "לגאנט", "לתאריך",
   ];
   const hasGanttWritePhrase = ganttWritePhrases.some((p) => rawText.includes(p));
-  const hasDatePattern = /\d{1,2}[./]\d{1,2}/.test(rawText);
+  const hasDatePattern = /\d{1,2}[./-]\d{1,2}/.test(rawText);
   const isGanttWrite = hasGanttWritePhrase && rawText.includes("גאנט") && (rawText.includes("לגאנט") || hasDatePattern);
   if (isGanttWrite) {
     return "gantt_write";
@@ -1025,16 +1025,12 @@ export const formatGanttResponse = (items: any[], period: string): string => {
 export const extractGanttWriteParams = (text: string): { contentName: string; date: string } | null => {
   const raw = text.trim();
 
-  // Try to extract date first (dd/mm or dd.mm or dd/mm/yyyy)
-  const dateMatch = raw.match(/(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/);
+  // Accept dd/mm, dd.mm, dd-mm and optional year.
+  const dateMatch = raw.match(/(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)/);
   if (!dateMatch) return null;
-  const date = dateMatch[1].replace(/\./g, "/");
 
-  // Normalize date to dd/mm/yyyy
-  const dateParts = date.split("/");
-  const normalizedDate = dateParts.length === 2
-    ? `${dateParts[0].padStart(2, "0")}/${dateParts[1].padStart(2, "0")}/${new Date().getFullYear()}`
-    : `${dateParts[0].padStart(2, "0")}/${dateParts[1].padStart(2, "0")}/${dateParts[2]}`;
+  const normalizedDate = normalizeUserDateInput(dateMatch[1]);
+  if (!normalizedDate) return null;
 
   // Extract content name - text between "את" and date/location markers
  const namePatterns = [
