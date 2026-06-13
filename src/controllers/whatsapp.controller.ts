@@ -2268,6 +2268,29 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
       return res.status(200).json({ status: "meta_conversation", sender });
     }
 
+    const explicitIdeaMessage = [
+      "יש לי רעיון",
+      "רעיון חדש",
+      "רעיון לסרטון",
+      "חשבתי על רעיון",
+      "יש לי קונספט",
+      "קונספט חדש",
+      "חשבתי על קונספט",
+    ].some((marker) => incomingText.includes(marker));
+
+    // An unsupported question must never fall through to new-idea creation.
+    if (!visibilityIntent && questionLikeMessage && !explicitIdeaMessage) {
+      const replyText = `הבנתי שזו שאלה ולא רעיון חדש, אבל לא בטוחה מה רצית לבדוק.
+
+אפשר לכתוב למשל:
+מה יש לי השבוע
+מה בגאנט השבוע
+מה דחוף
+מה עדיין לא צולם`;
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "question_clarification", sender });
+    }
+
     // ===== FIX 2: Draft continuation handling =====
     // If draft exists and message looks like continuation, treat it as continuation
     const isContinuation = isContinuationMessage(incomingText);

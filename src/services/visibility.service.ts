@@ -347,11 +347,19 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
 // --- Gantt Query ---
   const ganttPhrases = [
     "מה בגאנט", "מה יש בגאנט", "מה בתכנון השבוע", "מה מתוכנן השבוע",
-    "מה עולה השבוע", "מה אמור לעלות השבוע", "מה יש השבוע",
+    "מה מתוכנן לי השבוע", "מה עולה השבוע", "מה אמור לעלות השבוע",
+    "מה יש השבוע", "מה יש לי השבוע",
     "מה בגאנט השבוע", "תראי לי את הגאנט", "מה הגאנט",
     "מה מתוכנן החודש", "מה בגאנט החודש",
   ];
-  if (ganttPhrases.some((p) => rawText.includes(p))) {
+  const ganttQuestionPatterns = [
+    /^(?:מה|איזה|אילו).{0,20}(?:יש לי|מתוכנן לי|מתוכנן|בתכנון|עולה).{0,15}(?:השבוע|החודש)/,
+  ];
+  if (
+    !isNewIdeaText &&
+    (ganttPhrases.some((p) => rawText.includes(p)) ||
+      ganttQuestionPatterns.some((pattern) => pattern.test(rawText.trim())))
+  ) {
     return "gantt_query";
   }
 
@@ -482,12 +490,24 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
 // treat it as an unclear visibility query so controller can return a graceful fallback.
 export const isLikelyVisibilityQuery = (text: string): boolean => {
   const raw = text.toLowerCase();
+  const isExplicitIdea =
+    raw.includes("יש לי רעיון") ||
+    raw.includes("רעיון חדש") ||
+    raw.includes("תוסיפי רעיון") ||
+    raw.includes("שמרי רעיון") ||
+    raw.includes("תכתבי רעיון");
+
+  if (isExplicitIdea) {
+    return false;
+  }
+
   const queryIndicators = ["מה", "איזה", "נשאר", "עוד", "מחכה", "?", "?", "למה"];
-  const visibilityKeywords = ["ערוך", "עריכה", "קאבר", "קופי", "העלאה", "עלה", "פורסם", "תקוע", "סטטוס", "פרסם", "במק"].map((k) => k);
+  const visibilityKeywords = ["ערוך", "עריכה", "קאבר", "קופי", "העלאה", "עלה", "פורסם", "תקוע", "סטטוס", "פרסם", "במק"];
+  const planningKeywords = ["גאנט", "מתוכנן", "מתוכננת", "בתכנון", "השבוע", "החודש"];
 
   const hasQueryWord = queryIndicators.some((q) => raw.includes(q));
-  const hasVisKeyword = visibilityKeywords.some((k) => raw.includes(k));
-  return hasQueryWord && hasVisKeyword;
+  const hasRelevantKeyword = [...visibilityKeywords, ...planningKeywords].some((k) => raw.includes(k));
+  return hasQueryWord && hasRelevantKeyword;
 };
 
 export const isQuestionLikeMessage = (text: string): boolean => {
