@@ -71,6 +71,8 @@ approveContentForProduction,
   saveFastTrackContent,
   getOpenContentIdeas,
   updateApprovedContentStatusById,
+  findGanttEntryByContentId,
+  GanttDuplicateError,
 } from "../services/sheets.service";
 import type { ProductionTaskMatch } from "../services/sheets.service";
 import {
@@ -117,6 +119,28 @@ const safeSendWhatsAppMessage = async (to: string, message: string): Promise<voi
   }
 };
 
+
+const blockDuplicateGanttWrite = async (
+  sender: string,
+  spreadsheetId: string,
+  contentId: string
+): Promise<boolean> => {
+  const existing = await findGanttEntryByContentId(
+    spreadsheetId,
+    contentId
+  );
+
+  if (!existing) return false;
+
+  clearPendingQuestion(sender);
+
+  await safeSendWhatsAppMessage(
+    sender,
+    `"${existing.name || contentId}" כבר משובץ בגאנט ל-${existing.date}. לא הוספתי אותו שוב.`
+  );
+
+  return true;
+};
 
 const normalizeGeneralChatText = (text: string): string =>
   text
@@ -189,6 +213,37 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
+
+    const duplicateSensitivePendingTypes = new Set([
+      "gantt_collision",
+      "gantt_move_existing",
+      "gantt_write_new_date",
+      "confirm_gantt_write",
+    ]);
+
+    if (
+      pendingQuestion &&
+      duplicateSensitivePendingTypes.has(pendingQuestion.questionType)
+    ) {
+      const context = pendingQuestion.context as any;
+      const pendingContentId =
+        context?.newContentId || context?.contentId;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      if (
+        pendingContentId &&
+        await blockDuplicateGanttWrite(
+          sender,
+          spreadsheetId,
+          pendingContentId
+        )
+      ) {
+        return res.status(200).json({
+          status: "gantt_duplicate_blocked",
+          sender,
+        });
+      }
+    }
    if (pendingQuestion?.questionType === "gantt_collision") {
       const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName, ganttStatus } = pendingQuestion.context as any;
       clearPendingQuestion(sender);
@@ -694,6 +749,19 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
     await safeSendWhatsAppMessage(sender, `לא מצאתי את "${params.contentName}" בתכנים שאושרו. תנסי שוב.`);
     return res.status(200).json({ status: "monthly_planning_not_found", sender });
+  }
+
+  if (
+    await blockDuplicateGanttWrite(
+      sender,
+      monthlySpreadsheetId,
+      match.contentId
+    )
+  ) {
+    return res.status(200).json({
+      status: "gantt_duplicate_blocked",
+      sender,
+    });
   }
 
   const collision = await isGanttDateTaken(monthlySpreadsheetId, params.date);
@@ -1620,6 +1688,19 @@ const replyText = [
               return res.status(200).json({ status: "gantt_write_not_found", sender });
             }
 
+            if (
+              await blockDuplicateGanttWrite(
+                sender,
+                spreadsheetId,
+                match.contentId
+              )
+            ) {
+              return res.status(200).json({
+                status: "gantt_duplicate_blocked",
+                sender,
+              });
+            }
+
             if (match.exact) {
               // בדיקת התנגשות
               const collision = await isGanttDateTaken(spreadsheetId, params.date);
@@ -2285,6 +2366,22 @@ ${draft.summary}
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 
   } catch (error) {
+    if (error instanceof GanttDuplicateError) {
+      clearPendingQuestion(sender);
+
+      await safeSendWhatsAppMessage(
+        sender,
+        `"${error.entry.name || error.entry.contentId}" כבר משובץ בגאנט ל-${error.entry.date}. לא הוספתי אותו שוב.`
+      );
+
+      return res.status(200).json({
+        status: "gantt_duplicate_blocked",
+        sender,
+        contentId: error.entry.contentId,
+        existingDate: error.entry.date,
+      });
+    }
+
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("WhatsApp webhook error:", message);
 

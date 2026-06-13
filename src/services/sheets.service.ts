@@ -1828,6 +1828,48 @@ const updateProductionDeadlineForGanttItem = async (
   return productionDeadline;
 };
 
+export type GanttEntry = {
+  contentId: string;
+  date: string;
+  name: string;
+};
+
+export class GanttDuplicateError extends Error {
+  constructor(public readonly entry: GanttEntry) {
+    super(`Content ${entry.contentId} is already scheduled on ${entry.date}`);
+    this.name = "GanttDuplicateError";
+    Object.setPrototypeOf(this, GanttDuplicateError.prototype);
+  }
+}
+
+export const findGanttEntryByContentId = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<GanttEntry | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:F`,
+  });
+
+  const row = (response.data.values || [])
+    .slice(1)
+    .find(
+      (candidate) =>
+        (candidate[0] || "").toString().trim() === contentId.trim()
+    );
+
+  if (!row) return null;
+
+  return {
+    contentId: (row[0] || "").toString().trim(),
+    date: (row[1] || "").toString().trim(),
+    name: (row[5] || "").toString().trim(),
+  };
+};
+
 export const addRowToGantt = async (
   spreadsheetId: string,
   contentId: string,
@@ -1840,6 +1882,15 @@ export const addRowToGantt = async (
   // Pull priority and collab from תכנים שאושרו
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
+
+  const existingEntry = await findGanttEntryByContentId(
+    spreadsheetId,
+    contentId
+  );
+
+  if (existingEntry) {
+    throw new GanttDuplicateError(existingEntry);
+  }
 
   const approvedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -2054,26 +2105,20 @@ export const updateGanttRowDate = async (
 // Get approved content that has no gantt entry
 export const getApprovedContentNotInGantt = async (
   spreadsheetId: string,
-  month: number, // 1-12
-  year: number
+  _month: number, // kept for the existing API
+  _year: number
 ): Promise<{ contentId: string; name: string }[]> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Get all content IDs in gantt for this month
+  // A content_id may appear only once in the gantt, regardless of month.
   const ganttResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.monthlyGantt}!A:B`,
+    range: `${SHEET_NAMES.monthlyGantt}!A:A`,
   });
   const ganttRows = ganttResponse.data.values || [];
   const ganttContentIds = new Set(
     ganttRows.slice(1)
-      .filter((row) => {
-        const dateStr = (row[1] || "").toString().trim();
-        const parts = dateStr.split("/");
-        if (parts.length !== 3) return false;
-        return parseInt(parts[1]) === month && parseInt(parts[2]) === year;
-      })
       .map((row) => (row[0] || "").toString().trim())
       .filter(Boolean)
   );
