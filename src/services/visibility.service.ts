@@ -947,7 +947,7 @@ export const formatGanttResponse = (items: any[], period: string): string => {
 
   const title = isNotUploadedView
     ? `יש ${items.length} תכנים בגאנט שעדיין לא עלו.`
-    : `יש ${items.length} תכנים מתוכננים ל${period}.`;
+    : `יש ${items.length} תכנים מתוכננים ב-${period}.`;
 
   const listTitle = isNotUploadedView
     ? "מה מחכה לעלות:"
@@ -1019,20 +1019,35 @@ export const extractGanttWriteParams = (text: string): { contentName: string; da
 // Format available dates (holes) in gantt for current month
 export const formatGanttHolesResponse = (availableDates: string[]): string => {
   if (availableDates.length === 0) {
-    return "אין תאריכים פנויים החודש בגאנט — החודש מלא.";
+    return "אין כרגע חורים פנויים החודש בגאנט. החודש מלא.";
   }
 
   const dayNames = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
-  const lines = availableDates.slice(0, 10).map((date) => {
+  const displayDates = availableDates.slice(0, 5);
+
+  const lines = displayDates.map((date) => {
     const parts = date.split("/");
-    const dayName = dayNames[new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
-    return `- ${date} (יום ${dayName})`;
+    const dayName = dayNames[
+      new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()
+    ];
+
+    return `- ${date}, יום ${dayName}`;
   });
 
-  const suffix = availableDates.length > 10
-    ? `\n...ועוד ${availableDates.length - 10} תאריכים פנויים`
-    : "";
+  const suffix =
+    availableDates.length > 5
+      ? `\nועוד ${availableDates.length - 5} חורים שלא הצגתי כאן כדי לא להעמיס.`
+      : "";
 
-  return `תאריכים פנויים החודש בגאנט:\n${lines.join("\n")}${suffix}`;
+  return [
+    "מצאתי כמה חורים פנויים החודש בגאנט.",
+    "",
+    "הקרובים ביותר:",
+    lines.join("\n") + suffix,
+    "",
+    "רוצה שאשבץ תוכן לאחד הימים האלה?",
+    "אפשר לכתוב למשל:",
+    "תוסיפי את [שם התוכן] לגאנט ב-17/06/2026",
+  ].join("\n");
 };
