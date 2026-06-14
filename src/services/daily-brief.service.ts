@@ -297,32 +297,64 @@ export const buildAfternoonReminder = async (): Promise<string | null> => {
   const { todayItems, upcomingItems, productionWithoutGantt } = await fetchBriefData();
 
   const upcomingNotReady = upcomingItems.filter((i) => !isReadyToUpload(i));
-  const todayNotReady = todayItems.filter((i) => !isReadyToUpload(i));
 
-  const hasActionable = todayNotReady.length > 0 || upcomingNotReady.length > 0 || productionWithoutGantt.length > 0;
+  // בדוק גאנט 14 ימים קדימה לצורך סף "ריק"
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const twoWeeksFromNow = new Date(today);
+  twoWeeksFromNow.setDate(today.getDate() + 14);
+  const id = getSpreadsheetId();
+  const twoWeekGantt = await getGanttByDateRange(id, today, twoWeeksFromNow);
+  const ganttIsLight = twoWeekGantt.filter((i) => i.status !== "פורסם").length < 3;
 
-  if (!hasActionable) return null;
+  const lines: string[] = ["היי קרן, תזכורת קטנה :)", ""];
 
-  const lines: string[] = ["תזכורת קטנה :)", ""];
-  lines.push("עוד לא נגעת היום בתוכן.");
-  lines.push("הדבר היחיד שהייתי סוגרת אם יש לך 5 דקות:");
-  lines.push("");
-
-  if (upcomingNotReady.length > 0) {
-    const first = upcomingNotReady[0];
-    lines.push(`- לצלם או לערוך את "${first.displayTitle}"`);
+  // עדיפות 1 — יש תוכן שאמור לעלות היום ומוכן
+  const todayReady = todayItems.filter(isReadyToUpload);
+  if (todayReady.length > 0) {
+    const first = todayReady[0];
+    lines.push("היום אמור לעלות:");
+    lines.push(`"${first.displayTitle}"`);
     lines.push("");
-    lines.push("כי הוא עולה בקרוב ועדיין חסר לו שלב הפקה.");
-  } else {
-    const first = productionWithoutGantt[0];
-    lines.push(`- לשבץ את "${first.displayTitle}" לגאנט.`);
+    lines.push("הוא כבר מוכן לעלייה, אז הדבר היחיד שהייתי סוגרת היום הוא לוודא שהוא עולה.");
     lines.push("");
-    lines.push("כי הוא בהפקה בלי תאריך עלייה.");
+    lines.push("אם כבר העלית, תכתבי לי:");
+    lines.push(`העליתי את "${first.displayTitle}"`);
+    return lines.join("\n");
   }
 
-  lines.push("");
-  lines.push("- לא עכשיו");
-  lines.push("- מה דחוף");
+  // עדיפות 2 — תוכן קרוב שחסר לו צילום או עריכה
+  if (upcomingNotReady.length > 0) {
+    const first = upcomingNotReady[0];
+    const missing = first.filmed !== "כן" ? "צילום" : "עריכה";
+    lines.push(`יש לך תוכן שעולה בקרוב ועדיין חסר לו ${missing}:`);
+    lines.push(`"${first.displayTitle}"`);
+    lines.push("");
+    lines.push(`אם יש לך 20 דקות, זה הדבר שהכי יקדם אותך עכשיו.`);
+    lines.push("");
+    lines.push(`אפשר לעדכן אותי:`);
+    lines.push(`${first.filmed !== "כן" ? "צילמתי" : "ערכתי"} את "${first.displayTitle}"`);
+    return lines.join("\n");
+  }
 
-  return lines.join("\n");
+  // עדיפות 3 — גאנט ריק יחסית
+  if (ganttIsLight) {
+    if (productionWithoutGantt.length > 0) {
+      const first = productionWithoutGantt[0];
+      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
+      lines.push(`יש לך תכנים מוכנים שעוד לא שובצו, למשל:`);
+      lines.push(`"${first.displayTitle}"`);
+      lines.push("");
+      lines.push("אם בא לך לסדר את זה עכשיו, תכתבי:");
+      lines.push(`שבצי את "${first.displayTitle}" לגאנט`);
+    } else {
+      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
+      lines.push("אם בא לך להכניס תכנים חדשים להפקה, תכתבי:");
+      lines.push("בואי נתכנן את החודש");
+    }
+    return lines.join("\n");
+  }
+
+  // אין כלום דחוף — לא שולחים
+  return null;
 };
