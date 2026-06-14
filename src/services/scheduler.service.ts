@@ -55,13 +55,15 @@ export const startScheduler = (): void => {
     async () => {
       console.log("[Daily Brief] Running afternoon reminder check...");
       try {
-        if (hasInteractedToday(TO)) {
-          console.log("[Daily Brief] Karen interacted today — skipping afternoon reminder.");
-          return;
-        }
         const message = await buildAfternoonReminder();
         if (!message) {
-          console.log("[Daily Brief] No actionable reminder — skipping.");
+          console.log("[Daily Brief] No actionable reminder - skipping.");
+          return;
+        }
+        // תוכן שעולה היום ומוכן — נשלח תמיד
+        const isTodayReadyAlert = message.includes("היום אמור לעלות:");
+        if (!isTodayReadyAlert && hasInteractedToday(TO)) {
+          console.log("[Daily Brief] Karen interacted today and no urgent today-content - skipping.");
           return;
         }
         await safeSend(message);
