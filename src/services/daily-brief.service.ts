@@ -80,7 +80,7 @@ const fetchBriefData = async () => {
   today.setHours(0, 0, 0, 0);
 
   const tenDaysFromNow = new Date(today);
-  tenDaysFromNow.setDate(today.getDate() + 10);
+  tenDaysFromNow.setDate(today.getDate() + 5);
   tenDaysFromNow.setHours(23, 59, 59, 999);
 
   const month = now.getMonth() + 1;
@@ -308,13 +308,7 @@ export const buildAfternoonReminder = async (): Promise<string | null> => {
   lines.push("הדבר היחיד שהייתי סוגרת אם יש לך 5 דקות:");
   lines.push("");
 
-  if (todayNotReady.length > 0) {
-    const first = todayNotReady[0];
-    const missing = first.filmed !== "כן" ? "לצלם" : "לערוך";
-    lines.push(`- ${missing} את "${first.displayTitle}"`);
-    lines.push("");
-    lines.push("כי הוא מתוכנן לעלות היום.");
-  } else if (upcomingNotReady.length > 0) {
+  if (upcomingNotReady.length > 0) {
     const first = upcomingNotReady[0];
     lines.push(`- לצלם או לערוך את "${first.displayTitle}"`);
     lines.push("");
