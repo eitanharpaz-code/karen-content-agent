@@ -109,7 +109,7 @@ import {
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
-
+import { markInteractionToday } from "../services/daily-brief.service";
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
     await sendWhatsAppMessage(to, message);
@@ -209,6 +209,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     // ===== ROUTE DEBUG LOGS =====
     console.log(`\n[Route Debug] incomingText: "${incomingText}"`);
+
+ // Mark interaction for afternoon reminder
+    markInteractionToday(sender);
 
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
@@ -511,7 +514,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   const { month, year, monthName, remainingContent } = pendingQuestion.context as any;
 
   // יציאה מתכנון חודש
-  if (isRejectionMessage(incomingText) || ["סיימתי", "עצרי", "זהו", "מספיק"].includes(incomingText.trim())) {
+  if (isRejectionMessage(incomingText) || ["סיימתי", "עצרי", "עצור", "זהו", "מספיק"].includes(incomingText.trim())) {
     clearPendingQuestion(sender);
     await safeSendWhatsAppMessage(sender, `סיימנו את תכנון ${monthName}. אפשר תמיד לחזור ולהוסיף עוד.`);
     return res.status(200).json({ status: "monthly_planning_done", sender });
@@ -883,7 +886,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       clearPendingQuestion(sender);
 const rawAnswer = incomingText.trim();
 
-if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עזבי כרגע"].includes(rawAnswer)) {
+if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עזבי כרגע", "עזוב כרגע"].includes(rawAnswer)) {
   const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
   await safeSendWhatsAppMessage(

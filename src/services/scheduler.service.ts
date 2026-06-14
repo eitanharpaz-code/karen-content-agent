@@ -1,0 +1,76 @@
+import cron from "node-cron";
+import { sendWhatsAppMessage } from "./whatsapp.service";
+import {
+  buildMorningBrief,
+  buildAfternoonReminder,
+  hasInteractedToday,
+} from "./daily-brief.service";
+
+const ENABLED = process.env.DAILY_BRIEF_ENABLED === "true";
+const MORNING_TIME = process.env.DAILY_BRIEF_MORNING_TIME || "0 9 * * *";
+const AFTERNOON_TIME = process.env.DAILY_BRIEF_AFTERNOON_TIME || "30 16 * * *";
+const TIMEZONE = process.env.DAILY_BRIEF_TIMEZONE || "Asia/Jerusalem";
+const TO = process.env.DAILY_BRIEF_TO || "";
+
+const safeSend = async (message: string): Promise<void> => {
+  if (!ENABLED) {
+    console.log(`[Daily Brief] DRY RUN — would send:\n${message}`);
+    return;
+  }
+  if (!TO) {
+    console.error("[Daily Brief] DAILY_BRIEF_TO is not set.");
+    return;
+  }
+  try {
+    await sendWhatsAppMessage(TO, message);
+    console.log("[Daily Brief] ✅ Sent successfully.");
+  } catch (error) {
+    console.error("[Daily Brief] ❌ Failed to send:", error);
+  }
+};
+
+export const startScheduler = (): void => {
+  if (!ENABLED) {
+    console.log("[Daily Brief] Scheduler loaded in DRY RUN mode (DAILY_BRIEF_ENABLED=false).");
+  }
+
+  // Morning Brief
+  cron.schedule(
+    MORNING_TIME,
+    async () => {
+      console.log("[Daily Brief] Running morning brief...");
+      try {
+        const message = await buildMorningBrief();
+        if (message) await safeSend(message);
+      } catch (error) {
+        console.error("[Daily Brief] Error building morning brief:", error);
+      }
+    },
+    { timezone: TIMEZONE }
+  );
+
+  // Afternoon Reminder
+  cron.schedule(
+    AFTERNOON_TIME,
+    async () => {
+      console.log("[Daily Brief] Running afternoon reminder check...");
+      try {
+        if (hasInteractedToday(TO)) {
+          console.log("[Daily Brief] Karen interacted today — skipping afternoon reminder.");
+          return;
+        }
+        const message = await buildAfternoonReminder();
+        if (!message) {
+          console.log("[Daily Brief] No actionable reminder — skipping.");
+          return;
+        }
+        await safeSend(message);
+      } catch (error) {
+        console.error("[Daily Brief] Error building afternoon reminder:", error);
+      }
+    },
+    { timezone: TIMEZONE }
+  );
+
+  console.log("[Daily Brief] Scheduler started.");
+};

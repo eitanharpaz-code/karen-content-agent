@@ -197,7 +197,9 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה יש בבנק רעיונות",
     "מה יש לי בבנק",
     "תראי לי רעיונות",
+    "תראה לי רעיונות",
     "תציגי לי רעיונות",
+    "תציג לי רעיונות",
     "רשימת רעיונות",
     "רעיונות לתוכן שיש לי",
     "איזה רעיונות לתוכן יש לי",
@@ -205,7 +207,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
 
   const looksLikeIdeaListQuestion =
     ideaListPhrases.some((p) => rawText.includes(p)) ||
-    (/^(איזה|מה|תראי|תציגי|הראי|רשימת).{0,25}רעיונות/.test(rawText));
+    (/^(איזה|מה|תראי|תראה|תציגי|תציג|הראי|הראה|רשימת).{0,25}רעיונות/.test(rawText));
 
   if (!isNewIdeaText && looksLikeIdeaListQuestion) {
     return "ideas_list";
@@ -349,7 +351,7 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה בגאנט", "מה יש בגאנט", "מה בתכנון השבוע", "מה מתוכנן השבוע",
     "מה מתוכנן לי השבוע", "מה עולה השבוע", "מה אמור לעלות השבוע",
     "מה יש השבוע", "מה יש לי השבוע",
-    "מה בגאנט השבוע", "תראי לי את הגאנט", "מה הגאנט",
+    "מה בגאנט השבוע", "תראי לי את הגאנט", "תראה לי את הגאנט", "מה הגאנט",
     "מה מתוכנן החודש", "מה בגאנט החודש",
   ];
   const ganttQuestionPatterns = [
@@ -530,7 +532,7 @@ export const isQuestionLikeMessage = (text: string): boolean => {
   }
 
   // Multi-word question starters
-  const multiWordPattern = /^(תראה לי|תראי לי|יש משהו|יש תכנים|מה עם)\s/;
+  const multiWordPattern = /^(תראה לי|תראי לי|תציג לי|תציגי לי|תגיד לי|תגידי לי|יש משהו|יש תכנים|מה עם)\s/;
   if (multiWordPattern.test(normalized)) {
     return true;
   }
@@ -1034,11 +1036,11 @@ export const extractGanttWriteParams = (text: string): { contentName: string; da
 
   // Extract content name - text between "את" and date/location markers
  const namePatterns = [
-    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+לגאנט/i,
-    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+בתאריך/i,
-    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+ב-\d/i,
-    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+ל-?\d/i,
-    /(?:תוסיפי|תשבצי|תכניסי)\s+את\s+(.+?)\s+\d/i,
+    /(?:תוסיפי|תשבצי|תכניסי|תוסיף|תשבץ|תכניס)\s+את\s+(.+?)\s+לגאנט/i,
+    /(?:תוסיפי|תשבצי|תכניסי|תוסיף|תשבץ|תכניס)\s+את\s+(.+?)\s+בתאריך/i,
+    /(?:תוסיפי|תשבצי|תכניסי|תוסיף|תשבץ|תכניס)\s+את\s+(.+?)\s+ב-\d/i,
+    /(?:תוסיפי|תשבצי|תכניסי|תוסיף|תשבץ|תכניס)\s+את\s+(.+?)\s+ל-?\d/i,
+    /(?:תוסיפי|תשבצי|תכניסי|תוסיף|תשבץ|תכניס)\s+את\s+(.+?)\s+\d/i,
   ];
 
   for (const pattern of namePatterns) {

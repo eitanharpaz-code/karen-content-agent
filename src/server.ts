@@ -1,9 +1,11 @@
 import app from "./app";
-
+import { startScheduler } from "./services/scheduler.service";
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 const server = app.listen(port, () => {
   console.log(`Karen Content Agent is running on http://localhost:${port}`);
+  
+startScheduler();
 });
 
 server.on("error", (error: any) => {
