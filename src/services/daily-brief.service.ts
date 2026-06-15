@@ -1,9 +1,17 @@
 import {
   getAllProductionTasksWithPriority,
   getGanttByDateRange,
-  getApprovedContentNotInGantt,
   findAvailableDatesInMonth,
 } from "./sheets.service";
+import {
+  computePriorityItems,
+  getBriefDisplayTitle,
+} from "./priority.service";
+import type {
+  ContentPriorityItem,
+  GanttItemInput,
+  ProductionTaskInput,
+} from "./priority.service";
 
 const getSpreadsheetId = (): string => {
   const id = process.env.GOOGLE_SHEETS_ID;
@@ -26,277 +34,280 @@ const getTodayDateString = (): string => {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
 };
 
-// ===== Display Title Helper =====
-export const getBriefDisplayTitle = (name: string): string => {
-  if (!name) return "";
-
-  // נקה ירכאות ופיסוק מהקצוות
-  let cleaned = name.trim().replace(/^["״׳']+|["״׳']+$/g, "").trim();
-
-  // אם יש מפריד -, קח את החלק הראשון אם הוא קצר (עד 5 מילים)
-  const dashIndex = cleaned.indexOf(" - ");
-  if (dashIndex !== -1) {
-    const firstPart = cleaned.substring(0, dashIndex).trim();
-    const firstPartWords = firstPart.split(/\s+/).length;
-    if (firstPartWords <= 5) {
-      return firstPart;
-    }
-    // אם החלק הראשון עדיין ארוך, קח 4 מילים ממנו
-    return firstPart.split(/\s+/).slice(0, 4).join(" ");
-  }
-
-  // אם השם קצר (עד 6 מילים) — השתמש בו כמות שהוא
-  const words = cleaned.split(/\s+/);
-  if (words.length <= 6) {
-    return cleaned.replace(/[-–—,.:]+$/, "").trim();
-  }
-
-  // fallback — 6 מילים ראשונות
-  return words.slice(0, 6).join(" ").replace(/[-–—,.:]+$/, "").trim();
-};
-
 // ===== Data Fetching =====
-type BriefItem = {
-  contentId: string;
-  name: string;
-  displayTitle: string;
-  filmed: string;
-  edited: string;
-  coverReady: string;
-  deadline: string;
-  ganttDate?: string;
-  ganttStatus?: string;
-};
-
-const isReadyToUpload = (item: BriefItem): boolean => {
-  return item.filmed === "כן" && item.edited === "כן";
-};
+export const getBriefGanttDateRange = (): {
+  startDate: Date;
+  endDate: Date;
+} => ({
+  startDate: new Date(2000, 0, 1),
+  endDate: new Date(2100, 11, 31, 23, 59, 59, 999),
+});
 
 const fetchBriefData = async () => {
-  const now = new Date();
-  const todayStr = getTodayDateString(); // YYYY-MM-DD
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const { startDate, endDate } = getBriefGanttDateRange();
 
-  const tenDaysFromNow = new Date(today);
-  tenDaysFromNow.setDate(today.getDate() + 5);
-  tenDaysFromNow.setHours(23, 59, 59, 999);
-
+  const now = new Date();
   const month = now.getMonth() + 1;
   const year = now.getFullYear();
   const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
 
   const id = getSpreadsheetId();
-  const [allTasks, upcomingGantt, unscheduled, availableDates] = await Promise.all([
+  const [allTasks, ganttItems, availableDates] = await Promise.all([
     getAllProductionTasksWithPriority(id),
-    getGanttByDateRange(id, today, tenDaysFromNow),
-    getApprovedContentNotInGantt(id, month, year),
+    getGanttByDateRange(id, startDate, endDate),
     findAvailableDatesInMonth(id, firstOfMonth),
   ]);
 
-  const taskById = new Map(allTasks.map((t) => [t.contentId, t]));
+  const ganttInput: GanttItemInput[] = ganttItems.map((g) => ({
+    contentId: g.contentId,
+    name: g.name,
+    date: g.date,
+    status: g.status,
+    uploadTime: g.uploadTime,
+  }));
 
-  // בנה BriefItem לכל פריט גאנט
-  const ganttItems: BriefItem[] = upcomingGantt
-    .filter((item) => item.status !== "פורסם")
-    .map((item) => {
-      const task = taskById.get(item.contentId);
-      return {
-        contentId: item.contentId,
-        name: item.name,
-        displayTitle: getBriefDisplayTitle(item.name),
-        filmed: task?.filmed || "לא",
-        edited: task?.edited || "לא",
-        coverReady: task?.coverReady || "לא",
-        deadline: task?.deadline || "",
-        ganttDate: item.date,
-        ganttStatus: item.status,
-      };
-    });
+  const taskInput: ProductionTaskInput[] = allTasks.map((t) => ({
+    contentId: t.contentId,
+    taskName: t.taskName,
+    filmed: t.filmed,
+    edited: t.edited,
+    coverReady: t.coverReady,
+    deadline: t.deadline,
+    readyAt: t.readyAt,
+    updatedAt: t.updatedAt,
+  }));
 
-  // הפרד בין היום לבקרוב
-  const todayItems = ganttItems.filter((item) => {
-    if (!item.ganttDate) return false;
-    const parts = item.ganttDate.split("/");
-    if (parts.length !== 3) return false;
-    const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-    return d.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" }) === todayStr;
-  });
+  const priorityItems = computePriorityItems(ganttInput, taskInput);
 
-  const upcomingItems = ganttItems.filter((item) => !todayItems.includes(item));
-
-  // תכנים בהפקה בלי גאנט
-  const productionWithoutGantt: BriefItem[] = unscheduled
-    .filter((c) => allTasks.some((t) => t.contentId === c.contentId))
-    .map((c) => {
-      const task = taskById.get(c.contentId);
-      return {
-        contentId: c.contentId,
-        name: c.name,
-        displayTitle: getBriefDisplayTitle(c.name),
-        filmed: task?.filmed || "לא",
-        edited: task?.edited || "לא",
-        coverReady: task?.coverReady || "לא",
-        deadline: task?.deadline || "",
-      };
-    });
-
-  // חורים פנויים
   const futureHoles = availableDates.filter((date) => {
     const parts = date.split("/");
     const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
     return d >= today;
   });
 
-  return {
-    todayItems,
-    upcomingItems,
-    productionWithoutGantt,
-    futureHoles,
-  };
+  return { priorityItems, futureHoles };
 };
 
 // ===== Morning Brief =====
-export const buildMorningBrief = async (): Promise<string | null> => {
-  const { todayItems, upcomingItems, productionWithoutGantt, futureHoles } = await fetchBriefData();
+export type MorningBriefData = {
+  priorityItems: ContentPriorityItem[];
+  futureHoles: string[];
+  monthName: string;
+};
 
+const isActionable = (item: ContentPriorityItem): boolean =>
+  item.recommendedAction !== "none" && item.cta.trim() !== "";
+
+const formatAction = (item: ContentPriorityItem): string => {
+  switch (item.recommendedAction) {
+    case "film":
+      return `לצלם את "${item.displayTitle}"`;
+    case "edit":
+      return `לערוך את "${item.displayTitle}"`;
+    case "schedule":
+      return `לשבץ את "${item.displayTitle}" לגאנט`;
+    case "verify-upload":
+      return `לוודא ש-"${item.displayTitle}" עולה`;
+    case "cover":
+      return `לסגור קאבר ל-"${item.displayTitle}"`;
+    case "none":
+      return "";
+  }
+};
+
+export const selectMorningFocus = (
+  priorityItems: ContentPriorityItem[]
+): {
+  primary: ContentPriorityItem | null;
+  secondary: ContentPriorityItem | null;
+} => {
+  const actionableItems = priorityItems.filter(isActionable);
+
+  return {
+    primary: actionableItems[0] || null,
+    secondary: actionableItems[1] || null,
+  };
+};
+
+export const buildMorningBriefFromData = ({
+  priorityItems,
+  futureHoles,
+  monthName,
+}: MorningBriefData): string | null => {
   const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
 
-  // ===== מקרה 1: יש תוכן שעולה היום =====
-  if (todayItems.length > 0) {
-    const todayReady = todayItems.filter(isReadyToUpload);
-    const todayNotReady = todayItems.filter((i) => !isReadyToUpload(i));
+  const p0Items = priorityItems.filter((i) => i.priorityLevel === "P0");
+  const { primary, secondary } = selectMorningFocus(priorityItems);
 
-lines.push("", "*היום בגאנט*");
-    todayItems.forEach((item) => {
-      const status = isReadyToUpload(item)
-        ? "מוכן לעלייה"
-        : `חסר ${item.filmed !== "כן" ? "צילום" : "עריכה"}`;
-      lines.push(`- ${item.displayTitle} — ${status}`);
+  if (p0Items.length > 0) {
+    lines.push("", "*דורש תשומת לב עכשיו*");
+
+    p0Items.slice(0, 3).forEach((item) => {
+      const status = item.isReadyToUpload ? "מוכן לעלייה" :
+        item.filmed !== "כן" ? "חסר צילום" : "חסר עריכה";
+      lines.push(`* ${item.displayTitle} — ${status}`);
     });
 
-    lines.push("", "*הייתי מתחילה מ*");
-
-    if (todayNotReady.length > 0) {
-      const first = todayNotReady[0];
-      const missing = first.filmed !== "כן" ? "לצלם" : "לערוך";
-      lines.push(`- ${missing} את "${first.displayTitle}"`);
-      lines.push("");
-      lines.push(`כי הוא מתוכנן לעלות היום ועדיין חסר לו ${first.filmed !== "כן" ? "צילום" : "עריכה"}.`);
-
-     lines.push("", "*כדי להתקדם עכשיו אפשר לענות*");
-      lines.push(`- ${first.filmed !== "כן" ? "צילמתי" : "ערכתי"} את "${first.displayTitle}"`);
-      lines.push(`- מה חסר ל"${first.displayTitle}"?`);
-    } else if (todayReady.length > 0) {
-      const first = todayReady[0];
-      lines.push(`- לוודא שהסרטון "${first.displayTitle}" עולה היום בזמן`);
-      lines.push("");
-      lines.push("כי הוא כבר מוכן ומתוכנן לעלות היום.");
-
-      lines.push("", "*כדי להתקדם עכשיו אפשר לענות*");
-      lines.push(`- העליתי את "${first.displayTitle}"`);
-      if (first.coverReady !== "כן") {
-        lines.push(`- קאבר ל"${first.displayTitle}" מוכן`);
-      }
+    if (p0Items.length > 3) {
+      const remainingP0 = p0Items.length - 3;
+      lines.push(
+        remainingP0 === 1
+          ? "* ועוד פריט אחד שדורש תשומת לב"
+          : `* ועוד ${remainingP0} פריטים שדורשים תשומת לב`
+      );
     }
-
-    // פעולה משנית — תוכן בקרוב שחסר לו שלב
-    const upcomingNotReady = upcomingItems.filter((i) => !isReadyToUpload(i));
-    if (upcomingNotReady.length > 0) {
-      const second = upcomingNotReady[0];
-     lines.push("", "*אחר כך, אם יש לך זמן*");
-      lines.push(`- לצלם או לערוך את "${second.displayTitle}"`);
-      lines.push("");
-      lines.push("כי הוא עולה בקרוב ועדיין חסר לו צילום או עריכה.");
-    }
-
-    lines.push("", "*קיצורים נוספים*");
-    lines.push("* מה דחוף");
-    lines.push("* מה בלי גאנט");
-    lines.push("* בואי נתכנן את החודש");
-
-    return lines.join("\n");
   }
 
-  // ===== מקרה 2: אין תוכן היום =====
-  const upcomingNotReady = upcomingItems.filter((i) => !isReadyToUpload(i));
-  const hasAnything = upcomingNotReady.length > 0 || productionWithoutGantt.length > 0;
-
-  if (!hasAnything) {
+  if (!primary) {
+    const holesLine = futureHoles.length > 0
+      ? `\nברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`
+      : "";
     return [
       "בוקר טוב קרן :)",
+      "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
       "",
       "היום נראה יחסית רגוע.",
-      "לא מצאתי משהו דחוף שצריך טיפול מיידי.",
+      "לא מצאתי משהו דחוף שצריך טיפול מיידי." + holesLine,
       "",
-      "אם בא לך להתקדם בכל זאת, אפשר לכתוב:",
-      "- מה החורים בגאנט",
-      "- בואי נתכנן את החודש",
-      "- תני לי רעיון לתוכן",
+      "אם בא לך להתקדם, אפשר לכתוב:",
+      "* מה החורים בגאנט",
+      `* בואי נתכנן את ${monthName}`,
     ].join("\n");
   }
 
-  lines.push("", "*מה שחשוב היום*", "");
+  lines.push("", "*פוקוס להיום*");
+  lines.push(`* ${formatAction(primary)}`);
+  lines.push("", primary.reason);
 
-  if (upcomingNotReady.length > 0) {
-    lines.push(`- ${upcomingNotReady.length} ${upcomingNotReady.length === 1 ? "תוכן עולה" : "תכנים עולים"} בקרוב ועדיין חסר ${upcomingNotReady.length === 1 ? "לו" : "להם"} צילום או עריכה`);
-  }
-  if (productionWithoutGantt.length > 0) {
-    lines.push(`- ${productionWithoutGantt.length} ${productionWithoutGantt.length === 1 ? "תוכן בהפקה עוד לא שובץ" : "תכנים בהפקה עוד לא שובצו"} לגאנט`);
-  }
-  if (futureHoles.length > 0) {
-    lines.push(`- ${futureHoles.length} חורים פנויים בגאנט החודש`);
+  if (secondary) {
+    lines.push("", "*אחר כך, אם יש לך זמן*");
+    lines.push(`* ${formatAction(secondary)}`);
   }
 
-  lines.push("", "*הייתי מתחילה מ*");
-
-  let primaryItem: BriefItem | null = null;
-  let primaryReason = "";
-  let primaryAction = "";
-
-  if (upcomingNotReady.length > 0) {
-    primaryItem = upcomingNotReady[0];
-    const missing = primaryItem.filmed !== "כן" ? "לצלם" : "לערוך";
-    primaryAction = `- ${missing} או לסגור עריכה על "${primaryItem.displayTitle}"`;
-    primaryReason = "כי הוא עולה בקרוב ועדיין חסר לו צילום או עריכה.";
-  } else if (productionWithoutGantt.length > 0) {
-    primaryItem = productionWithoutGantt[0];
-    primaryAction = `- לשבץ את "${primaryItem.displayTitle}" לגאנט`;
-    primaryReason = "כי הוא כבר בהפקה אבל עדיין אין לו תאריך עלייה.";
+  if (
+    futureHoles.length > 0 &&
+    primary.priorityLevel === "PLANNING"
+  ) {
+    lines.push("", `ברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`);
   }
 
-  if (primaryItem) {
-    lines.push(primaryAction);
-    lines.push("");
-    lines.push(primaryReason);
+  lines.push("", "*אפשר לענות*");
+  lines.push(`* ${primary.cta}`);
+  if (secondary) lines.push(`* ${secondary.cta}`);
 
-    lines.push("", "*כדי להתקדם עכשיו אפשר לענות*");
-
-    if (upcomingNotReady.length > 0 && primaryItem) {
-      lines.push(`- צילמתי את "${primaryItem.displayTitle}"`);
-      lines.push(`- ערכתי את "${primaryItem.displayTitle}"`);
-      lines.push(`- מה חסר ל"${primaryItem.displayTitle}"?`);
-    } else if (productionWithoutGantt.length > 0 && primaryItem) {
-      lines.push(`- שבצי את "${primaryItem.displayTitle}" לגאנט`);
-      lines.push("- תראי לי מה עוד בלי גאנט");
-      lines.push("- בואי נתכנן את החודש");
-    }
-  }
-
- lines.push("", "*קיצורים נוספים*");
-  lines.push("- מה דחוף");
-  lines.push("- מה בלי גאנט");
-  lines.push("- בואי נתכנן את החודש");
+  lines.push("", "*קיצורים נוספים*");
+  lines.push("* מה דחוף");
+  lines.push("* מה צריך שיבוץ לגאנט");
+  lines.push(`* בואי נתכנן את ${monthName}`);
 
   return lines.join("\n");
 };
 
-// ===== Afternoon Reminder =====
-export const buildAfternoonReminder = async (): Promise<string | null> => {
-  const { todayItems, upcomingItems, productionWithoutGantt } = await fetchBriefData();
+export const buildMorningBrief = async (): Promise<string | null> => {
+  const { priorityItems, futureHoles } = await fetchBriefData();
+  const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
-  const upcomingNotReady = upcomingItems.filter((i) => !isReadyToUpload(i));
+  return buildMorningBriefFromData({
+    priorityItems,
+    futureHoles,
+    monthName,
+  });
+};
+
+// ===== Afternoon Reminder =====
+export type AfternoonReminderData = {
+  priorityItems: ContentPriorityItem[];
+  ganttIsLight: boolean;
+  monthName: string;
+};
+
+export const selectAfternoonFocus = (
+  priorityItems: ContentPriorityItem[],
+  ganttIsLight: boolean
+): ContentPriorityItem | null => {
+  const p0Ready = priorityItems.find(
+    (item) =>
+      item.priorityLevel === "P0" &&
+      item.recommendedAction === "verify-upload" &&
+      isActionable(item)
+  );
+
+  if (p0Ready) return p0Ready;
+
+  const productionAction = priorityItems.find(
+    (item) =>
+      ["P1", "P2", "P3", "P4"].includes(item.priorityLevel) &&
+      ["film", "edit"].includes(item.recommendedAction) &&
+      isActionable(item)
+  );
+
+  if (productionAction) return productionAction;
+  if (!ganttIsLight) return null;
+
+  return priorityItems.find(
+    (item) =>
+      item.priorityLevel === "PLANNING" &&
+      item.recommendedAction === "schedule" &&
+      isActionable(item)
+  ) || null;
+};
+
+export const buildAfternoonReminderFromData = ({
+  priorityItems,
+  ganttIsLight,
+  monthName,
+}: AfternoonReminderData): string | null => {
+  const focus = selectAfternoonFocus(priorityItems, ganttIsLight);
+  const lines: string[] = ["היי קרן, תזכורת קטנה :)", ""];
+
+  if (
+    focus?.priorityLevel === "P0" &&
+    focus.recommendedAction === "verify-upload"
+  ) {
+    lines.push("היום אמור לעלות:");
+    lines.push(`"${focus.displayTitle}"`);
+    lines.push("");
+    lines.push("הוא כבר מוכן. נשאר רק לוודא שהוא עולה.");
+    lines.push("");
+    lines.push("אם כבר העלית, תכתבי לי:");
+    lines.push(`* ${focus.cta}`);
+    return lines.join("\n");
+  }
+
+  if (
+    focus &&
+    ["P1", "P2", "P3", "P4"].includes(focus.priorityLevel)
+  ) {
+    lines.push("הדבר שהכי יקדם אותך עכשיו:");
+    lines.push(`* ${formatAction(focus)}`);
+    lines.push("");
+    lines.push("כשסיימת, אפשר לכתוב:");
+    lines.push(`* ${focus.cta}`);
+    return lines.join("\n");
+  }
+
+  if (ganttIsLight) {
+    if (focus?.priorityLevel === "PLANNING") {
+      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
+      lines.push(`* ${formatAction(focus)}`);
+      lines.push("");
+      lines.push("כדי להתקדם, אפשר לכתוב:");
+      lines.push(`* ${focus.cta}`);
+    } else {
+      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
+      lines.push("כדי לסדר את השבועיים הקרובים, אפשר לכתוב:");
+      lines.push(`* בואי נתכנן את ${monthName}`);
+    }
+    return lines.join("\n");
+  }
+
+  return null;
+};
+
+export const buildAfternoonReminder = async (): Promise<string | null> => {
+  const { priorityItems } = await fetchBriefData();
 
   // בדוק גאנט 14 ימים קדימה לצורך סף "ריק"
   const today = new Date();
@@ -306,55 +317,11 @@ export const buildAfternoonReminder = async (): Promise<string | null> => {
   const id = getSpreadsheetId();
   const twoWeekGantt = await getGanttByDateRange(id, today, twoWeeksFromNow);
   const ganttIsLight = twoWeekGantt.filter((i) => i.status !== "פורסם").length < 3;
+  const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
-  const lines: string[] = ["היי קרן, תזכורת קטנה :)", ""];
-
-  // עדיפות 1 — יש תוכן שאמור לעלות היום ומוכן
-  const todayReady = todayItems.filter(isReadyToUpload);
-  if (todayReady.length > 0) {
-    const first = todayReady[0];
-    lines.push("היום אמור לעלות:");
-    lines.push(`"${first.displayTitle}"`);
-    lines.push("");
-    lines.push("הוא כבר מוכן לעלייה, אז הדבר היחיד שהייתי סוגרת היום הוא לוודא שהוא עולה.");
-    lines.push("");
-    lines.push("אם כבר העלית, תכתבי לי:");
-    lines.push(`העליתי את "${first.displayTitle}"`);
-    return lines.join("\n");
-  }
-
-  // עדיפות 2 — תוכן קרוב שחסר לו צילום או עריכה
-  if (upcomingNotReady.length > 0) {
-    const first = upcomingNotReady[0];
-    const missing = first.filmed !== "כן" ? "צילום" : "עריכה";
-    lines.push(`יש לך תוכן שעולה בקרוב ועדיין חסר לו ${missing}:`);
-    lines.push(`"${first.displayTitle}"`);
-    lines.push("");
-    lines.push(`אם יש לך 20 דקות, זה הדבר שהכי יקדם אותך עכשיו.`);
-    lines.push("");
-    lines.push(`אפשר לעדכן אותי:`);
-    lines.push(`${first.filmed !== "כן" ? "צילמתי" : "ערכתי"} את "${first.displayTitle}"`);
-    return lines.join("\n");
-  }
-
-  // עדיפות 3 — גאנט ריק יחסית
-  if (ganttIsLight) {
-    if (productionWithoutGantt.length > 0) {
-      const first = productionWithoutGantt[0];
-      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
-      lines.push(`יש לך תכנים מוכנים שעוד לא שובצו, למשל:`);
-      lines.push(`"${first.displayTitle}"`);
-      lines.push("");
-      lines.push("אם בא לך לסדר את זה עכשיו, תכתבי:");
-      lines.push(`שבצי את "${first.displayTitle}" לגאנט`);
-    } else {
-      lines.push("הגאנט קצת ריק לשבועיים הקרובים.");
-      lines.push("אם בא לך להכניס תכנים חדשים להפקה, תכתבי:");
-      lines.push("בואי נתכנן את החודש");
-    }
-    return lines.join("\n");
-  }
-
-  // אין כלום דחוף — לא שולחים
-  return null;
+  return buildAfternoonReminderFromData({
+    priorityItems,
+    ganttIsLight,
+    monthName,
+  });
 };
