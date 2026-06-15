@@ -117,6 +117,26 @@ const formatAction = (item: ContentPriorityItem): string => {
   }
 };
 
+const formatMorningPrimaryAction = (
+  item: ContentPriorityItem,
+  p0Count: number
+): string => {
+  if (item.priorityLevel !== "P0" || p0Count !== 1) {
+    return formatAction(item);
+  }
+
+  switch (item.recommendedAction) {
+    case "film":
+      return "לצלם אותו";
+    case "edit":
+      return "לערוך אותו";
+    case "verify-upload":
+      return "לוודא שהוא עולה";
+    default:
+      return formatAction(item);
+  }
+};
+
 export const selectMorningFocus = (
   priorityItems: ContentPriorityItem[]
 ): {
@@ -178,8 +198,7 @@ export const buildMorningBriefFromData = ({
   }
 
   lines.push("", "*פוקוס להיום*");
-  lines.push(`* ${formatAction(primary)}`);
-  lines.push("", primary.reason);
+  lines.push(`* ${formatMorningPrimaryAction(primary, p0Items.length)}`);
 
   if (secondary) {
     lines.push("", "*אחר כך, אם יש לך זמן*");
@@ -197,10 +216,6 @@ export const buildMorningBriefFromData = ({
   lines.push(`* ${primary.cta}`);
   if (secondary) lines.push(`* ${secondary.cta}`);
 
-  lines.push("", "*קיצורים נוספים*");
-  lines.push("* מה דחוף");
-  lines.push("* מה צריך שיבוץ לגאנט");
-  lines.push(`* בואי נתכנן את ${monthName}`);
 
   return lines.join("\n");
 };

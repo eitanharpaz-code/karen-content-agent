@@ -87,7 +87,7 @@ assert(
 );
 assert(
   morning1?.includes('לצלם את "תוכן דחוף 1"') === true,
-  "first P0 action is the primary focus"
+  "multiple P0 items keep the primary title for clarity"
 );
 assert(
   morning1?.includes('לצלם את "תוכן דחוף 2"') === true,
@@ -129,12 +129,20 @@ const morning2Items = makeItems(
 );
 const morning2 = buildMorning(morning2Items);
 assert(
-  morning2?.includes('לוודא ש-"מוכן להיום" עולה') === true,
-  "ready P0 gets verify-upload focus"
+  morning2?.includes("* לוודא שהוא עולה") === true,
+  "single ready P0 uses a concise verify-upload focus"
 );
 assert(
   morning2?.includes('לצלם את "צילום למחר"') === true,
   "P1 action becomes secondary after ready P0"
+);
+assert(
+  countOccurrences(morning2 || "", "מוכן להיום") === 2,
+  "single P0 title appears only in the status and reply"
+);
+assert(
+  morning2?.includes("*קיצורים נוספים*") === false,
+  "morning omits the repeated shortcuts section"
 );
 
 // Morning 3: P1 and P2 keep their engine order.
