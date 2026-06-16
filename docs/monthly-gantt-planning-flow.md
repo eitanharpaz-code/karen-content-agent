@@ -163,3 +163,114 @@ Not included:
 - "מה דחוף" includes Planning Health in the correct order
 - agent does not write gantt without confirmation
 - agent does not write gantt without usable content_id
+
+## Planning Source Routing Flow
+
+Status: planned flow. This section defines conversation behavior before gantt writes are implemented.
+
+### Goal
+
+When Karen asks to complete the gantt, the agent should first help choose the right source for the missing content.
+
+The agent must not jump directly from a planning gap to writing into the gantt.
+
+### Triggers
+
+- בואי נשלים את השבוע
+- בואי נשלים את השבוע הבא
+- מה חסר בגאנט השבוע
+- תראי לי מה אפשר לשבץ בגאנט
+- Planning Health CTA from morning brief, whats important, or future afternoon reminder.
+
+### Core Rules
+
+- Do not offer a source that has no real options.
+- Do not offer post ideas when the gantt is missing a reel.
+- Do not offer reel ideas when the gantt is missing a post.
+- Do not write to the gantt without content selection and date confirmation.
+- If multiple planning gaps exist, handle the first gap by Planning Health priority and mention the other gap only as context.
+
+### Missing Content Type
+
+- current_week_missing_reel: needs a reel for the gantt.
+- current_week_missing_post: needs a post for the gantt.
+- next_week_empty_or_light: general weak gantt signal. If possible, infer the missing type; otherwise ask Karen where to start.
+
+### Source Order
+
+1. Approved content that is not yet scheduled in the gantt, matching the missing content type.
+2. Production content that is close to ready, matching the missing content type.
+3. Approved content that has not started production yet, matching the missing content type.
+4. Idea bank items matching the missing content type.
+5. New idea generation matching the missing content type.
+
+### Response Rules
+
+If the missing type is reel, every fallback CTA should be about reels only:
+- תראי לי רעיונות לריל
+- בואי נחשוב על רעיון חדש לריל
+
+If the missing type is post, every fallback CTA should be about posts only:
+- תראי לי רעיונות לפוסט
+- בואי נחשוב על רעיון חדש לפוסט
+
+If both reel and post are missing, handle the first selected gap and mention the second one only as background.
+
+### Example: Missing Reel With No Existing Source
+
+השבוע חסר עוד ריל אחד בגאנט.
+
+לא מצאתי ריל מאושר או כמעט מוכן שמתאים להשלים איתו את הגאנט.
+אפשר להתחיל מבנק הרעיונות לריל.
+
+אפשר לענות:
+- תראי לי רעיונות לריל
+- בואי נחשוב על רעיון חדש לריל
+
+### Example: Missing Post With No Existing Source
+
+השבוע חסר עוד פוסט אחד בגאנט.
+
+לא מצאתי פוסט מאושר או כמעט מוכן שמתאים להשלים איתו את הגאנט.
+אפשר להתחיל מבנק הרעיונות לפוסט.
+
+אפשר לענות:
+- תראי לי רעיונות לפוסט
+- בואי נחשוב על רעיון חדש לפוסט
+
+### Reply Handling
+
+If Karen replies yes, choose the first listed option.
+
+If Karen replies with a number, choose that numbered option.
+
+If Karen replies with a full or close content name, match against the currently displayed options. If there is one clear match, choose it. If there are multiple possible matches, ask for clarification.
+
+If Karen replies no, move to the next source in the source order. The conversation should not end after no.
+
+After any content option is chosen, the next step is confirmation, not a gantt write:
+
+סבבה, נלך על "...".
+
+רוצה שאציע תאריך פנוי בגאנט השבוע?
+
+### No Existing Source
+
+If no approved, production, or idea bank source exists for the missing type, offer new idea generation for that same missing type.
+
+Example for reel:
+
+לא מצאתי משהו קיים שמתאים להשלים איתו את החוסר בגאנט.
+
+אפשר להתחיל מרעיון חדש לריל.
+רוצה שאציע 3 כיוונים?
+
+Use post instead of reel when the missing content type is post.
+
+### Implementation Risk To Inspect
+
+Before implementation, verify whether approved content and production content have a reliable content type field.
+
+If content type is missing or unreliable:
+- Do not describe an item as a matching reel or post.
+- Either add a content type field, use an existing reliable column, or keep the source out of the type-specific router.
