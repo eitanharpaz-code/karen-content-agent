@@ -54,6 +54,12 @@ const REQUIRES_SHOOTING_HEBREW_VALUES: Record<string, string> = {
   "לא": "לא",
 };
 
+const CONTENT_TYPE_HEBREW_VALUES: Record<string, string> = {
+  "ריל": "ריל",
+  "פוסט": "פוסט",
+  "סטורי": "סטורי",
+};
+
 const PLATFORM_HEBREW_VALUES: Record<string, string> = {
   "אינסטגרם": "אינסטגרם",
   "טיקטוק": "טיקטוק",
@@ -74,6 +80,10 @@ export const displayCategory = (category: string): string => {
 
 export const displayRequiresShooting = (requiresShooting: string): string => {
   return REQUIRES_SHOOTING_HEBREW_VALUES[requiresShooting] || requiresShooting;
+};
+
+export const displayContentType = (contentType: string | undefined): string => {
+  return CONTENT_TYPE_HEBREW_VALUES[contentType || ""] || contentType || "ריל";
 };
 
 export const displayPlatform = (platform: string): string => {
@@ -144,7 +154,7 @@ export const isEditRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
   const editIndicators = [
     "תשנה", "שנה", "תשני", "שני", "תעדכן", "עדכן", "תעדכני", "עדכני",
-    "תקרא", "קרא", "הטון", "העדיפות",
+    "תקרא", "קרא", "הטון", "העדיפות", "סוג תוכן", "ריל", "פוסט", "סטורי",
     "הקטגוריה", "הסיכום", "סיכום", "בסיכום", "זה לא", "לא נכון", "טעות",
     "אני רוצה", "בא לי", "עדיף", "צריך", "יהיה", "שיהיה",
     "לשנות", "לעדכן", "לקרוא", "change", "update", "edit"
@@ -298,19 +308,35 @@ export const parseEditRequest = (text: string): { field: string; value: string }
       return { field: "tone", value: toneValue };
     }
   }
-
-  // 5. Explicit priority edits - check and return immediately
-  if (normalized.includes("עדיפות") || normalized.includes("priority") ||
-      normalized.includes("רמת עדיפות")) {
-    const priorityValue = findHebrewValue(normalized, PRIORITY_HEBREW_VALUES);
-    if (priorityValue) {
-      // Return immediately - do NOT inspect value for other fields
-      return { field: "priority", value: priorityValue };
+    // 5. Explicit content type edits - check and return immediately
+    if (
+      normalized.includes("סוג תוכן") ||
+      normalized.includes("זה ריל") ||
+      normalized.includes("זה פוסט") ||
+      normalized.includes("זה סטורי") ||
+      normalized.includes("content type")
+    ) {
+      const contentTypeValue = findHebrewValue(normalized, CONTENT_TYPE_HEBREW_VALUES);
+      if (contentTypeValue) {
+        return { field: "contentType", value: contentTypeValue };
+      }
     }
-  }
 
-  // === GENERIC/FUZZY INFERENCE - only used if explicit patterns fail ===
-  // (kept for backwards compatibility with unsupported phrases)
+    // 6. Explicit priority edits - check and return immediately
+    if (
+      normalized.includes("עדיפות") ||
+      normalized.includes("priority") ||
+      normalized.includes("רמת עדיפות")
+    ) {
+      const priorityValue = findHebrewValue(normalized, PRIORITY_HEBREW_VALUES);
+      if (priorityValue) {
+        // Return immediately - do NOT inspect value for other fields
+        return { field: "priority", value: priorityValue };
+      }
+    }
+
+    // === GENERIC/FUZZY INFERENCE - only used if explicit patterns fail ===
+    // (kept for backwards compatibility with unsupported phrases)
 
   // Generic tone inference (only if no explicit field matched)
   if (normalized.includes("רגשי") || normalized.includes("מצחיק") ||
@@ -342,6 +368,9 @@ export const applyEditToDraft = (draft: DraftSummary, edit: { field: string; val
       break;
     case "priority":
       updatedDraft.priority = edit.value as any;
+      break;
+    case "contentType":
+      updatedDraft.contentType = edit.value as any;
       break;
     case "summary":
       updatedDraft.summary = edit.value;

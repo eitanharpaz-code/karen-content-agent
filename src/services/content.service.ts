@@ -13,6 +13,7 @@ export const createContentDraft = async (userInput: string): Promise<ContentIdea
 - Category (קטגוריה בעברית: קפריסין, חתונה, שמלות, כללי, רווקות, רווקים, או על החתונה)
 - Tone (טון בעברית: הסברתי, מצחיק, אותנטי, השראתי, טרנדי, או רגשי)
 - Priority (עדיפות בעברית: גבוה, בינוני, או נמוך)
+- Content Type (סוג תוכן בעברית: ריל, פוסט, או סטורי)
 - Summary (תיאור קצר של התוכן המוצע)
 
 אחרי זה, שאל אם זה בסדר לשמור.`;
@@ -26,6 +27,7 @@ export const createContentDraft = async (userInput: string): Promise<ContentIdea
     const categoryMatch = text.match(/Category[:\s]*([^\n]+)/i);
     const toneMatch = text.match(/Tone[:\s]*([^\n]+)/i);
     const priorityMatch = text.match(/Priority[:\s]*([^\n]+)/i);
+    const contentTypeMatch = text.match(/Content Type[:\s]*([^\n]+)/i);
     const summaryMatch = text.match(/Summary[:\s]*([^\n]+)/i);
 
     // Normalize tone to Hebrew values (Claude might return variations)
@@ -52,6 +54,22 @@ export const createContentDraft = async (userInput: string): Promise<ContentIdea
     };
     priority = priorityMapping[priority.toLowerCase()] || priority;
 
+    // Normalize content type to Hebrew values
+    let contentType = (contentTypeMatch?.[1] || "ריל").trim();
+    const contentTypeMapping: Record<string, string> = {
+      "reel": "ריל",
+      "reels": "ריל",
+      "post": "פוסט",
+      "static post": "פוסט",
+      "carousel": "פוסט",
+      "story": "סטורי",
+      "stories": "סטורי",
+    };
+    contentType = contentTypeMapping[contentType.toLowerCase()] || contentType;
+    if (!["ריל", "פוסט", "סטורי"].includes(contentType)) {
+      contentType = "ריל";
+    }
+
     // Normalize category to Hebrew values
     let category = (categoryMatch?.[1] || "כללי").trim();
     const categoryMapping: Record<string, string> = {
@@ -73,6 +91,7 @@ export const createContentDraft = async (userInput: string): Promise<ContentIdea
       category: category as any,
       tone: tone as any,
       priority: priority as any,
+      contentType: contentType as any,
       summary: (summaryMatch?.[1] || cleanedInput).trim(),
     };
   };
