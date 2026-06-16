@@ -28,10 +28,11 @@ export type PlanningSourceRoutingState = PlanningSourceRoutingInput & {
 
 export type PlanningSourceRoutingReplyResult =
   | {
-      action: "selected";
-      option: PlanningSourceOption;
-      message: string;
-    }
+    action: "selected";
+    source: PlanningSourceKey;
+    option: PlanningSourceOption;
+    message: string;
+  }
   | {
       action: "next_source";
       state: PlanningSourceRoutingState;
@@ -241,12 +242,24 @@ const findOptionByReply = (
   return null;
 };
 
-const buildSelectedMessage = (option: PlanningSourceOption): string =>
-  [
+const buildSelectedMessage = (
+  source: PlanningSourceKey,
+  option: PlanningSourceOption
+): string => {
+  if (source === "ideaBank") {
+    return [
+      `סבבה, נתחיל מהרעיון "${option.title}".`,
+      "",
+      "השלב הבא הוא להפוך אותו לתוכן מאושר לפני שיבוץ בגאנט.",
+    ].join("\n");
+  }
+
+  return [
     `סבבה, נלך על "${option.title}".`,
     "",
     "רוצה שאציע תאריך פנוי בגאנט השבוע?",
   ].join("\n");
+};
 
 export const handlePlanningSourceRoutingReply = (
   state: PlanningSourceRoutingState,
@@ -288,8 +301,9 @@ export const handlePlanningSourceRoutingReply = (
 
     return {
       action: "selected",
+      source: state.activeSource,
       option: firstOption,
-      message: buildSelectedMessage(firstOption),
+      message: buildSelectedMessage(state.activeSource, firstOption),
     };
   }
 
@@ -305,8 +319,9 @@ export const handlePlanningSourceRoutingReply = (
   if (matchedOption) {
     return {
       action: "selected",
+      source: state.activeSource,
       option: matchedOption,
-      message: buildSelectedMessage(matchedOption),
+      message: buildSelectedMessage(state.activeSource, matchedOption),
     };
   }
 

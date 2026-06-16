@@ -113,4 +113,23 @@ const noExistingState = createPlanningSourceRoutingState({
 const noExistingYes = handlePlanningSourceRoutingReply(noExistingState, "כן");
 assert(noExistingYes.action === "new_idea", "yes on empty source offers new idea");
 assert(noExistingYes.message.includes("רעיון חדש לפוסט"), "empty post source stays post-specific");
+const ideaBankState = createPlanningSourceRoutingState({
+  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  missingContentType: "ריל",
+  approvedUnscheduled: [],
+  nearReadyProduction: [],
+  approvedNotStarted: [],
+  ideaBank: [{ contentId: "IDEA-001", title: "רעיון מבנק" }],
+});
+
+const ideaBankSelection = handlePlanningSourceRoutingReply(ideaBankState, "כן");
+assert(ideaBankSelection.action === "selected", "idea bank yes selects first idea");
+assert(
+  ideaBankSelection.action === "selected" && ideaBankSelection.source === "ideaBank",
+  "idea bank selection exposes selected source"
+);
+assert(
+  ideaBankSelection.message.includes("לפני שיבוץ בגאנט"),
+  "idea bank selection does not jump directly to gantt date"
+);
 console.log("\nPlanning source routing scenarios passed.");
