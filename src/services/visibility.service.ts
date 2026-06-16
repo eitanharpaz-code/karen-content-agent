@@ -1,5 +1,6 @@
 import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
 import type { ContentPriorityItem } from "./priority.service";
+import type { PlanningHealthSignal } from "./planning-health.service";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
 
 // Sprint 10: Visibility Intent Detection
@@ -605,14 +606,55 @@ const formatPriorityStatus = (item: ContentPriorityItem): string => {
   return item.priorityLevel;
 };
 
+type WhatsImportantQueueItem =
+  | { kind: "priority"; item: ContentPriorityItem }
+  | { kind: "planning"; signal: PlanningHealthSignal };
+
+const getWhatsImportantQueueRank = (entry: WhatsImportantQueueItem): number => {
+  if (entry.kind === "planning") return 3;
+
+  const item = entry.item;
+  if (item.priorityLevel === "P0" && !item.isOverdueAwaitingDecision) return 0;
+  if (item.isOverdueAwaitingDecision) return 1;
+  if (item.priorityLevel === "P1" || item.priorityLevel === "P2") return 2;
+  if (item.priorityLevel === "P3" || item.priorityLevel === "P4") return 4;
+
+  return 5;
+};
+
+const formatPlanningStatus = (signal: PlanningHealthSignal): string => {
+  switch (signal.type) {
+    case "current_week_missing_reel":
+      return "חסר ריל השבוע";
+    case "current_week_missing_post":
+      return "חסר פוסט השבוע";
+    case "next_week_empty_or_light":
+      return "שבוע הבא דל";
+  }
+};
+
 export const formatPriorityWhatsImportantResponse = (
-  priorityItems: ContentPriorityItem[]
+  priorityItems: ContentPriorityItem[],
+  planningSignals: PlanningHealthSignal[] = []
 ): string => {
   const actionableItems = priorityItems.filter(
     (item) => item.recommendedAction !== "none"
   );
+  const criticalPlanningSignals = planningSignals.filter(
+    (signal) => signal.severity === "critical"
+  );
+  const queueItems: WhatsImportantQueueItem[] = [
+    ...actionableItems.map((item): WhatsImportantQueueItem => ({
+      kind: "priority",
+      item,
+    })),
+    ...criticalPlanningSignals.map((signal): WhatsImportantQueueItem => ({
+      kind: "planning",
+      signal,
+    })),
+  ].sort((a, b) => getWhatsImportantQueueRank(a) - getWhatsImportantQueueRank(b));
 
-  if (actionableItems.length === 0) {
+  if (queueItems.length === 0) {
     return [
       "כרגע אין משהו שנראה דחוף.",
       "אם בא לך להתקדם, הייתי בודקת מה עוד צריך שיבוץ לגאנט.",
@@ -623,23 +665,35 @@ export const formatPriorityWhatsImportantResponse = (
     "הכי חשוב עכשיו:",
   ];
 
-  actionableItems.slice(0, 5).forEach((item, index) => {
-    lines.push(
-      `${index + 1}. ${item.displayTitle} - ${formatPriorityStatus(item)}`
-    );
+  queueItems.slice(0, 5).forEach((entry, index) => {
+    if (entry.kind === "priority") {
+      lines.push(
+        `${index + 1}. ${entry.item.displayTitle} - ${formatPriorityStatus(entry.item)}`
+      );
+      return;
+    }
+
+    lines.push(`${index + 1}. ${entry.signal.message.replace(/[.。]$/, "")}`);
   });
 
-  if (actionableItems.length > 5) {
-    lines.push(`ועוד ${actionableItems.length - 5} דברים שלא הצגתי כדי לא להעמיס.`);
+  if (queueItems.length > 5) {
+    lines.push(`ועוד ${queueItems.length - 5} דברים שלא הצגתי כדי לא להעמיס.`);
   }
 
-  const focus = actionableItems[0];
-  const visibleOverdue = actionableItems
+  const focusEntry = queueItems[0];
+  const focus = focusEntry.kind === "priority" ? focusEntry.item : null;
+  const visibleOverdue = queueItems
     .slice(0, 5)
-    .find((item) => item.isOverdueAwaitingDecision);
-  const focusAction = formatPriorityAction(focus);
+    .find(
+      (entry) =>
+        entry.kind === "priority" && entry.item.isOverdueAwaitingDecision
+    );
+  const visiblePlanning = queueItems
+    .slice(0, 5)
+    .find((entry) => entry.kind === "planning");
+  const focusAction = focus ? formatPriorityAction(focus) : "";
 
-  if (visibleOverdue && !focus.isOverdueAwaitingDecision) {
+  if (visibleOverdue && !focus?.isOverdueAwaitingDecision) {
     lines.push("");
     lines.push("כדי לסגור את האיחור, אפשר לענות:");
     lines.push("* עלה");
@@ -647,7 +701,7 @@ export const formatPriorityWhatsImportantResponse = (
     lines.push("* לארכיון");
   }
 
-  if (focus.isOverdueAwaitingDecision) {
+  if (focus?.isOverdueAwaitingDecision) {
     lines.push("");
     lines.push("הדבר הראשון שהייתי סוגרת:");
     lines.push(focus.reason);
@@ -663,12 +717,25 @@ export const formatPriorityWhatsImportantResponse = (
     lines.push("");
     lines.push("הדבר הראשון שהייתי עושה:");
     lines.push(focusAction);
+  } else if (visiblePlanning?.kind === "planning") {
+    lines.push("");
+    lines.push("אחר כך כדאי לסגור:");
+    lines.push(visiblePlanning.signal.message);
+    lines.push("");
+    lines.push("אפשר לענות:");
+    lines.push(`* ${visiblePlanning.signal.recommendedAction}`);
   }
 
-  if (focus.cta) {
+  if (focus?.cta) {
     lines.push("");
     lines.push("אפשר לענות:");
     lines.push(`* ${focus.cta}`);
+  }
+
+  if (focus && visiblePlanning?.kind === "planning") {
+    lines.push("");
+    lines.push("אחר כך אפשר גם:");
+    lines.push(`* ${visiblePlanning.signal.recommendedAction}`);
   }
 
   return lines.join("\n");
