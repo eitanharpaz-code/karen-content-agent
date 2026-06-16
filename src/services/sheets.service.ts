@@ -464,15 +464,19 @@ export const createProductionTask = async (
   console.log(`[Sprint 6] Step 2: Creating production task in משימות הפקה`);
   console.log(`[Sprint 6] Content_ID: ${contentId}, Task name: ${contentName}`);
 
-  const taskRow = [
-    contentId,           // A - content_id
-    contentName,         // B - שם התוכן
-    "לא",                // C - צולם
-    "לא",                // D - נערך
-    "לא",                // E - קאבר מוכן
-    "",                  // F - דדליין הפקה
-    "",                  // G - הערות
-  ];
+  const timestamp = new Date().toISOString();
+
+const taskRow = [
+  contentId,   // A - content_id
+  contentName, // B - שם התוכן
+  "לא",        // C - צולם
+  "לא",        // D - נערך
+  "לא",        // E - קאבר מוכן
+  "",          // F - דדליין הפקה
+  "",          // G - הערות
+  "",          // H - ready_at
+  timestamp,   // I - updated_at
+];
 
   console.log(`[Sprint 6] createProductionTask -> target="${SHEET_NAMES.productionTasks}", content_id=${contentId}`);
   console.log(`[Sprint 6] createProductionTask -> rowPayload=${JSON.stringify(taskRow)}`);
@@ -702,39 +706,83 @@ ${candidateList}
 // Updates a specific cell to "כן"
 export const updateProductionStatus = async (
   spreadsheetId: string,
-  rowIndex: number, // 1-indexed row number from the sheet
-  columnIndex: number // 1-indexed column number (1=A, 2=B, etc.)
+  rowIndex: number,
+  columnIndex: number
 ): Promise<void> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
   try {
-    const statusColumns = [3, 4, 5]; // C-E are the only allowed status columns
+    const statusColumns = [3, 4, 5];
+
     if (!statusColumns.includes(columnIndex)) {
-      throw new Error(`Invalid status column index ${columnIndex}. May only update C-E.`);
+      throw new Error(
+        `Invalid status column index ${columnIndex}. May only update C-E.`
+      );
     }
-    // Convert column index to letter (1->A, 2->B, etc.)
+
     const columnLetter = String.fromCharCode(64 + columnIndex);
-    const cellAddress = `${columnLetter}${rowIndex}`;
-    const range = `${SHEET_NAMES.productionTasks}!${cellAddress}`;
+    const statusRange =
+      `${SHEET_NAMES.productionTasks}!${columnLetter}${rowIndex}`;
 
-    console.log(`[Sprint 7] Updating exact cell range: ${range} to "כן"`);
-    console.log(`[Sprint 7] Row mapping: requested rowIndex=${rowIndex}, columnIndex=${columnIndex}, address=${cellAddress}`);
+    const timestamp = new Date().toISOString();
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range,
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
+    const updates: Array<{
+      range: string;
+      values: string[][];
+    }> = [
+      {
+        range: statusRange,
         values: [["כן"]],
+      },
+      {
+        range: `${SHEET_NAMES.productionTasks}!I${rowIndex}`,
+        values: [[timestamp]],
+      },
+    ];
+
+    // Editing makes the content ready.
+    // Set ready_at only once.
+    if (columnIndex === 4) {
+      const readyAtResponse =
+        await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${SHEET_NAMES.productionTasks}!H${rowIndex}`,
+        });
+
+      const existingReadyAt =
+        readyAtResponse.data.values?.[0]?.[0]
+          ?.toString()
+          .trim() || "";
+
+      if (!existingReadyAt) {
+        updates.push({
+          range: `${SHEET_NAMES.productionTasks}!H${rowIndex}`,
+          values: [[timestamp]],
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: "USER_ENTERED",
+        data: updates,
       },
     });
 
-    console.log(`[Sprint 7] ✅ Successfully updated ${cellAddress} to "כן"`);
-
+    console.log(
+      `[Sprint 7] Updated ${statusRange}; updated_at=${timestamp}` +
+        (columnIndex === 4 ? "; ready_at checked" : "")
+    );
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[Sprint 7] Failed to update production status: ${errorMessage}`);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+
+    console.error(
+      `[Sprint 7] Failed to update production status: ${errorMessage}`
+    );
+
     throw error;
   }
 };
@@ -770,19 +818,24 @@ export type ProductionTaskRow = {
   deadline: string;
   uploadTime: string;
   notes: string;
+  readyAt: string;
+  updatedAt: string;
 };
 
 // Get all production tasks from משימות הפקה
-export const getAllProductionTasks = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
+export const getAllProductionTasks = async (
+  spreadsheetId: string
+): Promise<ProductionTaskRow[]> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.productionTasks}!A:G`,
+    range: `${SHEET_NAMES.productionTasks}!A:I`,
   });
 
   const values = response.data.values || [];
+
   // Skip header row (row 1)
   return values.slice(1).map((row) => ({
     contentId: row[0] || "",
@@ -796,6 +849,8 @@ export const getAllProductionTasks = async (spreadsheetId: string): Promise<Prod
     deadline: row[5] || "",
     uploadTime: "",
     notes: row[6] || "",
+    readyAt: row[7] || "",
+    updatedAt: row[8] || "",
   }));
 };
 // Get tasks missing filming: filmed != כן
@@ -1134,19 +1189,28 @@ export const updateDeadline = async (
 ): Promise<void> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
+  const timestamp = new Date().toISOString();
 
-  const range = `${SHEET_NAMES.productionTasks}!F${rowIndex}`;
-
-  await sheets.spreadsheets.values.update({
+  await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
-    range,
-    valueInputOption: "USER_ENTERED",
     requestBody: {
-      values: [[deadline]],
+      valueInputOption: "USER_ENTERED",
+      data: [
+        {
+          range: `${SHEET_NAMES.productionTasks}!F${rowIndex}`,
+          values: [[deadline]],
+        },
+        {
+          range: `${SHEET_NAMES.productionTasks}!I${rowIndex}`,
+          values: [[timestamp]],
+        },
+      ],
     },
   });
 
-  console.log(`[Deadline] ✅ Updated deadline for row ${rowIndex} to: ${deadline}`);
+  console.log(
+    `[Deadline] Updated deadline for row ${rowIndex} to ${deadline}; updated_at=${timestamp}`
+  );
 };
 // Find similar content idea in בנק רעיונות for duplicate detection
 export const findSimilarContentIdea = async (
@@ -1387,9 +1451,19 @@ let bestScore = 0;
   // Re-create production task
   const contentId = (matchRow[0] || "").toString();
   const contentShortName = (matchRow[1] || "").toString().split(/\s+/).slice(0, 6).join(" ");
-  await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
-    contentId, contentShortName, "לא", "לא", "לא", "לא", "לא", "לא", "", "", "",
-  ]);
+  const restoredAt = new Date().toISOString();
+
+await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
+  contentId,
+  contentShortName,
+  "לא",
+  "לא",
+  "לא",
+  "",
+  "",
+  "",
+  restoredAt,
+]);
 
   // Delete from archive
   const sheetMeta = await getSpreadsheetMetadata(spreadsheetId);
@@ -1475,8 +1549,16 @@ await appendRowToSheet(spreadsheetId, SHEET_NAMES.approvedContent, [
 
   // 3. פתח שורה במשימות הפקה
 await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
-    actualContentId, name, "לא", "לא", "לא", "", "",
-  ]);
+  actualContentId,
+  name,
+  "לא",
+  "לא",
+  "לא",
+  "",
+  "",
+  "",
+  timestamp,
+]);
 
   // 4. מחק מבנק רעיונות
   await sheets.spreadsheets.values.clear({
@@ -1726,7 +1808,7 @@ ${candidateList}
 export const updateApprovedContentStatusById = async (
   spreadsheetId: string,
   contentId: string,
-  status: "ממתין לצילום" | "ממתין לעריכה" | "מוכן לעלייה" | "פורסם"
+  status: "ממתין לצילום" | "ממתין לעריכה" | "מוכן לעלייה" | "פורסם" | "בוטל"
 ): Promise<boolean> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
@@ -2166,12 +2248,14 @@ export const saveFastTrackContent = async (
   ]);
 
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
-    contentId,
-    shortName,
-    "כן",
-    "כן",
-    "כן",
-    "",
-    "",
-  ]);
+  contentId,
+  shortName,
+  "כן",
+  "כן",
+  "כן",
+  "",
+  "",
+  timestamp,
+  timestamp,
+]);
 };

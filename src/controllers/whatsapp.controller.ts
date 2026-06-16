@@ -109,7 +109,11 @@ import {
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
-import { markInteractionToday } from "../services/daily-brief.service";
+import {
+  fetchOverdueDecisionItems,
+  markInteractionToday,
+} from "../services/daily-brief.service";
+import { detectOverdueDecisionIntent } from "../services/overdue-decision.service";
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
     await sendWhatsAppMessage(to, message);
@@ -196,6 +200,37 @@ const buildGeneralHelpResponse = (): string =>
   ].join("\n");
 
 
+
+const getHebrewDayName = (dateText: string): string => {
+  const parts = dateText.split("/").map((part) => parseInt(part, 10));
+  const [day, month, year] = parts;
+  const fullYear = year < 100 ? 2000 + year : year;
+  const date = new Date(fullYear, month - 1, day);
+
+  return ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"][
+    date.getDay()
+  ];
+};
+
+const markOverdueItemPublished = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<void> => {
+  const rowIndex = await findRowIndexByContentId(spreadsheetId, contentId);
+
+  if (rowIndex !== null) {
+    for (const columnName of ["צולם", "נערך", "קאבר מוכן"]) {
+      const columnIndex = getProductionStatusColumnIndex(columnName);
+      if (columnIndex !== null) {
+        await updateProductionStatus(spreadsheetId, rowIndex, columnIndex);
+      }
+    }
+  }
+
+  await updateApprovedContentStatusById(spreadsheetId, contentId, "פורסם");
+  await updateGanttStatus(spreadsheetId, contentId, "פורסם");
+};
+
 export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   const sender = (req.body.From || req.body.from || "").toString();
   const incomingText = (req.body.Body || req.body.body || "").toString();
@@ -216,6 +251,56 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
+
+      if (pendingQuestion?.questionType === "overdue_reschedule_date") {
+        const { contentId, contentName } = pendingQuestion.context as any;
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const normalizedDate = normalizeUserDateInput(incomingText.trim());
+
+        if (!normalizedDate) {
+          await safeSendWhatsAppMessage(
+            sender,
+            "לא קלטתי תאריך. אפשר לכתוב למשל 18/6."
+          );
+          return res.status(200).json({
+            status: "overdue_reschedule_invalid_date",
+            sender,
+          });
+        }
+
+        const collision = await isGanttDateTaken(spreadsheetId, normalizedDate);
+
+        if (collision.taken && collision.existingContentId !== contentId) {
+          await safeSendWhatsAppMessage(
+            sender,
+            `${normalizedDate} כבר תפוס על ידי "${collision.existingName}". לאיזה תאריך אחר להעביר?`
+          );
+          return res.status(200).json({
+            status: "overdue_reschedule_date_taken",
+            sender,
+          });
+        }
+
+        clearPendingQuestion(sender);
+        await updateGanttRowDate(
+          spreadsheetId,
+          contentId,
+          normalizedDate,
+          getHebrewDayName(normalizedDate)
+        );
+        await sortGanttByDate(spreadsheetId);
+
+        await safeSendWhatsAppMessage(
+          sender,
+          `סגור, העברתי את "${contentName}" ל-${normalizedDate}.`
+        );
+
+        return res.status(200).json({
+          status: "overdue_rescheduled",
+          sender,
+        });
+      }
+
 
     const duplicateSensitivePendingTypes = new Set([
       "gantt_collision",
@@ -1834,6 +1919,8 @@ const thisWeek = ganttUpcoming
       deadline: item.date,
       uploadTime: item.uploadTime || "",
       notes: item.notes || productionTask?.notes || "",
+      readyAt: productionTask?.readyAt || "",
+      updatedAt: productionTask?.updatedAt || "",
       priority: item.priority || productionTask?.priority || "בינוני",
       category: productionTask?.category || "",
       isTrend: item.contentId?.startsWith("TRD-") || productionTask?.isTrend || false,
@@ -1907,7 +1994,153 @@ const notFilmedThisWeek = thisWeek
 // Archive - view list
 // View archive list
     // Archive - move to archive
-if (isViewArchiveCommand(incomingText)) {
+      const overdueDecisionIntent = detectOverdueDecisionIntent(incomingText);
+
+      if (overdueDecisionIntent) {
+        const overdueItems = await fetchOverdueDecisionItems();
+        const overdueItem = overdueItems[0];
+
+        if (overdueItem) {
+          const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+          const contentId = overdueItem.contentId;
+          const contentName = overdueItem.displayTitle;
+
+          if (overdueDecisionIntent.type === "published") {
+            clearPendingQuestion(sender);
+            await markOverdueItemPublished(spreadsheetId, contentId);
+
+            await safeSendWhatsAppMessage(
+              sender,
+              `סגור, סימנתי ש-"${contentName}" עלה. הוא לא יופיע יותר כתזכורת איחור.`
+            );
+
+            return res.status(200).json({
+              status: "overdue_published",
+              sender,
+            });
+          }
+
+          if (overdueDecisionIntent.type === "archive") {
+            clearPendingQuestion(sender);
+            await updateApprovedContentStatusById(
+              spreadsheetId,
+              contentId,
+              "בוטל"
+            );
+            await updateGanttStatus(spreadsheetId, contentId, "בוטל");
+
+            await safeSendWhatsAppMessage(
+              sender,
+              `סגור, סימנתי את "${contentName}" כבוטל. הוא לא יופיע יותר בתזכורות.`
+            );
+
+            return res.status(200).json({
+              status: "overdue_archived",
+              sender,
+            });
+          }
+
+          if (overdueDecisionIntent.type === "undecided") {
+            await safeSendWhatsAppMessage(
+              sender,
+              [
+                "אין בעיה. כדי לסגור את זה, אפשר לבחור אחת משלוש אפשרויות:",
+                "* עלה",
+                "* לדחות ל-18/6",
+                "* לארכיון",
+              ].join("\n")
+            );
+
+            return res.status(200).json({
+              status: "overdue_decision_still_open",
+              sender,
+            });
+          }
+
+          if (overdueDecisionIntent.type === "reschedule") {
+            if (!overdueDecisionIntent.dateText) {
+              storePendingQuestion(sender, {
+                questionType: "overdue_reschedule_date",
+                context: { contentId, contentName },
+              });
+
+              await safeSendWhatsAppMessage(
+                sender,
+                `לאיזה תאריך להעביר את "${contentName}"?`
+              );
+
+              return res.status(200).json({
+                status: "overdue_reschedule_ask_date",
+                sender,
+              });
+            }
+
+            const normalizedDate = normalizeUserDateInput(
+              overdueDecisionIntent.dateText
+            );
+
+            if (!normalizedDate) {
+              storePendingQuestion(sender, {
+                questionType: "overdue_reschedule_date",
+                context: { contentId, contentName },
+              });
+
+              await safeSendWhatsAppMessage(
+                sender,
+                "לא קלטתי תאריך. אפשר לכתוב למשל 18/6."
+              );
+
+              return res.status(200).json({
+                status: "overdue_reschedule_invalid_date",
+                sender,
+              });
+            }
+
+            const collision = await isGanttDateTaken(
+              spreadsheetId,
+              normalizedDate
+            );
+
+            if (collision.taken && collision.existingContentId !== contentId) {
+              storePendingQuestion(sender, {
+                questionType: "overdue_reschedule_date",
+                context: { contentId, contentName },
+              });
+
+              await safeSendWhatsAppMessage(
+                sender,
+                `${normalizedDate} כבר תפוס על ידי "${collision.existingName}". לאיזה תאריך אחר להעביר?`
+              );
+
+              return res.status(200).json({
+                status: "overdue_reschedule_date_taken",
+                sender,
+              });
+            }
+
+            clearPendingQuestion(sender);
+            await updateGanttRowDate(
+              spreadsheetId,
+              contentId,
+              normalizedDate,
+              getHebrewDayName(normalizedDate)
+            );
+            await sortGanttByDate(spreadsheetId);
+
+            await safeSendWhatsAppMessage(
+              sender,
+              `סגור, העברתי את "${contentName}" ל-${normalizedDate}.`
+            );
+
+            return res.status(200).json({
+              status: "overdue_rescheduled",
+              sender,
+            });
+          }
+        }
+      }
+
+      if (isViewArchiveCommand(incomingText)) {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       const archiveList = await getArchiveList(spreadsheetId);
       if (archiveList.length === 0) {

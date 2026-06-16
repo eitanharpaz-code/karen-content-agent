@@ -145,6 +145,71 @@ assert(
   "morning omits the repeated shortcuts section"
 );
 
+
+// Morning 2b: overdue decision sits after active P0 and before P1.
+const morning2bItems = makeItems(
+  [
+    {
+      contentId: "TODAY-ACTIVE",
+      name: "עולה היום",
+      date: dateInDays(0),
+      status: "מוכן",
+    },
+    {
+      contentId: "OVERDUE-DECISION",
+      name: "מחכה להחלטה",
+      date: dateInDays(-1),
+      status: "מוכן",
+    },
+    {
+      contentId: "P1-AFTER",
+      name: "צילום למחר אחרי ההחלטה",
+      date: dateInDays(1),
+      status: "בתכנון",
+    },
+  ],
+  [
+    {
+      contentId: "TODAY-ACTIVE",
+      taskName: "עולה היום",
+      filmed: "כן",
+      edited: "כן",
+      coverReady: "כן",
+    },
+    {
+      contentId: "OVERDUE-DECISION",
+      taskName: "מחכה להחלטה",
+      filmed: "כן",
+      edited: "כן",
+      coverReady: "כן",
+    },
+    {
+      contentId: "P1-AFTER",
+      taskName: "צילום למחר אחרי ההחלטה",
+      filmed: "לא",
+      edited: "לא",
+      coverReady: "לא",
+    },
+  ]
+);
+const morning2b = buildMorning(morning2bItems);
+assert(
+  morning2b?.includes("*צריך לסגור*") === true,
+  "overdue decision appears in the morning brief"
+);
+assert(
+  morning2b?.includes('"מחכה להחלטה" היה אמור לעלות אתמול') === true,
+  "overdue copy explains the missed upload"
+);
+assert(
+  morning2b?.includes("* לדחות ל-[תאריך]") === true,
+  "overdue copy offers a reschedule endpoint"
+);
+assert(
+  morning2b?.includes("צילום למחר אחרי ההחלטה") === false,
+  "overdue decision is selected before P1"
+);
+
 // Morning 3: P1 and P2 keep their engine order.
 const morning3Items = makeItems(
   [

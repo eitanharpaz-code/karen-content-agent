@@ -72,13 +72,13 @@ assert(
   afternoon1?.includes('העליתי את "מוכן להיום"') === true,
   "ready P0 includes the upload CTA"
 );
-const overdueReady = buildAfternoon(
+const firstDayOverdue = buildAfternoon(
   makeItems(
     [
       {
         contentId: "OVERDUE",
         name: "מוכן באיחור",
-        date: dateInDays(-2),
+        date: dateInDays(-1),
         status: "מוכן",
       },
     ],
@@ -95,8 +95,39 @@ const overdueReady = buildAfternoon(
   false
 );
 assert(
-  overdueReady?.includes("היום אמור לעלות:") === true,
-  "ready overdue P0 currently keeps the same scheduler urgency phrase"
+  firstDayOverdue?.includes("נשאר רק לסגור מה קרה") === true,
+  "first-day overdue item gets one concise decision reminder"
+);
+assert(
+  firstDayOverdue?.includes("* לארכיון") === true,
+  "overdue reminder includes all decision endpoints"
+);
+
+const olderOverdue = buildAfternoon(
+  makeItems(
+    [
+      {
+        contentId: "OLDER-OVERDUE",
+        name: "איחור ישן",
+        date: dateInDays(-2),
+        status: "מוכן",
+      },
+    ],
+    [
+      {
+        contentId: "OLDER-OVERDUE",
+        taskName: "איחור ישן",
+        filmed: "כן",
+        edited: "כן",
+        coverReady: "לא",
+      },
+    ]
+  ),
+  false
+);
+assert(
+  olderOverdue === null,
+  "older overdue items do not create repeated afternoon messages"
 );
 
 // Afternoon 2: P3 is selected before P4 when no P0/P1/P2 action exists.
@@ -219,6 +250,46 @@ const p0NotReady = buildAfternoon(
 assert(
   p0NotReady === null,
   "Stage B does not add a new P0-not-ready afternoon flow"
+);
+
+const p0NotReadyWithOverdue = buildAfternoon(
+  makeItems(
+    [
+      {
+        contentId: "P0-NOT-READY-2",
+        name: "לא מוכן להיום לפני איחור",
+        date: dateInDays(0),
+        status: "בתכנון",
+      },
+      {
+        contentId: "OVERDUE-BEHIND-P0",
+        name: "איחור מאחורי תוכן היום",
+        date: dateInDays(-1),
+        status: "מוכן",
+      },
+    ],
+    [
+      {
+        contentId: "P0-NOT-READY-2",
+        taskName: "לא מוכן להיום לפני איחור",
+        filmed: "לא",
+        edited: "לא",
+        coverReady: "לא",
+      },
+      {
+        contentId: "OVERDUE-BEHIND-P0",
+        taskName: "איחור מאחורי תוכן היום",
+        filmed: "כן",
+        edited: "כן",
+        coverReady: "כן",
+      },
+    ]
+  ),
+  false
+);
+assert(
+  p0NotReadyWithOverdue === null,
+  "overdue reminder does not leapfrog an active P0"
 );
 
 const lightGanttWithoutPlanning = buildAfternoon([], true);

@@ -110,6 +110,8 @@ const formatAction = (item: ContentPriorityItem): string => {
       return `לשבץ את "${item.displayTitle}" לגאנט`;
     case "verify-upload":
       return `לוודא ש-"${item.displayTitle}" עולה`;
+    case "resolve-overdue":
+      return "";
     case "cover":
       return `לסגור קאבר ל-"${item.displayTitle}"`;
     case "none":
@@ -151,6 +153,41 @@ export const selectMorningFocus = (
   };
 };
 
+export const getOverdueDecisionItems = (
+  priorityItems: ContentPriorityItem[]
+): ContentPriorityItem[] =>
+  priorityItems.filter((item) => item.isOverdueAwaitingDecision);
+
+const formatOverdueTiming = (item: ContentPriorityItem): string =>
+  item.daysUntilUpload === -1
+    ? "אתמול"
+    : `לפני ${Math.abs(item.daysUntilUpload || 0)} ימים`;
+
+const appendOverdueDecision = (
+  lines: string[],
+  item: ContentPriorityItem,
+  additionalCount: number
+): void => {
+  lines.push("", "*צריך לסגור*");
+  lines.push(
+    `"${item.displayTitle}" היה אמור לעלות ${formatOverdueTiming(item)} ולא סומן כפורסם.`
+  );
+  lines.push("");
+  lines.push("כדי לסגור, אפשר לענות:");
+  lines.push("* עלה");
+  lines.push("* לדחות ל-[תאריך]");
+  lines.push("* לארכיון");
+
+  if (additionalCount > 0) {
+    lines.push(
+      "",
+      additionalCount === 1
+        ? "יש עוד תוכן אחד שמחכה להחלטה."
+        : `יש עוד ${additionalCount} תכנים שמחכים להחלטה.`
+    );
+  }
+};
+
 export const buildMorningBriefFromData = ({
   priorityItems,
   futureHoles,
@@ -158,7 +195,10 @@ export const buildMorningBriefFromData = ({
 }: MorningBriefData): string | null => {
   const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
 
-  const p0Items = priorityItems.filter((i) => i.priorityLevel === "P0");
+  const p0Items = priorityItems.filter(
+    (i) => i.priorityLevel === "P0" && !i.isOverdueAwaitingDecision
+  );
+  const overdueItems = getOverdueDecisionItems(priorityItems);
   const { primary, secondary } = selectMorningFocus(priorityItems);
 
   if (p0Items.length > 0) {
@@ -197,12 +237,33 @@ export const buildMorningBriefFromData = ({
     ].join("\n");
   }
 
-  lines.push("", "*פוקוס להיום*");
-  lines.push(`* ${formatMorningPrimaryAction(primary, p0Items.length)}`);
+  const selectedOverdue =
+    primary.isOverdueAwaitingDecision
+      ? primary
+      : secondary?.isOverdueAwaitingDecision
+        ? secondary
+        : null;
+  const regularItems = [primary, secondary].filter(
+    (item): item is ContentPriorityItem =>
+      Boolean(item && !item.isOverdueAwaitingDecision)
+  );
 
-  if (secondary) {
+  if (regularItems[0]) {
+    lines.push("", "*פוקוס להיום*");
+    lines.push(`* ${formatMorningPrimaryAction(regularItems[0], p0Items.length)}`);
+  }
+
+  if (selectedOverdue) {
+    appendOverdueDecision(
+      lines,
+      selectedOverdue,
+      Math.max(0, overdueItems.length - 1)
+    );
+  }
+
+  if (regularItems[1]) {
     lines.push("", "*אחר כך, אם יש לך זמן*");
-    lines.push(`* ${formatAction(secondary)}`);
+    lines.push(`* ${formatAction(regularItems[1])}`);
   }
 
   if (
@@ -212,9 +273,11 @@ export const buildMorningBriefFromData = ({
     lines.push("", `ברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`);
   }
 
-  lines.push("", "*אפשר לענות*");
-  lines.push(`* ${primary.cta}`);
-  if (secondary) lines.push(`* ${secondary.cta}`);
+  const replyItems = regularItems.filter((item) => item.cta.trim() !== "");
+  if (replyItems.length > 0) {
+    lines.push("", "*אפשר לענות*");
+    replyItems.forEach((item) => lines.push(`* ${item.cta}`));
+  }
 
 
   return lines.join("\n");
@@ -231,6 +294,14 @@ export const buildMorningBrief = async (): Promise<string | null> => {
   });
 };
 
+
+export const fetchOverdueDecisionItems = async (): Promise<
+  ContentPriorityItem[]
+> => {
+  const { priorityItems } = await fetchBriefData();
+  return getOverdueDecisionItems(priorityItems);
+};
+
 // ===== Afternoon Reminder =====
 export type AfternoonReminderData = {
   priorityItems: ContentPriorityItem[];
@@ -242,14 +313,26 @@ export const selectAfternoonFocus = (
   priorityItems: ContentPriorityItem[],
   ganttIsLight: boolean
 ): ContentPriorityItem | null => {
-  const p0Ready = priorityItems.find(
+  const activeP0Items = priorityItems.filter(
     (item) =>
       item.priorityLevel === "P0" &&
-      item.recommendedAction === "verify-upload" &&
+      !item.isOverdueAwaitingDecision &&
       isActionable(item)
+  );
+  const p0Ready = activeP0Items.find(
+    (item) => item.recommendedAction === "verify-upload"
   );
 
   if (p0Ready) return p0Ready;
+  if (activeP0Items.length > 0) return null;
+
+  const firstDayOverdue = priorityItems.find(
+    (item) =>
+      item.isOverdueAwaitingDecision &&
+      item.daysUntilUpload === -1
+  );
+
+  if (firstDayOverdue) return firstDayOverdue;
 
   const productionAction = priorityItems.find(
     (item) =>
@@ -279,6 +362,7 @@ export const buildAfternoonReminderFromData = ({
 
   if (
     focus?.priorityLevel === "P0" &&
+    !focus.isOverdueAwaitingDecision &&
     focus.recommendedAction === "verify-upload"
   ) {
     lines.push("היום אמור לעלות:");
@@ -288,6 +372,18 @@ export const buildAfternoonReminderFromData = ({
     lines.push("");
     lines.push("אם כבר העלית, תכתבי לי:");
     lines.push(`* ${focus.cta}`);
+    return lines.join("\n");
+  }
+
+  if (focus?.isOverdueAwaitingDecision) {
+    lines.push(
+      `נשאר רק לסגור מה קרה עם "${focus.displayTitle}".`
+    );
+    lines.push("");
+    lines.push("אפשר לענות:");
+    lines.push("* עלה");
+    lines.push("* לדחות ל-[תאריך]");
+    lines.push("* לארכיון");
     return lines.join("\n");
   }
 
@@ -331,7 +427,10 @@ export const buildAfternoonReminder = async (): Promise<string | null> => {
   twoWeeksFromNow.setDate(today.getDate() + 14);
   const id = getSpreadsheetId();
   const twoWeekGantt = await getGanttByDateRange(id, today, twoWeeksFromNow);
-  const ganttIsLight = twoWeekGantt.filter((i) => i.status !== "פורסם").length < 3;
+  const ganttIsLight =
+    twoWeekGantt.filter(
+      (item) => !["פורסם", "בוטל", "ארכיון"].includes(item.status)
+    ).length < 3;
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
   return buildAfternoonReminderFromData({

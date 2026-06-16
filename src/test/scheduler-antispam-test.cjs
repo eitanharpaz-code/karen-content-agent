@@ -74,6 +74,21 @@ const run = async () => {
       "ready P0 urgency phrase bypasses interaction suppression"
     );
 
+    afternoonMessage = "נשאר רק לסגור מה קרה עם תוכן באיחור";
+    interactedToday = true;
+    await scheduledCallbacks[1]();
+    assert(
+      sentMessages.length === 1,
+      "overdue decision reminder is suppressed after interaction"
+    );
+
+    interactedToday = false;
+    await scheduledCallbacks[1]();
+    assert(
+      sentMessages.length === 2,
+      "overdue decision reminder sends once when there was no interaction"
+    );
+
     console.log("\nScheduler anti-spam scenarios passed.");
   } finally {
     Module._load = originalLoad;
