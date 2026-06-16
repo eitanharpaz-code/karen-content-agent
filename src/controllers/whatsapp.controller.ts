@@ -92,6 +92,7 @@ import {
   isQuestionLikeMessage,
   extractPriorityFromQuery,
   formatWhatsImportantResponse,
+  formatPriorityWhatsImportantResponse,
 formatPriorityFilterResponse,
   extractCategoryAndStage,
  formatCategoryStageResponse,
@@ -111,6 +112,7 @@ import {
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
 import {
   fetchOverdueDecisionItems,
+  fetchPriorityItems,
   markInteractionToday,
 } from "../services/daily-brief.service";
 import { detectOverdueDecisionIntent } from "../services/overdue-decision.service";
@@ -1864,92 +1866,13 @@ const replyText = [
             break;
           }
           case "whats_important": {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+              const priorityItems = await fetchPriorityItems();
+              const replyText = formatPriorityWhatsImportantResponse(priorityItems);
 
-  const tenDaysFromNow = new Date(today);
-  tenDaysFromNow.setDate(today.getDate() + 10);
-  tenDaysFromNow.setHours(23, 59, 59, 999);
+              await safeSendWhatsAppMessage(sender, replyText);
 
-const allGanttStart = new Date(2000, 0, 1);
-const allGanttEnd = new Date(2100, 11, 31);
-
-const [allTasks, ganttUpcoming, allGanttItems] = await Promise.all([
-  getAllProductionTasksWithPriority(spreadsheetId),
-  getGanttByDateRange(spreadsheetId, today, tenDaysFromNow),
-  getGanttByDateRange(spreadsheetId, allGanttStart, allGanttEnd),
-]);
-
-const productionById = new Map(
-  allTasks.map((task) => [task.contentId, task])
-);
-
-const ganttContentIds = new Set(
-  allGanttItems
-    .map((item) => item.contentId)
-    .filter(Boolean)
-);
-
-const productionWithoutGantt = allTasks.filter(
-  (task) => task.contentId && !ganttContentIds.has(task.contentId)
-);
-
-const thisWeek = ganttUpcoming
-  .filter((item) => item.status !== "פורסם")
-  .map((item) => {
-    const productionTask = productionById.get(item.contentId);
-    const ganttStatus = item.status || "";
-
-    const ganttLooksReady =
-      ganttStatus === "מוכן" ||
-      ganttStatus === "פורסם" ||
-      ganttStatus === "בזמן אמת";
-
-    const fallbackProductionStatus = ganttLooksReady ? "כן" : "לא";
-
-    return {
-      contentId: item.contentId,
-      taskName: item.name,
-      needsText: productionTask?.needsText || "לא",
-      filmed: productionTask?.filmed || fallbackProductionStatus,
-      edited: productionTask?.edited || fallbackProductionStatus,
-      coverReady: productionTask?.coverReady || fallbackProductionStatus,
-      copyReady: productionTask?.copyReady || "כן",
-      uploaded: item.status === "פורסם" ? "כן" : "לא",
-      deadline: item.date,
-      uploadTime: item.uploadTime || "",
-      notes: item.notes || productionTask?.notes || "",
-      readyAt: productionTask?.readyAt || "",
-      updatedAt: productionTask?.updatedAt || "",
-      priority: item.priority || productionTask?.priority || "בינוני",
-      category: productionTask?.category || "",
-      isTrend: item.contentId?.startsWith("TRD-") || productionTask?.isTrend || false,
-      deadlineDate: null,
-      deadlineDayName: item.day,
-    };
-  });
-const highNotUploaded: any[] = [];
-const stuck = allTasks.filter((t) => t.filmed === "כן" && t.edited !== "כן" && !t.isTrend);
-const trends = allTasks.filter((t) => t.isTrend && t.uploaded !== "כן");
-
-const notFilmedThisWeek = thisWeek
-  .filter((item) => item.filmed !== "כן")
-  .map((item) => ({
-    taskName: item.taskName,
-    deadlineDayName: item.deadlineDayName,
-  }));
-            const replyText = formatWhatsImportantResponse(
-  highNotUploaded,
-  stuck,
-  trends,
-  thisWeek,
-  notFilmedThisWeek,
-  productionWithoutGantt
-);
-            await safeSendWhatsAppMessage(sender, replyText);
-
-            return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
-          }
+              return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
+            }
           case "priority_filter": {
             const priority = extractPriorityFromQuery(incomingText);
             if (!priority) {

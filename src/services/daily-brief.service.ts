@@ -302,6 +302,11 @@ export const fetchOverdueDecisionItems = async (): Promise<
   return getOverdueDecisionItems(priorityItems);
 };
 
+export const fetchPriorityItems = async (): Promise<ContentPriorityItem[]> => {
+  const { priorityItems } = await fetchBriefData();
+  return priorityItems;
+};
+
 // ===== Afternoon Reminder =====
 export type AfternoonReminderData = {
   priorityItems: ContentPriorityItem[];

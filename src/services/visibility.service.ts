@@ -1,4 +1,5 @@
 import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
+import type { ContentPriorityItem } from "./priority.service";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
 
 // Sprint 10: Visibility Intent Detection
@@ -573,6 +574,106 @@ const shortenTaskName = (name: string, maxWords: number = 6): string => {
   if (words.length <= maxWords) return name;
   return words.slice(0, maxWords).join(" ") + "...";
 };
+
+const formatPriorityAction = (item: ContentPriorityItem): string => {
+  switch (item.recommendedAction) {
+    case "verify-upload":
+      return "לוודא שהוא עולה";
+    case "resolve-overdue":
+      return "להחליט: עלה / לדחות ל-[תאריך] / לארכיון";
+    case "film":
+      return `לצלם את "${item.displayTitle}"`;
+    case "edit":
+      return `לערוך את "${item.displayTitle}"`;
+    case "cover":
+      return `לסגור קאבר ל-"${item.displayTitle}"`;
+    case "schedule":
+      return `לשבץ את "${item.displayTitle}" לגאנט`;
+    case "none":
+      return "";
+  }
+};
+
+const formatPriorityStatus = (item: ContentPriorityItem): string => {
+  if (item.isOverdueAwaitingDecision) return "צריך החלטה";
+  if (item.priorityLevel === "P0" && item.isReadyToUpload) return "מוכן לעלייה היום";
+  if (item.priorityLevel === "P0") return "עולה היום ולא מוכן";
+  if (item.recommendedAction === "film") return "חסר צילום";
+  if (item.recommendedAction === "edit") return "חסר עריכה";
+  if (item.recommendedAction === "cover") return "חסר קאבר";
+  if (item.recommendedAction === "schedule") return "צריך שיבוץ";
+  return item.priorityLevel;
+};
+
+export const formatPriorityWhatsImportantResponse = (
+  priorityItems: ContentPriorityItem[]
+): string => {
+  const actionableItems = priorityItems.filter(
+    (item) => item.recommendedAction !== "none"
+  );
+
+  if (actionableItems.length === 0) {
+    return [
+      "כרגע אין משהו שנראה דחוף.",
+      "אם בא לך להתקדם, הייתי בודקת מה עוד צריך שיבוץ לגאנט.",
+    ].join("\n");
+  }
+
+  const lines: string[] = [
+    "הכי חשוב עכשיו:",
+  ];
+
+  actionableItems.slice(0, 5).forEach((item, index) => {
+    lines.push(
+      `${index + 1}. ${item.displayTitle} - ${formatPriorityStatus(item)}`
+    );
+  });
+
+  if (actionableItems.length > 5) {
+    lines.push(`ועוד ${actionableItems.length - 5} דברים שלא הצגתי כדי לא להעמיס.`);
+  }
+
+  const focus = actionableItems[0];
+  const visibleOverdue = actionableItems
+    .slice(0, 5)
+    .find((item) => item.isOverdueAwaitingDecision);
+  const focusAction = formatPriorityAction(focus);
+
+  if (visibleOverdue && !focus.isOverdueAwaitingDecision) {
+    lines.push("");
+    lines.push("כדי לסגור את האיחור, אפשר לענות:");
+    lines.push("* עלה");
+    lines.push("* לדחות ל-[תאריך]");
+    lines.push("* לארכיון");
+  }
+
+  if (focus.isOverdueAwaitingDecision) {
+    lines.push("");
+    lines.push("הדבר הראשון שהייתי סוגרת:");
+    lines.push(focus.reason);
+    lines.push("");
+    lines.push("אפשר לענות:");
+    lines.push("* עלה");
+    lines.push("* לדחות ל-[תאריך]");
+    lines.push("* לארכיון");
+    return lines.join("\n");
+  }
+
+  if (focusAction) {
+    lines.push("");
+    lines.push("הדבר הראשון שהייתי עושה:");
+    lines.push(focusAction);
+  }
+
+  if (focus.cta) {
+    lines.push("");
+    lines.push("אפשר לענות:");
+    lines.push(`* ${focus.cta}`);
+  }
+
+  return lines.join("\n");
+};
+
 export const formatWhatsImportantResponse = (
   highPriorityNotUploaded: ProductionTaskRowExtended[],
   stuckTasks: ProductionTaskRowExtended[],
