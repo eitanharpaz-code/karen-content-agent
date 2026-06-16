@@ -1059,64 +1059,73 @@ ${candidateList}
 // Get content metadata from both בנק רעיונות and תכנים שאושרו.
 // Approved content is important because once an idea moves to production,
 // it is removed from בנק רעיונות.
-export const getContentIdeasWithPriority = async (spreadsheetId: string): Promise<Map<string, { priority: string; category: string }>> => {
+export const getContentIdeasWithPriority = async (
+  spreadsheetId: string
+): Promise<Map<string, { priority: string; category: string; contentType: string }>> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
   const [ideasResponse, approvedResponse] = await Promise.all([
     sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${SHEET_NAMES.contentLibrary}!A:F`,
+      range: `${SHEET_NAMES.contentLibrary}!A:L`,
     }),
     sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${SHEET_NAMES.approvedContent}!A:F`,
+      range: `${SHEET_NAMES.approvedContent}!A:K`,
     }),
   ]);
 
-  const map = new Map<string, { priority: string; category: string }>();
+  const map = new Map<string, { priority: string; category: string; contentType: string }>();
 
-  const addRowsToMap = (values: any[][]) => {
+  const addRowsToMap = (values: any[][], contentTypeIndex: number) => {
     values.slice(1).forEach((row) => {
       const contentId = (row[0] || "").toString().trim();
       const category = (row[3] || "").toString().trim();
       const priority = (row[5] || "בינוני").toString().trim();
+      const contentType = (row[contentTypeIndex] || "ריל").toString().trim();
 
       if (contentId) {
-        map.set(contentId, { priority, category });
+        map.set(contentId, { priority, category, contentType });
       }
     });
   };
 
-  addRowsToMap(ideasResponse.data.values || []);
-  addRowsToMap(approvedResponse.data.values || []);
+  addRowsToMap(ideasResponse.data.values || [], 11);
+  addRowsToMap(approvedResponse.data.values || [], 10);
 
   return map;
 };
 
-// Extended task row with priority and category from בנק רעיונות
+// Extended task row with priority, category, and content type from content metadata
 export type ProductionTaskRowExtended = ProductionTaskRow & {
   priority: string;
   category: string;
+  contentType: string;
   isTrend: boolean;
   deadlineDate: Date | null;
   deadlineDayName: string;
 };
 
-// Get all production tasks with priority from בנק רעיונות
-export const getAllProductionTasksWithPriority = async (spreadsheetId: string): Promise<ProductionTaskRowExtended[]> => {
+// Get all production tasks with priority from content metadata
+export const getAllProductionTasksWithPriority = async (
+  spreadsheetId: string
+): Promise<ProductionTaskRowExtended[]> => {
   const [tasks, ideasMap] = await Promise.all([
     getAllProductionTasks(spreadsheetId),
     getContentIdeasWithPriority(spreadsheetId),
   ]);
-return tasks.map((task) => {
+
+  return tasks.map((task) => {
     const idea = ideasMap.get(task.contentId);
     const deadlineDate = parseDateFromSheet(task.deadline);
     const deadlineDayName = deadlineDate ? getHebrewDayName(deadlineDate) : "";
+
     return {
       ...task,
       priority: idea?.priority || "בינוני",
       category: idea?.category || "",
+      contentType: idea?.contentType || "ריל",
       isTrend: task.contentId.startsWith("TRD-"),
       deadlineDate,
       deadlineDayName,
