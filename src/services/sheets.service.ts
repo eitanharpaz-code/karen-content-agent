@@ -397,7 +397,8 @@ export const saveContentIdea = async (
   summary: string,
   category: string,
   tone: string,
-  priority: string
+  priority: string,
+  contentType: string = "ריל"
 ): Promise<void> => {
   console.log(`[Sprint 6] Step 1: Saving content idea to בנק רעיונות`);
   console.log(`[Sprint 6] Content_ID: ${contentId}`);
@@ -422,6 +423,7 @@ export const saveContentIdea = async (
     "רעיון",               // I - סטטוס
     "",                    // J - הערות
     new Date().toISOString(), // K - timestamp
+    contentType || "ריל",      // L - סוג תוכן
   ];
 
   console.log(`[Sprint 6] saveContentIdea -> target="${SHEET_NAMES.contentLibrary}", content_id=${contentId}`);
@@ -429,7 +431,7 @@ export const saveContentIdea = async (
 
   // For בנק רעיונות, do NOT use values.append.
   // Google Sheets may detect a table starting at G and append to G:Q.
-  // Instead, find the next non-empty row and write explicitly to A:K.
+  // Instead, find the next non-empty row and write explicitly to A:L.
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -445,7 +447,7 @@ export const saveContentIdea = async (
   }, 0);
 
   const nextRow = lastNonEmptyIndex + 2;
-  const targetRange = `'${SHEET_NAMES.contentLibrary}'!A${nextRow}:K${nextRow}`;
+  const targetRange = `'${SHEET_NAMES.contentLibrary}'!A${nextRow}:L${nextRow}`;
 
   console.log(`[Sprint 6] saveContentIdea -> explicit targetRange=${targetRange}`);
 

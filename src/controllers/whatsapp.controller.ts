@@ -1370,7 +1370,8 @@ ${draft.summary}
               pendingDraft.summary,
               pendingDraft.category,
               pendingDraft.tone,
-              pendingDraft.priority
+              pendingDraft.priority,
+              pendingDraft.contentType || "ריל"
             );
             console.log(`[Sprint 6 Workflow] ✅ PRIMARY SHEET (בנק רעיונות) write succeeded`);
           } catch (contentError) {
