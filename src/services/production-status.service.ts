@@ -230,6 +230,7 @@ const findAllProductionStatusMatches = (message: string): StatusPatternMatch[] =
 };
 
 const STATUS_PREFIX_CLEANUP = /^(?:מוכן|מוכנים|סיימתי|סיימנו|סיימת|סיימתם|סיימתן)\s*/i;
+const STATUS_SUFFIX_CLEANUP = /\s*(?:עלה(?:\s+לאוויר)?|הועלה|פורסם|יצא(?:\s+לאוויר)?)\s*$/i;
 
 /**
  * Expand detected status types with their production dependencies.
@@ -312,13 +313,16 @@ const extractContentName = (message: string, afterIndex: number): string => {
   let cleaned = afterStatusText;
 
   if (!cleaned) {
-    return normalizeHebrewText(message.trim());
+      return normalizeHebrewText(
+        message.trim().replace(STATUS_SUFFIX_CLEANUP, "").trim()
+      );
   }
 
   cleaned = cleaned.replace(STATUS_PREFIX_CLEANUP, "").trim();
   cleaned = cleaned.replace(/^(?:ל(?:־)?|עבור|בשביל|על|את)\s*/i, "").trim();
   cleaned = cleaned.replace(/^(?:ה|את|על|של|שלי|שלך)\s+/i, "").trim();
   cleaned = cleaned.replace(/^['"]|['"]$/g, "").trim();
+    cleaned = cleaned.replace(STATUS_SUFFIX_CLEANUP, "").trim();
 
   // Extract content after " על " or " עם " (mid-text separators for content topics)
   // e.g., "סרטון חדש על סיור לוקיישנים" → "סיור לוקיישנים"
