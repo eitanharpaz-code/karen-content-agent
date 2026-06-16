@@ -1508,7 +1508,7 @@ export const approveContentForProduction = async (
   // 1. מצא את הרעיון בבנק רעיונות
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+    range: `${SHEET_NAMES.contentLibrary}!A:L`,
   });
 
   const rows = response.data.values || [];
@@ -1547,12 +1547,13 @@ export const approveContentForProduction = async (
   const priority = (row[5] || "").toString().trim();
   const collab = (row[7] || "").toString().trim();
   const notes = (row[9] || "").toString().trim();
+  const contentType = (row[11] || "ריל").toString().trim();
   const timestamp = new Date().toISOString();
 
   // 2. הוסף לתכנים שאושרו
 await appendRowToSheet(spreadsheetId, SHEET_NAMES.approvedContent, [
     actualContentId, name, summary, category, tone, priority,
-    "ממתין לצילום", collab, notes, timestamp,
+    "ממתין לצילום", collab, notes, timestamp, contentType || "ריל",
   ]);
 
   // 3. פתח שורה במשימות הפקה
@@ -1571,7 +1572,7 @@ await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
   // 4. מחק מבנק רעיונות
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A${rowIndex + 1}:K${rowIndex + 1}`,
+    range: `${SHEET_NAMES.contentLibrary}!A${rowIndex + 1}:L${rowIndex + 1}`,
   });
 
   return { success: true, name, contentId: actualContentId };
