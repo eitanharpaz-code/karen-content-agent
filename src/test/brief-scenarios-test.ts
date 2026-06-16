@@ -210,6 +210,45 @@ assert(
   "overdue decision is selected before P1"
 );
 
+// Morning 2c: planning health appears as background without replacing focus.
+const morning2c = buildMorningBriefFromData({
+  priorityItems: morning2Items,
+  futureHoles: [],
+  monthName: "יוני",
+  planningSignals: [
+    {
+      type: "current_week_missing_reel",
+      severity: "critical",
+      missingCount: 1,
+      message: "השבוע חסר עוד ריל אחד בגאנט.",
+      recommendedAction: "בואי נשלים את השבוע",
+    },
+    {
+      type: "current_week_missing_post",
+      severity: "critical",
+      missingCount: 1,
+      message: "השבוע חסר עוד פוסט אחד בגאנט.",
+      recommendedAction: "בואי נשלים פוסט לשבוע",
+    },
+  ],
+});
+assert(
+  morning2c?.includes("* לוודא שהוא עולה") === true,
+  "planning health does not replace the morning focus"
+);
+assert(
+  morning2c?.includes("*ברקע*") === true,
+  "morning includes one planning health background signal"
+);
+assert(
+  morning2c?.includes("השבוע חסר עוד ריל אחד בגאנט.") === true,
+  "morning includes the first planning signal"
+);
+assert(
+  morning2c?.includes("השבוע חסר עוד פוסט אחד בגאנט.") === false,
+  "morning displays only one planning signal"
+);
+
 // Morning 3: P1 and P2 keep their engine order.
 const morning3Items = makeItems(
   [

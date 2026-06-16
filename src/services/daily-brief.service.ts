@@ -12,6 +12,12 @@ import type {
   GanttItemInput,
   ProductionTaskInput,
 } from "./priority.service";
+import {
+  computePlanningHealthSignals,
+} from "./planning-health.service";
+import type {
+  PlanningHealthSignal,
+} from "./planning-health.service";
 
 const getSpreadsheetId = (): string => {
   const id = process.env.GOOGLE_SHEETS_ID;
@@ -80,6 +86,9 @@ const fetchBriefData = async () => {
   }));
 
   const priorityItems = computePriorityItems(ganttInput, taskInput);
+  const planningSignals = computePlanningHealthSignals(ganttItems, {
+    anchorDate: today,
+  });
 
   const futureHoles = availableDates.filter((date) => {
     const parts = date.split("/");
@@ -87,7 +96,7 @@ const fetchBriefData = async () => {
     return d >= today;
   });
 
-  return { priorityItems, futureHoles };
+  return { priorityItems, futureHoles, planningSignals };
 };
 
 // ===== Morning Brief =====
@@ -95,10 +104,17 @@ export type MorningBriefData = {
   priorityItems: ContentPriorityItem[];
   futureHoles: string[];
   monthName: string;
+  planningSignals?: PlanningHealthSignal[];
 };
 
 const isActionable = (item: ContentPriorityItem): boolean =>
   item.recommendedAction !== "none" && item.cta.trim() !== "";
+
+const getMorningPlanningSignal = (
+  planningSignals: PlanningHealthSignal[] = []
+): PlanningHealthSignal | null =>
+  planningSignals.find((signal) => signal.severity === "critical") || null;
+
 
 const formatAction = (item: ContentPriorityItem): string => {
   switch (item.recommendedAction) {
@@ -192,6 +208,7 @@ export const buildMorningBriefFromData = ({
   priorityItems,
   futureHoles,
   monthName,
+  planningSignals = [],
 }: MorningBriefData): string | null => {
   const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
 
@@ -199,6 +216,7 @@ export const buildMorningBriefFromData = ({
     (i) => i.priorityLevel === "P0" && !i.isOverdueAwaitingDecision
   );
   const overdueItems = getOverdueDecisionItems(priorityItems);
+    const morningPlanningSignal = getMorningPlanningSignal(planningSignals);
   const { primary, secondary } = selectMorningFocus(priorityItems);
 
   if (p0Items.length > 0) {
@@ -220,22 +238,28 @@ export const buildMorningBriefFromData = ({
     }
   }
 
-  if (!primary) {
-    const holesLine = futureHoles.length > 0
-      ? `\nברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`
-      : "";
-    return [
-      "בוקר טוב קרן :)",
-      "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
-      "",
-      "היום נראה יחסית רגוע.",
-      "לא מצאתי משהו דחוף שצריך טיפול מיידי." + holesLine,
-      "",
-      "אם בא לך להתקדם, אפשר לכתוב:",
-      "* מה החורים בגאנט",
-      `* בואי נתכנן את ${monthName}`,
-    ].join("\n");
-  }
+    if (!primary) {
+      const backgroundLine = morningPlanningSignal
+        ? `\nברקע: ${morningPlanningSignal.message}`
+        : futureHoles.length > 0
+          ? `\nברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`
+          : "";
+      const suggestedAction = morningPlanningSignal
+        ? morningPlanningSignal.recommendedAction
+        : "מה החורים בגאנט";
+
+      return [
+        "בוקר טוב קרן :)",
+        "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
+        "",
+        "היום נראה יחסית רגוע.",
+        "לא מצאתי משהו דחוף שצריך טיפול מיידי." + backgroundLine,
+        "",
+        "אם בא לך להתקדם, אפשר לכתוב:",
+        `* ${suggestedAction}`,
+        `* בואי נתכנן את ${monthName}`,
+      ].join("\n");
+    }
 
   const selectedOverdue =
     primary.isOverdueAwaitingDecision
@@ -266,12 +290,16 @@ export const buildMorningBriefFromData = ({
     lines.push(`* ${formatAction(regularItems[1])}`);
   }
 
-  if (
-    futureHoles.length > 0 &&
-    primary.priorityLevel === "PLANNING"
-  ) {
-    lines.push("", `ברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`);
-  }
+    const showingGanttHolesBackground =
+      futureHoles.length > 0 && primary.priorityLevel === "PLANNING";
+
+    if (showingGanttHolesBackground) {
+      lines.push("", `ברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`);
+    } else if (morningPlanningSignal) {
+      lines.push("", "*ברקע*");
+      lines.push(morningPlanningSignal.message);
+      lines.push(`אפשר לכתוב: ${morningPlanningSignal.recommendedAction}`);
+    }
 
   const replyItems = regularItems.filter((item) => item.cta.trim() !== "");
   if (replyItems.length > 0) {
@@ -284,13 +312,14 @@ export const buildMorningBriefFromData = ({
 };
 
 export const buildMorningBrief = async (): Promise<string | null> => {
-  const { priorityItems, futureHoles } = await fetchBriefData();
+  const { priorityItems, futureHoles, planningSignals } = await fetchBriefData();
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
   return buildMorningBriefFromData({
     priorityItems,
     futureHoles,
     monthName,
+    planningSignals,
   });
 };
 
