@@ -1,5 +1,12 @@
 export type PlanningContentType = "ריל" | "פוסט";
 
+export type PlanningSourceKey =
+  | "approvedUnscheduled"
+  | "nearReadyProduction"
+  | "approvedNotStarted"
+  | "ideaBank"
+  | "newIdea";
+
 export type PlanningSourceOption = {
   contentId?: string;
   title: string;
@@ -15,6 +22,38 @@ export type PlanningSourceRoutingInput = {
   ideaBank: PlanningSourceOption[];
 };
 
+export type PlanningSourceRoutingState = PlanningSourceRoutingInput & {
+  activeSource: PlanningSourceKey;
+};
+
+export type PlanningSourceRoutingReplyResult =
+  | {
+      action: "selected";
+      option: PlanningSourceOption;
+      message: string;
+    }
+  | {
+      action: "next_source";
+      state: PlanningSourceRoutingState;
+      message: string;
+    }
+  | {
+      action: "clarify";
+      message: string;
+    }
+  | {
+      action: "new_idea";
+      message: string;
+    };
+
+const sourceOrder: PlanningSourceKey[] = [
+  "approvedUnscheduled",
+  "nearReadyProduction",
+  "approvedNotStarted",
+  "ideaBank",
+  "newIdea",
+];
+
 const typeLabel = (contentType: PlanningContentType): string =>
   contentType === "ריל" ? "ריל" : "פוסט";
 
@@ -23,6 +62,55 @@ const ideaCta = (contentType: PlanningContentType): string =>
 
 const newIdeaCta = (contentType: PlanningContentType): string =>
   contentType === "ריל" ? "בואי נחשוב על רעיון חדש לריל" : "בואי נחשוב על רעיון חדש לפוסט";
+
+const normalizeText = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[״"׳']/g, "")
+    .replace(/[.,:;!?]/g, "")
+    .replace(/\s+/g, " ");
+
+const getOptionsForSource = (
+  input: PlanningSourceRoutingInput,
+  source: PlanningSourceKey
+): PlanningSourceOption[] => {
+  switch (source) {
+    case "approvedUnscheduled":
+      return input.approvedUnscheduled;
+    case "nearReadyProduction":
+      return input.nearReadyProduction;
+    case "approvedNotStarted":
+      return input.approvedNotStarted;
+    case "ideaBank":
+      return input.ideaBank;
+    case "newIdea":
+      return [];
+  }
+};
+
+const firstAvailableSource = (input: PlanningSourceRoutingInput): PlanningSourceKey => {
+  const source = sourceOrder.find((candidate) => {
+    if (candidate === "newIdea") return true;
+    return getOptionsForSource(input, candidate).length > 0;
+  });
+
+  return source || "newIdea";
+};
+
+const nextAvailableSource = (
+  input: PlanningSourceRoutingInput,
+  currentSource: PlanningSourceKey
+): PlanningSourceKey => {
+  const currentIndex = sourceOrder.indexOf(currentSource);
+  const remainingSources = sourceOrder.slice(currentIndex + 1);
+  const source = remainingSources.find((candidate) => {
+    if (candidate === "newIdea") return true;
+    return getOptionsForSource(input, candidate).length > 0;
+  });
+
+  return source || "newIdea";
+};
 
 const formatOptions = (options: PlanningSourceOption[]): string =>
   options
@@ -40,12 +128,13 @@ const formatChoiceInstructions = (contentType: PlanningContentType): string =>
     `* ${ideaCta(contentType)}`,
   ].join("\n");
 
-export const buildPlanningSourceRoutingMessage = (
-  input: PlanningSourceRoutingInput
+const buildMessageForSource = (
+  input: PlanningSourceRoutingInput,
+  source: PlanningSourceKey
 ): string => {
   const contentType = typeLabel(input.missingContentType);
 
-  if (input.approvedUnscheduled.length > 0) {
+  if (source === "approvedUnscheduled") {
     return [
       input.signalMessage,
       "",
@@ -58,7 +147,7 @@ export const buildPlanningSourceRoutingMessage = (
     ].join("\n");
   }
 
-  if (input.nearReadyProduction.length > 0) {
+  if (source === "nearReadyProduction") {
     return [
       input.signalMessage,
       "",
@@ -72,7 +161,7 @@ export const buildPlanningSourceRoutingMessage = (
     ].join("\n");
   }
 
-  if (input.approvedNotStarted.length > 0) {
+  if (source === "approvedNotStarted") {
     return [
       input.signalMessage,
       "",
@@ -86,7 +175,7 @@ export const buildPlanningSourceRoutingMessage = (
     ].join("\n");
   }
 
-  if (input.ideaBank.length > 0) {
+  if (source === "ideaBank") {
     return [
       input.signalMessage,
       "",
@@ -111,4 +200,124 @@ export const buildPlanningSourceRoutingMessage = (
     "אפשר לענות:",
     `* ${newIdeaCta(input.missingContentType)}`,
   ].join("\n");
+};
+
+export const createPlanningSourceRoutingState = (
+  input: PlanningSourceRoutingInput
+): PlanningSourceRoutingState => ({
+  ...input,
+  activeSource: firstAvailableSource(input),
+});
+
+export const buildPlanningSourceRoutingMessage = (
+  input: PlanningSourceRoutingInput
+): string => buildMessageForSource(input, firstAvailableSource(input));
+
+const findOptionByReply = (
+  replyText: string,
+  options: PlanningSourceOption[]
+): PlanningSourceOption | "ambiguous" | null => {
+  const normalizedReply = normalizeText(replyText);
+  const numericChoice = parseInt(normalizedReply, 10);
+
+  if (!Number.isNaN(numericChoice) && numericChoice >= 1 && numericChoice <= options.length) {
+    return options[numericChoice - 1];
+  }
+
+  const matches = options.filter((option) => {
+    const normalizedTitle = normalizeText(option.title);
+    const replyWords = normalizedReply.split(" ").filter((word) => word.length > 1);
+    const titleWords = normalizedTitle.split(" ").filter(Boolean);
+    const matchedWords = replyWords.filter((word) => titleWords.includes(word));
+
+    return (
+      normalizedTitle.includes(normalizedReply) ||
+      normalizedReply.includes(normalizedTitle) ||
+      (replyWords.length >= 2 && matchedWords.length === replyWords.length)
+    );
+  });
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return "ambiguous";
+
+  return null;
+};
+
+const buildSelectedMessage = (option: PlanningSourceOption): string =>
+  [
+    `סבבה, נלך על "${option.title}".`,
+    "",
+    "רוצה שאציע תאריך פנוי בגאנט השבוע?",
+  ].join("\n");
+
+export const handlePlanningSourceRoutingReply = (
+  state: PlanningSourceRoutingState,
+  replyText: string
+): PlanningSourceRoutingReplyResult => {
+  const normalizedReply = normalizeText(replyText);
+  const activeOptions = getOptionsForSource(state, state.activeSource);
+
+  if (["לא", "לא תודה", "עזבי", "עזוב"].includes(normalizedReply)) {
+    const nextSource = nextAvailableSource(state, state.activeSource);
+    const nextState: PlanningSourceRoutingState = {
+      ...state,
+      activeSource: nextSource,
+    };
+
+    if (nextSource === "newIdea") {
+      return {
+        action: "new_idea",
+        message: buildMessageForSource(nextState, nextSource),
+      };
+    }
+
+    return {
+      action: "next_source",
+      state: nextState,
+      message: buildMessageForSource(nextState, nextSource),
+    };
+  }
+
+  if (["כן", "כן תודה", "סבבה", "יאללה"].includes(normalizedReply)) {
+    const firstOption = activeOptions[0];
+
+    if (!firstOption) {
+      return {
+        action: "new_idea",
+        message: buildMessageForSource(state, "newIdea"),
+      };
+    }
+
+    return {
+      action: "selected",
+      option: firstOption,
+      message: buildSelectedMessage(firstOption),
+    };
+  }
+
+  const matchedOption = findOptionByReply(replyText, activeOptions);
+
+  if (matchedOption === "ambiguous") {
+    return {
+      action: "clarify",
+      message: "מצאתי כמה אפשרויות דומות. תכתבי מספר מהרשימה כדי שאבחר נכון.",
+    };
+  }
+
+  if (matchedOption) {
+    return {
+      action: "selected",
+      option: matchedOption,
+      message: buildSelectedMessage(matchedOption),
+    };
+  }
+
+  return {
+    action: "clarify",
+    message: [
+      "לא הצלחתי להבין איזו אפשרות לבחור.",
+      "",
+      "אפשר לענות במספר, בשם התוכן, או לכתוב לא כדי לעבור לאפשרות הבאה.",
+    ].join("\n"),
+  };
 };
