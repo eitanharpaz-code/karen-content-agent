@@ -718,8 +718,14 @@ export const formatPriorityWhatsImportantResponse = (
     lines.push("הדבר הראשון שהייתי עושה:");
     lines.push(focusAction);
   } else if (visiblePlanning?.kind === "planning") {
+    const planningIsFocus = focusEntry.kind === "planning";
+
     lines.push("");
-    lines.push("אחר כך כדאי לסגור:");
+    lines.push(
+      planningIsFocus
+        ? "הדבר הראשון שהייתי מסדרת:"
+        : "אחר כך כדאי לסגור:"
+    );
     lines.push(visiblePlanning.signal.message);
     lines.push("");
     lines.push("אפשר לענות:");

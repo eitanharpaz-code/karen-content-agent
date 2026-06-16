@@ -116,6 +116,7 @@ import {
   markInteractionToday,
 } from "../services/daily-brief.service";
 import { detectOverdueDecisionIntent } from "../services/overdue-decision.service";
+import { computePlanningHealthSignals } from "../services/planning-health.service";
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
     await sendWhatsAppMessage(to, message);
@@ -1866,8 +1867,28 @@ const replyText = [
             break;
           }
           case "whats_important": {
-              const priorityItems = await fetchPriorityItems();
-              const replyText = formatPriorityWhatsImportantResponse(priorityItems);
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+
+              const currentWeekStart = new Date(today);
+              currentWeekStart.setDate(today.getDate() - today.getDay());
+
+              const nextWeekEnd = new Date(currentWeekStart);
+              nextWeekEnd.setDate(currentWeekStart.getDate() + 13);
+              nextWeekEnd.setHours(23, 59, 59, 999);
+
+              const [priorityItems, planningGanttItems] = await Promise.all([
+                fetchPriorityItems(),
+                getGanttByDateRange(spreadsheetId, currentWeekStart, nextWeekEnd),
+              ]);
+              const planningSignals = computePlanningHealthSignals(
+                planningGanttItems,
+                { anchorDate: today }
+              );
+              const replyText = formatPriorityWhatsImportantResponse(
+                priorityItems,
+                planningSignals
+              );
 
               await safeSendWhatsAppMessage(sender, replyText);
 
