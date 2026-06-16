@@ -944,6 +944,7 @@ export type OpenContentIdea = {
   category: string;
   tone: string;
   priority: string;
+  contentType: string;
   requiresShoot: string;
   collaboration: string;
   status: string;
@@ -956,7 +957,7 @@ export const getOpenContentIdeas = async (spreadsheetId: string): Promise<OpenCo
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+    range: `${SHEET_NAMES.contentLibrary}!A:L`,
   });
 
   const rows = response.data.values || [];
@@ -976,6 +977,7 @@ export const getOpenContentIdeas = async (spreadsheetId: string): Promise<OpenCo
       category: (row[3] || "").toString().trim(),
       tone: (row[4] || "").toString().trim(),
       priority: (row[5] || "").toString().trim(),
+      contentType: (row[11] || "ריל").toString().trim(),
       requiresShoot: (row[6] || "").toString().trim(),
       collaboration: (row[7] || "").toString().trim(),
       status: (row[8] || "").toString().trim(),
@@ -2216,7 +2218,7 @@ export const getApprovedContentNotInGantt = async (
   spreadsheetId: string,
   _month: number, // kept for the existing API
   _year: number
-): Promise<{ contentId: string; name: string }[]> => {
+): Promise<{ contentId: string; name: string; contentType: string }[]> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -2235,7 +2237,7 @@ export const getApprovedContentNotInGantt = async (
   // Get all approved content
   const approvedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.approvedContent}!A:B`,
+    range: `${SHEET_NAMES.approvedContent}!A:K`,
   });
   const approvedRows = approvedResponse.data.values || [];
 
@@ -2247,6 +2249,7 @@ export const getApprovedContentNotInGantt = async (
     .map((row) => ({
       contentId: (row[0] || "").toString().trim(),
       name: (row[1] || "").toString().trim(),
+      contentType: (row[10] || "ריל").toString().trim(),
     }));
 };
 // Fast Track — save directly to תכנים שאושרו with all fields ready
