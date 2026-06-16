@@ -151,7 +151,6 @@ const buildMessageForSource = (
     return [
       input.signalMessage,
       "",
-      `לא מצאתי ${contentType} שאושר ועדיין לא שובץ בגאנט.`,
       "הדבר הבא שהייתי בודקת הוא מה הכי קרוב להיות מוכן.",
       "",
       `מצאתי ${input.nearReadyProduction.length} אפשרויות:`,
@@ -179,8 +178,7 @@ const buildMessageForSource = (
     return [
       input.signalMessage,
       "",
-      `לא מצאתי ${contentType} מאושר או כמעט מוכן שמתאים להשלים איתו את הגאנט.`,
-      `אפשר להתחיל מבנק הרעיונות ל${contentType}.`,
+      `אפשר לעבור לבנק הרעיונות ל${contentType}.`,
       "",
       `מצאתי ${input.ideaBank.length} אפשרויות:`,
       formatOptions(input.ideaBank),
