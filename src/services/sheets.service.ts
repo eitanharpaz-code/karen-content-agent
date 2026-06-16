@@ -1987,7 +1987,7 @@ export const addRowToGantt = async (
     );
   }
 
-  // Pull priority and collab from תכנים שאושרו
+  // Pull priority, collab, and content type from תכנים שאושרו
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -2002,7 +2002,7 @@ export const addRowToGantt = async (
 
   const approvedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.approvedContent}!A:J`,
+    range: `${SHEET_NAMES.approvedContent}!A:K`,
   });
 
   const approvedRows = approvedResponse.data.values || [];
@@ -2010,13 +2010,14 @@ export const addRowToGantt = async (
 
   const priority = approvedRow ? (approvedRow[5] || "").toString().trim() : "";
   const collab = approvedRow ? (approvedRow[7] || "").toString().trim() : "";
+  const contentType = approvedRow ? (approvedRow[10] || "ריל").toString().trim() : "ריל";
 
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.monthlyGantt, [
-    contentId,       // A - content_id
-    date,            // B - תאריך
-    dayName,         // C - יום
+    contentId,          // A - content_id
+    date,              // B - תאריך
+    dayName,          // C - יום
     "אינסטגרם",      // D - פלטפורמה
-    "ריל",           // E - סוג תוכן
+    contentType || "ריל", // E - סוג תוכן
     contentName,     // F - שם התוכן/קונספט
     "",              // G - נושא/פרק
     priority,        // H - רמת עדיפות
