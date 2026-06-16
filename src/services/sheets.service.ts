@@ -353,6 +353,12 @@ export const ensureCategoryExists = async (
   return createCategory(spreadsheetId, categoryName, prefix);
 };
 
+export const isUsableContentId = (contentId: string): boolean => {
+  const normalized = (contentId || "").trim();
+
+  return normalized !== "" && normalized !== "טרם תוכנן";
+};
+
 export const generateContentIdForPrefix = (
   prefix: string,
   existingIds: string[]
@@ -1928,6 +1934,8 @@ export const findGanttEntryByContentId = async (
   spreadsheetId: string,
   contentId: string
 ): Promise<GanttEntry | null> => {
+  if (!isUsableContentId(contentId)) return null;
+
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -1961,6 +1969,12 @@ export const addRowToGantt = async (
   uploadTime: string = "",
   status: "בתכנון" | "מוכן" | "בזמן אמת" | "פורסם" = "בתכנון"
 ): Promise<string | null> => {
+  if (!isUsableContentId(contentId)) {
+    throw new Error(
+      `Invalid contentId for gantt write: "${contentId || ""}"`
+    );
+  }
+
   // Pull priority and collab from תכנים שאושרו
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
