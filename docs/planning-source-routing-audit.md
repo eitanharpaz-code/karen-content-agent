@@ -285,3 +285,95 @@ Do not add more production behavior until:
 - Published/already-scheduled exclusion is fixed.
 - Selected-source pending state is designed.
 - Priority integration is explicitly checked.
+
+## Revised Planning Flow - 2026-06-17
+
+### Scope
+
+Planning routing checks next-week Gantt coverage, not current-week readiness.
+
+Current week readiness belongs to priority / מה דחוף.
+Next week coverage belongs to planning / דיילי בריף / גאנט קדימה.
+
+### Coverage Rules
+
+- Weekly organic target: 2 reels + 1 post.
+- Published rows count as scheduled coverage.
+- Cancelled / archived rows do not count.
+- Collaboration content does not count as organic coverage.
+- Any content already in Gantt must not appear again as a source option.
+
+### Trigger Copy
+
+Avoid saying "השבוע" when checking next week.
+
+Preferred trigger/copy:
+- "בואי נבדוק את הגאנט"
+- "בואי נתכנן קדימה"
+- "שבוע הבא חסר..."
+
+Old phrase "בואי נשלים את השבוע" may remain as an alias only if the response clearly says it is checking next week.
+
+### Source Selection
+
+The user must select content by:
+- number
+- content name
+
+Do not let "כן" select the first option. It is ambiguous.
+
+If the user answers "כן" while seeing a list, reply that they should choose a number or content name.
+
+### Source Types
+
+These sources can move toward scheduling:
+- approvedUnscheduled
+- nearReadyProduction
+- approvedNotStarted
+
+These sources cannot be scheduled directly:
+- ideaBank
+
+Idea-bank selection should route to approval / fastlane first.
+
+### Date Flow
+
+After selecting schedulable content:
+1. Suggest an available next-week date.
+2. User can approve, provide another date, choose another content, or cancel.
+3. On approval, write to Gantt using the existing Gantt flow.
+4. After writing, confirm the date.
+5. Then ask for upload time using the existing upload-time flow.
+
+### Rejection Flow
+
+If user says "לא" to a proposed date, do not cancel the whole flow.
+
+Ask:
+- write another date
+- choose another content
+- cancel
+
+Cancellation should use the existing "ביטול" command.
+
+### Full Gantt Case
+
+If next week is already full:
+- Say there is no required gap.
+- Offer to check the following week.
+- Offer to add anyway.
+- Offer to replace existing content.
+- Replacement recommendation should be based on schedule/readiness/context, not the legacy priority column.
+
+### Priority Column
+
+The manual priority column should not drive planning decisions.
+
+Operational ordering should be based on:
+- upload date
+- deadline proximity
+- production readiness
+- whether content is already scheduled
+- whether content is organic or collaboration
+
+Keep the column as legacy metadata for now, but do not use it as the main ranking rule.

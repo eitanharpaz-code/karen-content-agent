@@ -12,7 +12,7 @@ const assert = (condition: boolean, message: string): void => {
 };
 
 const missingReel = buildPlanningSourceRoutingMessage({
-  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
   approvedUnscheduled: [],
   nearReadyProduction: [],
@@ -24,7 +24,7 @@ assert(missingReel.includes("רעיון חדש לריל"), "missing reel offers 
 assert(!missingReel.includes("רעיונות לפוסט"), "missing reel does not offer post ideas");
 
 const missingPost = buildPlanningSourceRoutingMessage({
-  signalMessage: "השבוע חסר עוד פוסט אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד פוסט אחד בגאנט.",
   missingContentType: "פוסט",
   approvedUnscheduled: [],
   nearReadyProduction: [],
@@ -36,7 +36,7 @@ assert(missingPost.includes("רעיון חדש לפוסט"), "missing post offer
 assert(!missingPost.includes("רעיונות לריל"), "missing post does not offer reel ideas");
 
 const approvedReel = buildPlanningSourceRoutingMessage({
-  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
   approvedUnscheduled: [{ contentId: "ABC-001", title: "זוגיות בזמן ארגון חתונה" }],
   nearReadyProduction: [{ contentId: "ABC-002", title: "לא אמור להופיע" }],
@@ -49,7 +49,7 @@ assert(approvedReel.includes("1. זוגיות בזמן ארגון חתונה"), 
 assert(!approvedReel.includes("לא אמור להופיע"), "first available source wins");
 
 const nearReady = buildPlanningSourceRoutingMessage({
-  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
   approvedUnscheduled: [],
   nearReadyProduction: [{ contentId: "ABC-003", title: "שמלה שלישית", status: "חסרה עריכה" }],
@@ -60,7 +60,7 @@ const nearReady = buildPlanningSourceRoutingMessage({
 assert(nearReady.includes("מה הכי קרוב להיות מוכן"), "near-ready source is used when no approved unscheduled exists");
 assert(nearReady.includes("שמלה שלישית - חסרה עריכה"), "near-ready source includes status");
 const state = createPlanningSourceRoutingState({
-  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
   approvedUnscheduled: [
     { contentId: "ABC-001", title: "זוגיות בזמן ארגון חתונה" },
@@ -102,7 +102,7 @@ assert(
 );
 
 const noExistingState = createPlanningSourceRoutingState({
-  signalMessage: "השבוע חסר עוד פוסט אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד פוסט אחד בגאנט.",
   missingContentType: "פוסט",
   approvedUnscheduled: [],
   nearReadyProduction: [],
@@ -114,7 +114,7 @@ const noExistingYes = handlePlanningSourceRoutingReply(noExistingState, "כן");
 assert(noExistingYes.action === "new_idea", "yes on empty source offers new idea");
 assert(noExistingYes.message.includes("רעיון חדש לפוסט"), "empty post source stays post-specific");
 const ideaBankState = createPlanningSourceRoutingState({
-  signalMessage: "השבוע חסר עוד ריל אחד בגאנט.",
+  signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
   approvedUnscheduled: [],
   nearReadyProduction: [],
