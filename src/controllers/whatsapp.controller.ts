@@ -319,16 +319,181 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             questionType: "planning_source_routing",
             context: result.state,
           });
-        } else {
-          clearPendingQuestion(sender);
+
+          await safeSendWhatsAppMessage(sender, result.message);
+
+          return res.status(200).json({
+            status: "planning_source_routing_next_source",
+            sender,
+          });
         }
 
-        await safeSendWhatsAppMessage(sender, result.message);
+        if (result.action === "clarify") {
+          storePendingQuestion(sender, {
+            questionType: "planning_source_routing",
+            context: state,
+          });
 
-        return res.status(200).json({
-          status: `planning_source_routing_${result.action}`,
-          sender,
-        });
+          await safeSendWhatsAppMessage(sender, result.message);
+
+          return res.status(200).json({
+            status: "planning_source_routing_clarify",
+            sender,
+          });
+        }
+
+        if (result.action === "new_idea") {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, result.message);
+
+          return res.status(200).json({
+            status: "planning_source_routing_new_idea",
+            sender,
+          });
+        }
+
+        if (result.action === "selected") {
+          clearPendingQuestion(sender);
+
+          if (result.source === "ideaBank") {
+            await safeSendWhatsAppMessage(
+              sender,
+              [
+                `סבבה, נתחיל מהרעיון "${result.option.title}".`,
+                "",
+                "זה עדיין מבנק הרעיונות, אז קודם צריך להפוך אותו לתוכן מאושר.",
+                "השלב הבא הוא לאשר/להעביר אותו במסלול מהיר, ואז נוכל לשבץ אותו בגאנט.",
+              ].join("\n")
+            );
+
+            return res.status(200).json({
+              status: "planning_source_routing_idea_selected",
+              sender,
+            });
+          }
+
+          if (!result.option.contentId) {
+            storePendingQuestion(sender, {
+              questionType: "planning_source_routing",
+              context: state,
+            });
+
+            await safeSendWhatsAppMessage(
+              sender,
+              "חסר לי Content ID לתוכן הזה. תבחרי פריט אחר מהרשימה או כתבי ביטול."
+            );
+
+            return res.status(200).json({
+              status: "planning_source_routing_missing_content_id",
+              sender,
+            });
+          }
+
+          const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+          if (!spreadsheetId) {
+            throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
+          }
+
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const nextWeekStart = new Date(today);
+          nextWeekStart.setDate(today.getDate() - today.getDay() + 7);
+          nextWeekStart.setHours(0, 0, 0, 0);
+
+          const nextWeekEnd = new Date(nextWeekStart);
+          nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+          nextWeekEnd.setHours(23, 59, 59, 999);
+
+          const formatDate = (date: Date): string =>
+            `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+
+          const seedDates = [formatDate(nextWeekStart)];
+          if (nextWeekEnd.getMonth() !== nextWeekStart.getMonth()) {
+            seedDates.push(formatDate(nextWeekEnd));
+          }
+
+          const availableBatches = await Promise.all(
+            seedDates.map((seedDate) => findAvailableDatesInMonth(spreadsheetId, seedDate))
+          );
+
+          const availableDates = Array.from(new Set(availableBatches.reduce<string[]>((all, batch) => all.concat(batch), [])))
+            .filter((candidateDate) => {
+              const parts = candidateDate.split("/");
+              const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+              parsed.setHours(0, 0, 0, 0);
+              return parsed >= nextWeekStart && parsed <= nextWeekEnd;
+            })
+            .sort((a, b) => {
+              const aParts = a.split("/");
+              const bParts = b.split("/");
+              const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
+              const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
+              return aDate.getTime() - bDate.getTime();
+            });
+
+          if (availableDates.length === 0) {
+            await safeSendWhatsAppMessage(
+              sender,
+              [
+                `בחרתי את "${result.option.title}", אבל לא מצאתי תאריך פנוי בשבוע הבא.`,
+                "",
+                "אפשר לכתוב תאריך ידנית, לבחור תוכן אחר, או לבטל.",
+              ].join("\n")
+            );
+
+            storePendingQuestion(sender, {
+              questionType: "gantt_write_new_date",
+              context: {
+                newContentId: result.option.contentId,
+                newContentName: result.option.title,
+                suggestedDate: formatDate(nextWeekStart),
+                suggestedDayName: ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][nextWeekStart.getDay()],
+                alternatives: [],
+                ganttStatus: "בתכנון",
+              },
+            });
+
+            return res.status(200).json({
+              status: "planning_source_routing_no_next_week_dates",
+              sender,
+            });
+          }
+
+          const suggestedDate = availableDates[0];
+          const suggestedParts = suggestedDate.split("/");
+          const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][
+            new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()
+          ];
+
+          storePendingQuestion(sender, {
+            questionType: "gantt_write_new_date",
+            context: {
+              newContentId: result.option.contentId,
+              newContentName: result.option.title,
+              suggestedDate,
+              suggestedDayName,
+              alternatives: availableDates.slice(0, 5),
+              ganttStatus: "בתכנון",
+            },
+          });
+
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              `סבבה, נלך על "${result.option.title}".`,
+              "",
+              `מצאתי תאריך פנוי בשבוע הבא: ${suggestedDate} (יום ${suggestedDayName}).`,
+              "",
+              "אפשר לענות כן, לכתוב תאריך אחר, לכתוב תוכן אחר, או ביטול.",
+            ].join("\n")
+          );
+
+          return res.status(200).json({
+            status: "planning_source_routing_date_suggested",
+            sender,
+          });
+        }
       }
     const duplicateSensitivePendingTypes = new Set([
       "gantt_collision",
@@ -467,13 +632,30 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
   const rawAnswer = incomingText.trim();
 
-  if (
-    isRejectionMessage(incomingText) ||
-    ["ביטול", "עזבי", "עזוב", "לא משנה", "תבטלי"].includes(rawAnswer)
-  ) {
+  if (["ביטול", "עזבי", "עזוב", "לא משנה", "תבטלי"].includes(rawAnswer)) {
     clearPendingQuestion(sender);
     await safeSendWhatsAppMessage(sender, "סבבה, לא שיבצתי. אפשר לחזור לזה אחר כך.");
     return res.status(200).json({ status: "gantt_write_new_date_cancelled", sender });
+  }
+
+  if (isRejectionMessage(incomingText)) {
+    storePendingQuestion(sender, {
+      questionType: "gantt_write_new_date",
+      context: originalContext,
+    });
+
+    await safeSendWhatsAppMessage(
+      sender,
+      [
+        "בסדר, לא שיבצתי בתאריך הזה.",
+        "",
+        "אפשר לכתוב תאריך אחר,",
+        "לכתוב: תוכן אחר",
+        "או לכתוב: ביטול",
+      ].join("\n")
+    );
+
+    return res.status(200).json({ status: "gantt_write_new_date_rejected_date", sender });
   }
 
   if (["תוכן אחר", "תוכן אחר מהרשימה", "משהו אחר", "אחר"].includes(rawAnswer)) {
