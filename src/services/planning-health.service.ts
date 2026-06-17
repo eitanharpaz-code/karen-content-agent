@@ -1,7 +1,6 @@
 export type PlanningHealthSignalType =
-  | "current_week_missing_reel"
-  | "current_week_missing_post"
-  | "next_week_empty_or_light";
+  | "next_week_missing_reel"
+  | "next_week_missing_post";
 
 export type PlanningHealthSeverity = "critical" | "normal";
 
@@ -25,12 +24,10 @@ export type PlanningHealthOptions = {
   anchorDate?: Date;
   weeklyReelTarget?: number;
   weeklyPostTarget?: number;
-  nextWeekMinimumOrganicItems?: number;
 };
 
 const DEFAULT_WEEKLY_REEL_TARGET = 2;
 const DEFAULT_WEEKLY_POST_TARGET = 1;
-const DEFAULT_NEXT_WEEK_MINIMUM_ORGANIC_ITEMS = 2;
 
 const parseSheetDate = (dateText: string): Date | null => {
   const parts = dateText.split("/");
@@ -107,11 +104,7 @@ export const computePlanningHealthSignals = (
     options.weeklyReelTarget ?? DEFAULT_WEEKLY_REEL_TARGET;
   const weeklyPostTarget =
     options.weeklyPostTarget ?? DEFAULT_WEEKLY_POST_TARGET;
-  const nextWeekMinimumOrganicItems =
-    options.nextWeekMinimumOrganicItems ?? DEFAULT_NEXT_WEEK_MINIMUM_ORGANIC_ITEMS;
-
   const currentWeekStart = startOfWeek(anchor);
-  const currentWeekEnd = addDays(currentWeekStart, 6);
   const nextWeekStart = addDays(currentWeekStart, 7);
   const nextWeekEnd = addDays(nextWeekStart, 6);
 
@@ -121,59 +114,48 @@ export const computePlanningHealthSignals = (
       Boolean(entry.date) && isOrganicScheduledItem(entry.item)
     );
 
-  const currentWeekItems = activeOrganicItems.filter((entry) =>
-    isInRange(entry.date, currentWeekStart, currentWeekEnd)
-  );
-
-  const currentWeekReels = currentWeekItems.filter((entry) =>
-    isReel(entry.item)
-  );
-
-  const currentWeekPosts = currentWeekItems.filter((entry) =>
-    isPost(entry.item)
-  );
-
   const nextWeekItems = activeOrganicItems.filter((entry) =>
     isInRange(entry.date, nextWeekStart, nextWeekEnd)
   );
 
+  const nextWeekReels = nextWeekItems.filter((entry) =>
+    isReel(entry.item)
+  );
+
+  const nextWeekPosts = nextWeekItems.filter((entry) =>
+    isPost(entry.item)
+  );
+
+  const severity: PlanningHealthSeverity =
+    anchor.getDay() >= 4 ? "critical" : "normal";
+
   const signals: PlanningHealthSignal[] = [];
 
-  if (currentWeekReels.length < weeklyReelTarget) {
-    const missingCount = weeklyReelTarget - currentWeekReels.length;
+  if (nextWeekReels.length < weeklyReelTarget) {
+    const missingCount = weeklyReelTarget - nextWeekReels.length;
     signals.push({
-      type: "current_week_missing_reel",
-      severity: "critical",
+      type: "next_week_missing_reel",
+      severity,
       missingCount,
       message:
         missingCount === 1
-          ? "השבוע חסר עוד ריל אחד בגאנט."
-          : `השבוע חסרים עוד ${missingCount} רילסים בגאנט.`,
-      recommendedAction: "בואי נשלים את השבוע",
-    });
-  }
-
-  if (currentWeekPosts.length < weeklyPostTarget) {
-    const missingCount = weeklyPostTarget - currentWeekPosts.length;
-    signals.push({
-      type: "current_week_missing_post",
-      severity: "critical",
-      missingCount,
-      message:
-        missingCount === 1
-          ? "השבוע חסר עוד פוסט אחד בגאנט."
-          : `השבוע חסרים עוד ${missingCount} פוסטים בגאנט.`,
-      recommendedAction: "בואי נשלים פוסט לשבוע",
-    });
-  }
-
-  if (nextWeekItems.length < nextWeekMinimumOrganicItems) {
-    signals.push({
-      type: "next_week_empty_or_light",
-      severity: "normal",
-      missingCount: nextWeekMinimumOrganicItems - nextWeekItems.length,
-      message: "הגאנט של שבוע הבא עדיין דל.",
+          ? "שבוע הבא חסר עוד ריל אחד בגאנט."
+          : `שבוע הבא חסרים עוד ${missingCount} רילסים בגאנט.`,
       recommendedAction: "בואי נשלים את השבוע הבא",
+    });
+  }
+
+  if (nextWeekPosts.length < weeklyPostTarget) {
+    const missingCount = weeklyPostTarget - nextWeekPosts.length;
+    signals.push({
+      type: "next_week_missing_post",
+      severity,
+      missingCount,
+      message:
+        missingCount === 1
+          ? "שבוע הבא חסר עוד פוסט אחד בגאנט."
+          : `שבוע הבא חסרים עוד ${missingCount} פוסטים בגאנט.`,
+      recommendedAction: "בואי נשלים פוסט לשבוע הבא",
     });
   }
 

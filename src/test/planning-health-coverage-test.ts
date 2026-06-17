@@ -17,7 +17,7 @@ const baseItem = (
   overrides: Partial<PlanningGanttItem>
 ): PlanningGanttItem => ({
   contentId: "TEST-001",
-  date: "14/06/2026",
+  date: "21/06/2026",
   contentType: "ריל",
   collaboration: "לא",
   status: "בתכנון",
@@ -28,12 +28,12 @@ const publishedOrganicReelSignals = computePlanningHealthSignals(
   [
     baseItem({
       contentId: "PRW-005",
-      date: "14/06/2026",
+      date: "21/06/2026",
       status: "פורסם",
     }),
     baseItem({
       contentId: "PRW-002",
-      date: "19/06/2026",
+      date: "26/06/2026",
       status: "בתכנון",
     }),
   ],
@@ -41,7 +41,7 @@ const publishedOrganicReelSignals = computePlanningHealthSignals(
 );
 
 assert(
-  !publishedOrganicReelSignals.some((signal) => signal.type === "current_week_missing_reel"),
+  !publishedOrganicReelSignals.some((signal) => signal.type === "next_week_missing_reel"),
   "published organic reels count toward weekly reel coverage"
 );
 
@@ -49,7 +49,7 @@ const collaborationDoesNotCountSignals = computePlanningHealthSignals(
   [
     baseItem({
       contentId: "PRW-005",
-      date: "14/06/2026",
+      date: "21/06/2026",
       status: "פורסם",
     }),
     baseItem({
@@ -65,7 +65,7 @@ const collaborationDoesNotCountSignals = computePlanningHealthSignals(
 assert(
   collaborationDoesNotCountSignals.some(
     (signal) =>
-      signal.type === "current_week_missing_reel" &&
+      signal.type === "next_week_missing_reel" &&
       signal.missingCount === 1
   ),
   "collaboration reels do not count toward organic reel coverage"
@@ -75,12 +75,12 @@ const cancelledDoesNotCountSignals = computePlanningHealthSignals(
   [
     baseItem({
       contentId: "PRW-005",
-      date: "14/06/2026",
+      date: "21/06/2026",
       status: "פורסם",
     }),
     baseItem({
       contentId: "PRW-002",
-      date: "19/06/2026",
+      date: "26/06/2026",
       status: "בוטל",
     }),
   ],
@@ -90,7 +90,7 @@ const cancelledDoesNotCountSignals = computePlanningHealthSignals(
 assert(
   cancelledDoesNotCountSignals.some(
     (signal) =>
-      signal.type === "current_week_missing_reel" &&
+      signal.type === "next_week_missing_reel" &&
       signal.missingCount === 1
   ),
   "cancelled reels do not count toward weekly reel coverage"

@@ -56,10 +56,10 @@ const priorityItems = computePriorityItems(
 
 const planningSignals: PlanningHealthSignal[] = [
   {
-    type: "current_week_missing_reel",
+    type: "next_week_missing_reel",
     severity: "critical",
-    message: "השבוע חסר עוד ריל אחד בגאנט.",
-    recommendedAction: "בואי נשלים את השבוע",
+    message: "שבוע הבא חסר עוד ריל אחד בגאנט.",
+    recommendedAction: "בואי נשלים את השבוע הבא",
     missingCount: 1,
   },
 ];
@@ -70,7 +70,7 @@ const response = formatPriorityWhatsImportantResponse(
 );
 
 const p1Index = response.indexOf("תוכן שעולה מחר");
-const planningIndex = response.indexOf("השבוע חסר עוד ריל אחד בגאנט");
+const planningIndex = response.indexOf("שבוע הבא חסר עוד ריל אחד בגאנט");
 const p3Index = response.indexOf("תוכן שעולה בעוד שלושה ימים");
 
 assert(p1Index !== -1, "P1 appears in whats important");
@@ -79,7 +79,7 @@ assert(p3Index !== -1, "P3 appears in whats important");
 assert(p1Index < planningIndex, "P1 appears before planning health");
 assert(planningIndex < p3Index, "planning health appears before P3");
 assert(
-  response.includes("* בואי נשלים את השבוע"),
+  response.includes("* בואי נשלים את השבוע הבא"),
   "planning health exposes a reply endpoint"
 );
 

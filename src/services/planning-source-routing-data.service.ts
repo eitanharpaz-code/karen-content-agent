@@ -89,8 +89,8 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
 
   const signal = planningSignals.find(
     (candidate) =>
-      candidate.type === "current_week_missing_reel" ||
-      candidate.type === "current_week_missing_post"
+      candidate.type === "next_week_missing_reel" ||
+      candidate.type === "next_week_missing_post"
   );
 
   if (!signal) {
@@ -98,7 +98,7 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
   }
 
   const missingContentType: PlanningContentType =
-    signal.type === "current_week_missing_post" ? "פוסט" : "ריל";
+    signal.type === "next_week_missing_post" ? "פוסט" : "ריל";
 
   const [approvedUnscheduledRows, productionTasks, ideaRows] = await Promise.all([
     getApprovedContentNotInGantt(

@@ -624,12 +624,10 @@ const getWhatsImportantQueueRank = (entry: WhatsImportantQueueItem): number => {
 
 const formatPlanningStatus = (signal: PlanningHealthSignal): string => {
   switch (signal.type) {
-    case "current_week_missing_reel":
-      return "חסר ריל השבוע";
-    case "current_week_missing_post":
-      return "חסר פוסט השבוע";
-    case "next_week_empty_or_light":
-      return "שבוע הבא דל";
+    case "next_week_missing_reel":
+      return "חסר ריל לשבוע הבא";
+    case "next_week_missing_post":
+      return "חסר פוסט לשבוע הבא";
   }
 };
 

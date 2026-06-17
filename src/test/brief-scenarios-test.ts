@@ -217,18 +217,18 @@ const morning2c = buildMorningBriefFromData({
   monthName: "יוני",
   planningSignals: [
     {
-      type: "current_week_missing_reel",
+      type: "next_week_missing_reel",
       severity: "critical",
       missingCount: 1,
-      message: "השבוע חסר עוד ריל אחד בגאנט.",
-      recommendedAction: "בואי נשלים את השבוע",
+      message: "שבוע הבא חסר עוד ריל אחד בגאנט.",
+      recommendedAction: "בואי נשלים את השבוע הבא",
     },
     {
-      type: "current_week_missing_post",
+      type: "next_week_missing_post",
       severity: "critical",
       missingCount: 1,
-      message: "השבוע חסר עוד פוסט אחד בגאנט.",
-      recommendedAction: "בואי נשלים פוסט לשבוע",
+      message: "שבוע הבא חסר עוד פוסט אחד בגאנט.",
+      recommendedAction: "בואי נשלים פוסט לשבוע הבא",
     },
   ],
 });
@@ -241,11 +241,11 @@ assert(
   "morning includes one planning health background signal"
 );
 assert(
-  morning2c?.includes("השבוע חסר עוד ריל אחד בגאנט.") === true,
+  morning2c?.includes("שבוע הבא חסר עוד ריל אחד בגאנט.") === true,
   "morning includes the first planning signal"
 );
 assert(
-  morning2c?.includes("השבוע חסר עוד פוסט אחד בגאנט.") === false,
+  morning2c?.includes("שבוע הבא חסר עוד פוסט אחד בגאנט.") === false,
   "morning displays only one planning signal"
 );
 

@@ -8,7 +8,7 @@ const assert = (condition: boolean, message: string): void => {
   console.log(`PASS: ${message}`);
 };
 
-const anchorDate = new Date(2026, 5, 16);
+const anchorDate = new Date(2026, 5, 16); // Tuesday, current week starts 14/06/2026
 
 const baseItem = {
   contentId: "TEST-001",
@@ -18,45 +18,39 @@ const baseItem = {
 
 const healthy = computePlanningHealthSignals(
   [
-    { ...baseItem, contentId: "R1", date: "16/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "R2", date: "18/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "P1", date: "20/06/2026", contentType: "פוסט" },
-    { ...baseItem, contentId: "N1", date: "23/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "N2", date: "25/06/2026", contentType: "פוסט" },
+    { ...baseItem, contentId: "R1", date: "21/06/2026", contentType: "ריל" },
+    { ...baseItem, contentId: "R2", date: "24/06/2026", contentType: "ריל" },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
   { anchorDate }
 );
 
-assert(healthy.length === 0, "healthy gantt has no planning signals");
+assert(healthy.length === 0, "healthy next-week gantt has no planning signals");
 
 const missingReel = computePlanningHealthSignals(
   [
-    { ...baseItem, contentId: "R1", date: "16/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "P1", date: "20/06/2026", contentType: "פוסט" },
-    { ...baseItem, contentId: "N1", date: "23/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "N2", date: "25/06/2026", contentType: "פוסט" },
+    { ...baseItem, contentId: "R1", date: "21/06/2026", contentType: "ריל" },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
   { anchorDate }
 );
 
 assert(
-  missingReel.some((signal) => signal.type === "current_week_missing_reel"),
-  "missing reel creates signal"
+  missingReel.some((signal) => signal.type === "next_week_missing_reel"),
+  "missing next-week reel creates signal"
 );
 
 const missingPost = computePlanningHealthSignals(
   [
-    { ...baseItem, contentId: "R1", date: "16/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "R2", date: "18/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "N1", date: "23/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "N2", date: "25/06/2026", contentType: "פוסט" },
+    { ...baseItem, contentId: "R1", date: "21/06/2026", contentType: "ריל" },
+    { ...baseItem, contentId: "R2", date: "24/06/2026", contentType: "ריל" },
   ],
   { anchorDate }
 );
 
 assert(
-  missingPost.some((signal) => signal.type === "current_week_missing_post"),
-  "missing post creates signal"
+  missingPost.some((signal) => signal.type === "next_week_missing_post"),
+  "missing next-week post creates signal"
 );
 
 const collabOnlyDoesNotCount = computePlanningHealthSignals(
@@ -64,26 +58,27 @@ const collabOnlyDoesNotCount = computePlanningHealthSignals(
     {
       ...baseItem,
       contentId: "C1",
-      date: "16/06/2026",
+      date: "21/06/2026",
       contentType: "ריל",
       collaboration: "כן",
     },
     {
       ...baseItem,
       contentId: "C2",
-      date: "18/06/2026",
+      date: "24/06/2026",
       contentType: "ריל",
       collaboration: "מותג",
     },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
   { anchorDate }
 );
 
 assert(
   collabOnlyDoesNotCount.some(
-    (signal) => signal.type === "current_week_missing_reel"
+    (signal) => signal.type === "next_week_missing_reel"
   ),
-  "collaboration does not count as organic reel"
+  "collaboration does not count as organic next-week reel"
 );
 
 const placeholderDoesNotCount = computePlanningHealthSignals(
@@ -91,53 +86,59 @@ const placeholderDoesNotCount = computePlanningHealthSignals(
     {
       ...baseItem,
       contentId: "טרם תוכנן",
-      date: "16/06/2026",
+      date: "21/06/2026",
       contentType: "ריל",
     },
     {
       ...baseItem,
       contentId: "",
-      date: "18/06/2026",
+      date: "24/06/2026",
       contentType: "ריל",
     },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
   { anchorDate }
 );
 
 assert(
   placeholderDoesNotCount.some(
-    (signal) => signal.type === "current_week_missing_reel"
+    (signal) => signal.type === "next_week_missing_reel"
   ),
-  "placeholder content ids do not count as organic reel"
+  "placeholder content ids do not count as organic next-week reel"
 );
 
-const lightNextWeek = computePlanningHealthSignals(
+const cancelledDoesNotCount = computePlanningHealthSignals(
   [
-    { ...baseItem, contentId: "R1", date: "16/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "R2", date: "18/06/2026", contentType: "ריל" },
-    { ...baseItem, contentId: "P1", date: "20/06/2026", contentType: "פוסט" },
+    { ...baseItem, contentId: "R1", date: "21/06/2026", contentType: "ריל", status: "פורסם" },
+    { ...baseItem, contentId: "R2", date: "24/06/2026", contentType: "ריל", status: "בוטל" },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
   { anchorDate }
 );
 
 assert(
-  lightNextWeek.some((signal) => signal.type === "next_week_empty_or_light"),
-  "light next week creates signal"
+  cancelledDoesNotCount.some(
+    (signal) => signal.type === "next_week_missing_reel"
+  ),
+  "cancelled next-week reels do not count as organic reel"
 );
 
-const publishedDoesNotCount = computePlanningHealthSignals(
+const ThursdayAnchor = new Date(2026, 5, 18);
+const criticalLateWeek = computePlanningHealthSignals(
   [
-    { ...baseItem, contentId: "R1", date: "16/06/2026", contentType: "ריל", status: "פורסם" },
-    { ...baseItem, contentId: "R2", date: "18/06/2026", contentType: "ריל", status: "בוטל" },
+    { ...baseItem, contentId: "R1", date: "21/06/2026", contentType: "ריל" },
+    { ...baseItem, contentId: "P1", date: "25/06/2026", contentType: "פוסט" },
   ],
-  { anchorDate }
+  { anchorDate: ThursdayAnchor }
 );
 
 assert(
-  publishedDoesNotCount.some(
-    (signal) => signal.type === "current_week_missing_reel"
+  criticalLateWeek.some(
+    (signal) =>
+      signal.type === "next_week_missing_reel" &&
+      signal.severity === "critical"
   ),
-  "inactive statuses do not count as organic reel"
+  "next-week gaps become critical from Thursday"
 );
 
 console.log("\nPlanning health scenarios passed.");
