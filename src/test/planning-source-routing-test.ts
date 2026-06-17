@@ -74,10 +74,10 @@ const state = createPlanningSourceRoutingState({
 assert(state.activeSource === "approvedUnscheduled", "state starts from first available source");
 
 const yesResult = handlePlanningSourceRoutingReply(state, "כן");
-assert(yesResult.action === "selected", "yes selects first option");
+assert(yesResult.action === "clarify", "yes asks for explicit selection");
 assert(
-  yesResult.action === "selected" && yesResult.option.contentId === "ABC-001",
-  "yes selects the first listed content"
+  yesResult.message.includes("מספר") || yesResult.message.includes("שם התוכן"),
+  "yes selection explains how to choose"
 );
 
 const numberResult = handlePlanningSourceRoutingReply(state, "2");
@@ -122,8 +122,8 @@ const ideaBankState = createPlanningSourceRoutingState({
   ideaBank: [{ contentId: "IDEA-001", title: "רעיון מבנק" }],
 });
 
-const ideaBankSelection = handlePlanningSourceRoutingReply(ideaBankState, "כן");
-assert(ideaBankSelection.action === "selected", "idea bank yes selects first idea");
+const ideaBankSelection = handlePlanningSourceRoutingReply(ideaBankState, "1");
+assert(ideaBankSelection.action === "selected", "idea bank number selects first idea");
 assert(
   ideaBankSelection.action === "selected" && ideaBankSelection.source === "ideaBank",
   "idea bank selection exposes selected source"

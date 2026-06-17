@@ -290,9 +290,7 @@ export const handlePlanningSourceRoutingReply = (
   }
 
   if (["כן", "כן תודה", "סבבה", "יאללה"].includes(normalizedReply)) {
-    const firstOption = activeOptions[0];
-
-    if (!firstOption) {
+    if (!activeOptions[0]) {
       return {
         action: "new_idea",
         message: buildMessageForSource(state, "newIdea"),
@@ -300,10 +298,8 @@ export const handlePlanningSourceRoutingReply = (
     }
 
     return {
-      action: "selected",
-      source: state.activeSource,
-      option: firstOption,
-      message: buildSelectedMessage(state.activeSource, firstOption),
+      action: "clarify",
+      message: "תבחרי מספר מהרשימה או תכתבי את שם התוכן.",
     };
   }
 
