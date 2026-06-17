@@ -71,10 +71,16 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
   const currentWeekStart = startOfWeek(anchorDate);
   const nextWeekEnd = addDays(currentWeekStart, 13);
 
-  const ganttItems = await getGanttByDateRange(
+    const ganttItems = await getGanttByDateRange(
     spreadsheetId,
     currentWeekStart,
     nextWeekEnd
+  );
+
+  const allGanttItems = await getGanttByDateRange(
+    spreadsheetId,
+    new Date(2020, 0, 1),
+    new Date(2035, 11, 31)
   );
 
   const planningSignals = computePlanningHealthSignals(ganttItems, {
@@ -112,7 +118,7 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
     }));
 
   const scheduledContentIds = new Set(
-    ganttItems
+    allGanttItems
       .map((item) => (item.contentId || "").toString().trim())
       .filter(Boolean)
   );

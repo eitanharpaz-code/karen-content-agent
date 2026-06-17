@@ -73,8 +73,8 @@ const addDays = (date: Date, days: number): Date => {
 const isInRange = (date: Date, start: Date, end: Date): boolean =>
   date >= start && date <= end;
 
-const isInactiveStatus = (status: string | undefined): boolean =>
-  ["פורסם", "בוטל", "ארכיון"].includes((status || "").trim());
+const isCancelledStatus = (status: string | undefined): boolean =>
+  ["בוטל", "ארכיון"].includes((status || "").trim());
 
 const isCollaboration = (item: PlanningGanttItem): boolean => {
   const value = (item.collaboration || "").trim();
@@ -82,9 +82,9 @@ const isCollaboration = (item: PlanningGanttItem): boolean => {
   return value !== "" && value !== "לא";
 };
 
-const isOrganicActiveItem = (item: PlanningGanttItem): boolean =>
+const isOrganicScheduledItem = (item: PlanningGanttItem): boolean =>
   isUsableContentId(item.contentId) &&
-  !isInactiveStatus(item.status) &&
+  !isCancelledStatus(item.status) &&
   !isCollaboration(item);
 
 const isReel = (item: PlanningGanttItem): boolean =>
@@ -118,7 +118,7 @@ export const computePlanningHealthSignals = (
   const activeOrganicItems = ganttItems
     .map((item) => ({ item, date: parseSheetDate(item.date) }))
     .filter((entry): entry is { item: PlanningGanttItem; date: Date } =>
-      Boolean(entry.date) && isOrganicActiveItem(entry.item)
+      Boolean(entry.date) && isOrganicScheduledItem(entry.item)
     );
 
   const currentWeekItems = activeOrganicItems.filter((entry) =>
