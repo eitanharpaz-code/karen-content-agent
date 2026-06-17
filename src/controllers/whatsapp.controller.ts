@@ -117,6 +117,12 @@ import {
 } from "../services/daily-brief.service";
 import { detectOverdueDecisionIntent } from "../services/overdue-decision.service";
 import { computePlanningHealthSignals } from "../services/planning-health.service";
+import { buildCurrentWeekPlanningSourceRoutingState } from "../services/planning-source-routing-data.service";
+import {
+  buildPlanningSourceRoutingMessage,
+  handlePlanningSourceRoutingReply,
+  type PlanningSourceRoutingState,
+} from "../services/planning-source-routing.service";
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   try {
     await sendWhatsAppMessage(to, message);
@@ -304,7 +310,26 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         });
       }
 
+      if (pendingQuestion?.questionType === "planning_source_routing") {
+        const state = pendingQuestion.context as PlanningSourceRoutingState;
+        const result = handlePlanningSourceRoutingReply(state, incomingText);
 
+        if (result.action === "next_source") {
+          storePendingQuestion(sender, {
+            questionType: "planning_source_routing",
+            context: result.state,
+          });
+        } else {
+          clearPendingQuestion(sender);
+        }
+
+        await safeSendWhatsAppMessage(sender, result.message);
+
+        return res.status(200).json({
+          status: `planning_source_routing_${result.action}`,
+          sender,
+        });
+      }
     const duplicateSensitivePendingTypes = new Set([
       "gantt_collision",
       "gantt_move_existing",
@@ -1523,7 +1548,49 @@ ${updatedDraft.summary}
   const clarificationPrompt = generateClarificationPrompt(false);
   await safeSendWhatsAppMessage(sender, clarificationPrompt);
   return res.status(200).json({ status: "no_pending_for_edit", sender });
-}
+  }
+    const normalizedPlanningSourceText = incomingText.trim();
+
+    if (
+      normalizedPlanningSourceText === "בואי נשלים את השבוע" ||
+      normalizedPlanningSourceText === "בואי נשלים פוסט לשבוע"
+    ) {
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+
+      if (!spreadsheetId) {
+        throw new Error("Missing GOOGLE_SHEETS_ID environment variable.");
+      }
+
+      const state = await buildCurrentWeekPlanningSourceRoutingState(spreadsheetId);
+
+      if (!state) {
+        await safeSendWhatsAppMessage(
+          sender,
+          "לא מצאתי כרגע חוסר דחוף בגאנט של השבוע."
+        );
+
+        return res.status(200).json({
+          status: "planning_source_routing_no_gap",
+          sender,
+        });
+      }
+
+      storePendingQuestion(sender, {
+        questionType: "planning_source_routing",
+        context: state,
+      });
+
+      await safeSendWhatsAppMessage(
+        sender,
+        buildPlanningSourceRoutingMessage(state)
+      );
+
+      return res.status(200).json({
+        status: "planning_source_routing_started",
+        sender,
+      });
+    }
+
     // ===== VISIBILITY INTENT DETECTION =====
     console.log(`[Route Debug] About to detect visibility intent...`);
     const visibilityIntent = detectVisibilityIntent(incomingText);
