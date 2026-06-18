@@ -386,6 +386,19 @@ export const selectAfternoonFocus = (
   ) || null;
 };
 
+export const shouldBypassInteractionForAfternoonReminder = (
+  priorityItems: ContentPriorityItem[],
+  ganttIsLight: boolean
+): boolean => {
+  const focus = selectAfternoonFocus(priorityItems, ganttIsLight);
+
+  return Boolean(
+    focus?.priorityLevel === "P0" &&
+      !focus.isOverdueAwaitingDecision &&
+      focus.recommendedAction === "verify-upload"
+  );
+};
+
 export const buildAfternoonReminderFromData = ({
   priorityItems,
   ganttIsLight,
@@ -451,7 +464,12 @@ export const buildAfternoonReminderFromData = ({
   return null;
 };
 
-export const buildAfternoonReminder = async (): Promise<string | null> => {
+export type AfternoonReminderResult = {
+  message: string | null;
+  bypassInteraction: boolean;
+};
+
+export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderResult> => {
   const { priorityItems } = await fetchBriefData();
 
   // בדוק גאנט 14 ימים קדימה לצורך סף "ריק"
@@ -467,9 +485,21 @@ export const buildAfternoonReminder = async (): Promise<string | null> => {
     ).length < 3;
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
-  return buildAfternoonReminderFromData({
-    priorityItems,
-    ganttIsLight,
-    monthName,
-  });
+  return {
+    message: buildAfternoonReminderFromData({
+      priorityItems,
+      ganttIsLight,
+      monthName,
+    }),
+    bypassInteraction: shouldBypassInteractionForAfternoonReminder(
+      priorityItems,
+      ganttIsLight
+    ),
+  };
+};
+
+export const buildAfternoonReminder = async (): Promise<string | null> => {
+  const result = await buildAfternoonReminderResult();
+
+  return result.message;
 };

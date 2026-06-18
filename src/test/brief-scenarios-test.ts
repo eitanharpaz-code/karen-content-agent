@@ -1,6 +1,7 @@
 import {
   buildMorningBriefFromData,
   getBriefGanttDateRange,
+  shouldBypassInteractionForAfternoonReminder,
 } from "../services/daily-brief.service";
 import {
   computePriorityItems,
@@ -144,6 +145,33 @@ assert(
   morning2?.includes("*קיצורים נוספים*") === false,
   "morning omits the repeated shortcuts section"
 );
+
+assert(
+  shouldBypassInteractionForAfternoonReminder(morning2Items, false) === true,
+  "ready P0 afternoon reminder bypasses daily interaction guard"
+);
+
+const invalidContentIdItems = makeItems([], [
+  {
+    contentId: "",
+    taskName: "שורת הפקה בלי מזהה",
+    filmed: "כן",
+    edited: "כן",
+    coverReady: "כן",
+  },
+  {
+    contentId: "undefined",
+    taskName: "שורת הפקה עם מזהה לא תקין",
+    filmed: "כן",
+    edited: "כן",
+    coverReady: "כן",
+  },
+]);
+assert(
+  invalidContentIdItems.length === 0,
+  "priority ignores production rows without usable content id"
+);
+
 
 
 // Morning 2b: overdue decision sits after active P0 and before P1.

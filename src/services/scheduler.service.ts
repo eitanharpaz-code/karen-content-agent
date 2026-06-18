@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { sendWhatsAppMessage } from "./whatsapp.service";
 import {
   buildMorningBrief,
-  buildAfternoonReminder,
+  buildAfternoonReminderResult,
   hasInteractedToday,
 } from "./daily-brief.service";
 
@@ -55,14 +55,13 @@ export const startScheduler = (): void => {
     async () => {
       console.log("[Daily Brief] Running afternoon reminder check...");
       try {
-        const message = await buildAfternoonReminder();
+        const { message, bypassInteraction } = await buildAfternoonReminderResult();
         if (!message) {
           console.log("[Daily Brief] No actionable reminder - skipping.");
           return;
         }
-        // תוכן שעולה היום ומוכן — נשלח תמיד
-        const isTodayReadyAlert = message.includes("היום אמור לעלות:");
-        if (!isTodayReadyAlert && hasInteractedToday(TO)) {
+        // תוכן שעולה היום ומוכן - נשלח תמיד
+        if (!bypassInteraction && hasInteractedToday(TO)) {
           console.log("[Daily Brief] Karen interacted today and no urgent today-content - skipping.");
           return;
         }

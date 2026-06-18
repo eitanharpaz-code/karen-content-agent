@@ -224,8 +224,15 @@ const buildCta = (action: RecommendedAction, title: string): string => {
 };
 const isUsableContentId = (contentId: string): boolean => {
   const normalized = (contentId || "").trim();
+  const lowered = normalized.toLowerCase();
 
-  return normalized !== "" && normalized !== "טרם תוכנן";
+  return (
+    normalized !== "" &&
+    normalized !== "-" &&
+    normalized !== "טרם תוכנן" &&
+    lowered !== "undefined" &&
+    lowered !== "null"
+  );
 };
 
 const TERMINAL_GANTT_STATUSES = new Set(["פורסם", "בוטל", "ארכיון"]);
@@ -296,7 +303,8 @@ export const computePriorityItems = (ganttItems: GanttItemInput[], productionTas
 }
 
 for (const task of productionTasks) {
-    if (ganttContentIds.has(task.contentId)) continue;
+      if (!isUsableContentId(task.contentId)) continue;
+      if (ganttContentIds.has(task.contentId)) continue;
     const displayTitle = getBriefDisplayTitle(task.taskName);
     const filmed = task.filmed || "לא";
     const edited = task.edited || "לא";
