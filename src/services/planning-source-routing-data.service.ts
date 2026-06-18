@@ -117,6 +117,10 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
       title: item.name,
     }));
 
+  const approvedUnscheduledContentIds = new Set(
+    approvedUnscheduled.map((item) => item.contentId).filter(Boolean)
+  );
+
   const scheduledContentIds = new Set(
     allGanttItems
       .map((item) => (item.contentId || "").toString().trim())
@@ -127,6 +131,7 @@ export const buildCurrentWeekPlanningSourceRoutingState = async (
     (task) =>
       task.contentId &&
       !scheduledContentIds.has(task.contentId) &&
+        !approvedUnscheduledContentIds.has(task.contentId) &&
       matchesContentType(task.contentType, missingContentType)
   );
 
