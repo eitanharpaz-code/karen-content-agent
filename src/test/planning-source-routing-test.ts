@@ -117,7 +117,7 @@ assert(noExistingYes.message.includes("פוסט חדש") || noExistingYes.messag
 
 const noExistingNo = handlePlanningSourceRoutingReply(noExistingState, "לא");
 assert(noExistingNo.action === "cancelled", "no on empty source cancels new content flow");
-assert(noExistingNo.message.includes("לא פותחת תוכן חדש"), "empty source cancellation is explicit");
+assert(noExistingNo.message.includes("מה דחוף"), "empty source cancellation offers next actions");
 
 const ideaBankState = createPlanningSourceRoutingState({
   signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
