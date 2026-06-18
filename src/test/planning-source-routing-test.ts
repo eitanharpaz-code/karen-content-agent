@@ -119,6 +119,20 @@ const noExistingNo = handlePlanningSourceRoutingReply(noExistingState, "לא");
 assert(noExistingNo.action === "cancelled", "no on empty source cancels new content flow");
 assert(noExistingNo.message.includes("מה דחוף"), "empty source cancellation offers next actions");
 
+const reelEmptyNo = handlePlanningSourceRoutingReply(
+  createPlanningSourceRoutingState({
+    signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
+    missingContentType: "ריל",
+    approvedUnscheduled: [],
+    nearReadyProduction: [],
+    approvedNotStarted: [],
+    ideaBank: [],
+  }),
+  "לא"
+);
+assert(reelEmptyNo.message.includes("רעיון חדש לריל"), "empty reel cancellation offers reel next action");
+
+
 const ideaBankState = createPlanningSourceRoutingState({
   signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",

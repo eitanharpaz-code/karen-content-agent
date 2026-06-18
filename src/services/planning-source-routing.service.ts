@@ -281,7 +281,7 @@ export const handlePlanningSourceRoutingReply = (
           "אפשר להמשיך באחת הדרכים:",
           "* מה דחוף",
           "* בואי נבדוק את הגאנט",
-          "* רעיון חדש לפוסט: [כיוון]",
+          `* רעיון חדש ל${typeLabel(state.missingContentType)}: [כיוון]`,
           "* בואי נעצור פה ונדבר בהמשך",
         ].join("\n"),
       };
