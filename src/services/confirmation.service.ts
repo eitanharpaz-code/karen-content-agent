@@ -121,14 +121,25 @@ export const isNewIdeaCommand = (text: string): boolean => {
 
   return (
     normalized.startsWith("רעיון חדש:") ||
+    normalized.startsWith("רעיון חדש לפוסט:") ||
+    normalized.startsWith("רעיון חדש לריל:") ||
     normalized === "רעיון חדש לפוסט" ||
     normalized === "רעיון חדש לריל"
   );
 };
 
 export const getNewIdeaText = (text: string): string | null => {
-  const match = text.match(/רעיון חדש\s*:\s*(.+)/i);
+  const match = text.match(/רעיון חדש(?:\s+(?:לפוסט|לריל))?\s*:\s*(.+)/i);
   return match ? match[1].trim() : null;
+};
+
+export const getNewIdeaContentType = (text: string): "פוסט" | "ריל" | null => {
+  const normalized = text.trim().toLowerCase();
+
+  if (normalized.startsWith("רעיון חדש לפוסט")) return "פוסט";
+  if (normalized.startsWith("רעיון חדש לריל")) return "ריל";
+
+  return null;
 };
 export const isTrendCommand = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();

@@ -10,6 +10,7 @@ import {
   displayPriority,
   displayTone,
   displayCategory,
+  displayContentType,
   storePendingConfirmation,
   getPendingConfirmation,
   clearPendingConfirmation,
@@ -19,6 +20,7 @@ import {
   isResetRequest,
   isNewIdeaCommand,
   getNewIdeaText,
+  getNewIdeaContentType,
   isTrendCommand,
  isArchiveCommand,
   extractArchiveTarget,
@@ -1440,10 +1442,11 @@ const replyText = `מעולה, הטרנד נשמר.
     }
     if (isNewIdeaCommand(incomingText)) {
       const newIdeaText = getNewIdeaText(incomingText);
+      const requestedContentType = getNewIdeaContentType(incomingText);
       clearPendingConfirmation(sender);
 
       if (!newIdeaText) {
-        const replyText = "רוצה לפתוח רעיון חדש?\nתשלחי לי:\nרעיון חדש: ...\nואני אמשיך משם.";
+        const replyText = "רוצה לפתוח רעיון חדש?\nתשלחי לי:\nרעיון חדש: ...\nאו:\nרעיון חדש לפוסט: ...\nרעיון חדש לריל: ...\nואני אמשיך משם.";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "new_idea_command_missing_text", sender });
       }
@@ -1451,13 +1454,15 @@ const replyText = `מעולה, הטרנד נשמר.
       const draft = await createContentDraft(newIdeaText);
       const draftSummary = {
         ...draft,
+        contentType: requestedContentType || draft.contentType,
         originalUserInput: newIdeaText,
       };
       storePendingConfirmation(sender, draftSummary);
 
-      const categoryText = displayCategory(draft.category);
-const toneText = displayTone(draft.tone);
-const rawPriorityText = displayPriority(draft.priority);
+      const categoryText = displayCategory(draftSummary.category);
+const contentTypeText = displayContentType(draftSummary.contentType);
+const toneText = displayTone(draftSummary.tone);
+const rawPriorityText = displayPriority(draftSummary.priority);
 const priorityText =
   rawPriorityText === "גבוה" ? "גבוהה" :
   rawPriorityText === "בינוני" ? "בינונית" :
@@ -1468,13 +1473,14 @@ const replyText = `יאללה, בניתי טיוטה לרעיון חדש.
 
 הייתי שומרת את זה ככה:
 
-שם: ${draft.shortName}
+שם: ${draftSummary.shortName}
 קטגוריה: ${categoryText}
+סוג תוכן: ${contentTypeText}
 טון: ${toneText}
 עדיפות: ${priorityText}
 
 הכיוון:
-${draft.summary}
+${draftSummary.summary}
 
 לשמור ככה?
 אם לא, תגידי לי מה לשנות.`;
