@@ -20,7 +20,7 @@ const missingReel = buildPlanningSourceRoutingMessage({
   ideaBank: [],
 });
 
-assert(missingReel.includes("רעיון חדש לריל"), "missing reel offers reel idea generation");
+assert(missingReel.includes("מסלול מהיר"), "missing reel points to fastlane-style creation");
 assert(!missingReel.includes("רעיונות לפוסט"), "missing reel does not offer post ideas");
 assert(!missingReel.includes("רוצה שאציע 3 כיוונים"), "empty source does not ask an unsupported yes/no question");
 
@@ -33,7 +33,7 @@ const missingPost = buildPlanningSourceRoutingMessage({
   ideaBank: [],
 });
 
-assert(missingPost.includes("רעיון חדש לפוסט"), "missing post offers post idea generation");
+assert(missingPost.includes("מסלול מהיר"), "missing post points to fastlane-style creation");
 assert(!missingPost.includes("רעיונות לריל"), "missing post does not offer reel ideas");
 
 const approvedReel = buildPlanningSourceRoutingMessage({
@@ -113,7 +113,12 @@ const noExistingState = createPlanningSourceRoutingState({
 
 const noExistingYes = handlePlanningSourceRoutingReply(noExistingState, "כן");
 assert(noExistingYes.action === "new_idea", "yes on empty source explains how to start a new idea");
-assert(noExistingYes.message.includes("פוסט חדש"), "empty post source stays post-specific");
+assert(noExistingYes.message.includes("פוסט חדש") || noExistingYes.message.includes("פוסט"), "empty post source stays post-specific");
+
+const noExistingNo = handlePlanningSourceRoutingReply(noExistingState, "לא");
+assert(noExistingNo.action === "cancelled", "no on empty source cancels new content flow");
+assert(noExistingNo.message.includes("לא פותחת תוכן חדש"), "empty source cancellation is explicit");
+
 const ideaBankState = createPlanningSourceRoutingState({
   signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",

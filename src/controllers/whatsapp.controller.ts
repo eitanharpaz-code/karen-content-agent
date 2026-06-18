@@ -342,12 +342,12 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           });
         }
 
-        if (result.action === "new_idea") {
+        if (result.action === "new_idea" || result.action === "cancelled") {
           clearPendingQuestion(sender);
           await safeSendWhatsAppMessage(sender, result.message);
 
           return res.status(200).json({
-            status: "planning_source_routing_new_idea",
+            status: `planning_source_routing_${result.action}`,
             sender,
           });
         }

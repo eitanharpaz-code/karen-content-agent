@@ -45,6 +45,10 @@ export type PlanningSourceRoutingReplyResult =
   | {
       action: "new_idea";
       message: string;
+    }
+  | {
+      action: "cancelled";
+      message: string;
     };
 
 const sourceOrder: PlanningSourceKey[] = [
@@ -191,12 +195,12 @@ const buildMessageForSource = (
   return [
     input.signalMessage,
     "",
-    "לא מצאתי משהו קיים שמתאים להשלים איתו את החוסר בגאנט.",
+    `לא מצאתי ${contentType} קיים שמתאים להשלים איתו את החוסר בגאנט.`,
     "",
-    `כדי להתחיל ${contentType} חדש, תכתבי לי את הכיוון או הנושא.`,
+    `הדרך הנכונה לסגור את זה היא לפתוח ${contentType} חדש במסלול מהיר.`,
+    `תכתבי לי כיוון או נושא ל${contentType}, ואני אמשיך משם.`,
     "",
-    "אפשר למשל לכתוב:",
-    `* ${newIdeaCta(input.missingContentType)}`,
+    "אפשר גם לכתוב: ביטול",
   ].join("\n");
 };
 
@@ -267,7 +271,14 @@ export const handlePlanningSourceRoutingReply = (
   const normalizedReply = normalizeText(replyText);
   const activeOptions = getOptionsForSource(state, state.activeSource);
 
-  if (["לא", "לא תודה", "עזבי", "עזוב"].includes(normalizedReply)) {
+  if (["לא", "לא תודה", "עזבי", "עזוב", "ביטול"].includes(normalizedReply)) {
+    if (state.activeSource === "newIdea") {
+      return {
+        action: "cancelled",
+        message: "בסדר, לא פותחת תוכן חדש עכשיו.",
+      };
+    }
+
     const nextSource = nextAvailableSource(state, state.activeSource);
     const nextState: PlanningSourceRoutingState = {
       ...state,
