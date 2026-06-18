@@ -22,6 +22,7 @@ const missingReel = buildPlanningSourceRoutingMessage({
 
 assert(missingReel.includes("רעיון חדש לריל"), "missing reel offers reel idea generation");
 assert(!missingReel.includes("רעיונות לפוסט"), "missing reel does not offer post ideas");
+assert(!missingReel.includes("רוצה שאציע 3 כיוונים"), "empty source does not ask an unsupported yes/no question");
 
 const missingPost = buildPlanningSourceRoutingMessage({
   signalMessage: "שבוע הבא חסר עוד פוסט אחד בגאנט.",
@@ -111,8 +112,8 @@ const noExistingState = createPlanningSourceRoutingState({
 });
 
 const noExistingYes = handlePlanningSourceRoutingReply(noExistingState, "כן");
-assert(noExistingYes.action === "new_idea", "yes on empty source offers new idea");
-assert(noExistingYes.message.includes("רעיון חדש לפוסט"), "empty post source stays post-specific");
+assert(noExistingYes.action === "new_idea", "yes on empty source explains how to start a new idea");
+assert(noExistingYes.message.includes("פוסט חדש"), "empty post source stays post-specific");
 const ideaBankState = createPlanningSourceRoutingState({
   signalMessage: "שבוע הבא חסר עוד ריל אחד בגאנט.",
   missingContentType: "ריל",
