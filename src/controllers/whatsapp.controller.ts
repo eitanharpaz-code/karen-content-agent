@@ -1734,6 +1734,8 @@ ${updatedDraft.summary}
     const normalizedPlanningSourceText = incomingText.trim();
 
     if (
+      normalizedPlanningSourceText === "בואי נבדוק את הגאנט" ||
+      normalizedPlanningSourceText === "בואי נתכנן קדימה" ||
       normalizedPlanningSourceText === "בואי נשלים את השבוע" ||
       normalizedPlanningSourceText === "בואי נשלים פוסט לשבוע"
     ) {
@@ -1748,7 +1750,7 @@ ${updatedDraft.summary}
       if (!state) {
         await safeSendWhatsAppMessage(
           sender,
-          "לא מצאתי כרגע חוסר דחוף בגאנט של השבוע."
+          "לא מצאתי כרגע חוסר דחוף בגאנט של שבוע הבא."
         );
 
         return res.status(200).json({
