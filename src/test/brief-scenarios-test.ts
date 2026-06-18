@@ -221,14 +221,14 @@ const morning2c = buildMorningBriefFromData({
       severity: "critical",
       missingCount: 1,
       message: "שבוע הבא חסר עוד ריל אחד בגאנט.",
-      recommendedAction: "בואי נשלים את השבוע הבא",
+      recommendedAction: "בואי נבדוק את הגאנט",
     },
     {
       type: "next_week_missing_post",
       severity: "critical",
       missingCount: 1,
       message: "שבוע הבא חסר עוד פוסט אחד בגאנט.",
-      recommendedAction: "בואי נשלים פוסט לשבוע הבא",
+      recommendedAction: "בואי נבדוק את הגאנט",
     },
   ],
 });

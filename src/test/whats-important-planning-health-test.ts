@@ -59,7 +59,7 @@ const planningSignals: PlanningHealthSignal[] = [
     type: "next_week_missing_reel",
     severity: "critical",
     message: "שבוע הבא חסר עוד ריל אחד בגאנט.",
-    recommendedAction: "בואי נשלים את השבוע הבא",
+    recommendedAction: "בואי נבדוק את הגאנט",
     missingCount: 1,
   },
 ];
@@ -79,7 +79,7 @@ assert(p3Index !== -1, "P3 appears in whats important");
 assert(p1Index < planningIndex, "P1 appears before planning health");
 assert(planningIndex < p3Index, "planning health appears before P3");
 assert(
-  response.includes("* בואי נשלים את השבוע הבא"),
+  response.includes("* בואי נבדוק את הגאנט"),
   "planning health exposes a reply endpoint"
 );
 

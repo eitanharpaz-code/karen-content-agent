@@ -1735,9 +1735,11 @@ ${updatedDraft.summary}
 
     if (
       normalizedPlanningSourceText === "בואי נבדוק את הגאנט" ||
+      normalizedPlanningSourceText === "בוא נבדוק את הגאנט" ||
       normalizedPlanningSourceText === "בואי נתכנן קדימה" ||
       normalizedPlanningSourceText === "בואי נשלים את השבוע" ||
-      normalizedPlanningSourceText === "בואי נשלים פוסט לשבוע"
+      normalizedPlanningSourceText === "בואי נשלים פוסט לשבוע" ||
+      normalizedPlanningSourceText === "בואי נשלים פוסט לשבוע הבא"
     ) {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 

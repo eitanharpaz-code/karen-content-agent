@@ -141,7 +141,7 @@ export const computePlanningHealthSignals = (
         missingCount === 1
           ? "שבוע הבא חסר עוד ריל אחד בגאנט."
           : `שבוע הבא חסרים עוד ${missingCount} רילסים בגאנט.`,
-      recommendedAction: "בואי נשלים את השבוע הבא",
+      recommendedAction: "בואי נבדוק את הגאנט",
     });
   }
 
@@ -155,7 +155,7 @@ export const computePlanningHealthSignals = (
         missingCount === 1
           ? "שבוע הבא חסר עוד פוסט אחד בגאנט."
           : `שבוע הבא חסרים עוד ${missingCount} פוסטים בגאנט.`,
-      recommendedAction: "בואי נשלים פוסט לשבוע הבא",
+      recommendedAction: "בואי נבדוק את הגאנט",
     });
   }
 
