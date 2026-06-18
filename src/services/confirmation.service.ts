@@ -118,7 +118,12 @@ export const isResetRequest = (text: string): boolean => {
 
 export const isNewIdeaCommand = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
-  return normalized.startsWith("רעיון חדש:");
+
+  return (
+    normalized.startsWith("רעיון חדש:") ||
+    normalized === "רעיון חדש לפוסט" ||
+    normalized === "רעיון חדש לריל"
+  );
 };
 
 export const getNewIdeaText = (text: string): string | null => {
