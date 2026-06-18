@@ -377,3 +377,73 @@ Operational ordering should be based on:
 - whether content is organic or collaboration
 
 Keep the column as legacy metadata for now, but do not use it as the main ranking rule.
+
+## Gantt Scheduling Flow Map - 2026-06-18
+
+### Two Business Flows
+
+There are two separate business flows that both use the same technical Gantt write handler.
+
+#### 1. Approved / Fastlane Content Scheduling
+
+Goal: a specific content item already exists and the system asks whether to place it in the Gantt.
+
+Flow:
+1. Content is approved or created through fastlane.
+2. The system suggests an available Gantt date.
+3. User can approve, reject, provide another date, or cancel.
+4. On approval, the system writes the item to `גאנט תוכן`.
+5. After the write, the system asks for upload time.
+6. If the user does not schedule now, the content still remains available through approved content / production priority.
+
+This flow answers: "I have this content, where should it go?"
+
+#### 2. Forward Gantt Gap Filling
+
+Goal: next week is missing required organic coverage, such as a post or reel.
+
+Flow:
+1. Planning health detects a forward Gantt gap.
+2. `מה דחוף` / Daily Brief exposes the gap with CTA: `בואי נבדוק את הגאנט`.
+3. Planning routing identifies the missing type: post or reel.
+4. Collaboration content does not count toward organic coverage.
+5. Source order:
+   - approved unscheduled content
+   - near-ready production
+   - approved not started
+   - idea bank only as approval / fastlane source, not direct Gantt scheduling
+6. After a schedulable source is selected, the flow hands off to the shared Gantt date handler.
+7. The shared handler writes to Gantt and asks for upload time.
+
+This flow answers: "There is a gap, what is the best content to fill it?"
+
+### Shared Technical Handler
+
+Both flows may use `gantt_write_new_date`.
+
+Required behavior:
+- `כן` confirms the suggested date.
+- A valid date chooses a different date.
+- A number can choose from alternatives.
+- `לא` rejects only the suggested date and asks for another date / another content / cancel.
+- `תוכן אחר` returns to content selection.
+- `ביטול` cancels scheduling.
+- On write, use `addRowToGantt`.
+- After writing, ask for upload time through `gantt_upload_time`.
+
+### Current Audit Findings
+
+Closed:
+- Planning health checks next-week coverage.
+- Missing post/reel CTA uses `בואי נבדוק את הגאנט`.
+- `contentType` is stored in idea bank and approved content.
+- Manual data backfill is complete.
+- Planning source routing now finds `WED-005` as the approved unscheduled post for the current missing-post gap.
+- Planning source routing no longer repeats the same `contentId` in `approvedUnscheduled` and `approvedNotStarted`.
+- Fastlane preserves `contentType` when saving directly to approved content.
+
+Open / watch:
+- Stage D is still separate:
+  - P0 ready-late spam bypass decision.
+  - Empty `contentId` bug.
+  - Old unpublished rows creating too many P0 items.

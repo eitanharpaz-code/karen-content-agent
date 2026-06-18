@@ -2260,7 +2260,8 @@ export const saveFastTrackContent = async (
   summary: string,
   category: string,
   tone: string,
-  priority: string
+  priority: string,
+  contentType: string = "ריל"
 ): Promise<void> => {
   const timestamp = new Date().toISOString();
 
@@ -2275,6 +2276,7 @@ export const saveFastTrackContent = async (
     "",
     "",
     timestamp,
+    contentType || "ריל",
   ]);
 
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [

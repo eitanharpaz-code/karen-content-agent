@@ -1536,7 +1536,8 @@ ${draftSummary.summary}
               pendingDraft.summary,
               pendingDraft.category,
               pendingDraft.tone,
-              pendingDraft.priority
+              pendingDraft.priority,
+              pendingDraft.contentType || "ריל"
             );
 
             // חפש חור פנוי בגאנט
