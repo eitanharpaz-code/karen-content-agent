@@ -569,16 +569,39 @@ export const findProductionTaskByName = async (
           continue;
         }
 
-        // Try includes match with normalized text
-        if (normalizedTaskName.includes(normalizedSearchName) || normalizedSearchName.includes(normalizedTaskName)) {
-          console.log(`[Sprint 7] ✓ Includes match at row ${sheetRowNumber}`);
+// Try includes match with normalized text
+        // Guard: both sides must be >= 4 chars. Prevents "שמלה" or "חדש" from matching alone.
+        const MIN_INCLUDES_LENGTH = 4;
+        const searchTokenCount = normalizedSearchName.split(/\s+/).filter(Boolean).length;
+        if (
+          searchTokenCount >= 2 &&
+          normalizedSearchName.length >= MIN_INCLUDES_LENGTH &&
+          normalizedTaskName.length >= MIN_INCLUDES_LENGTH &&
+          normalizedTaskName.includes(normalizedSearchName)
+        ) {
+          console.log(`[Sprint E] ✓ Includes match (task contains search) at row ${sheetRowNumber}`);
           includesMatches.push({ rowIndex: sheetRowNumber, row });
           continue;
         }
-
+        if (
+          searchTokenCount >= 2 &&
+          normalizedSearchName.length >= MIN_INCLUDES_LENGTH &&
+          normalizedTaskName.length >= MIN_INCLUDES_LENGTH &&
+          normalizedSearchName.includes(normalizedTaskName)
+        ) {
+          console.log(`[Sprint E] ✓ Includes match (search contains task) at row ${sheetRowNumber}`);
+          includesMatches.push({ rowIndex: sheetRowNumber, row });
+          continue;
+        }
         // Try includes match with punctuation-normalized text
-        if (punctuationNormalizedTask.includes(punctuationNormalizedSearch) || punctuationNormalizedSearch.includes(punctuationNormalizedTask)) {
-          console.log(`[Sprint 7] ✓ Includes punctuation-normalized match at row ${sheetRowNumber}`);
+        if (
+          searchTokenCount >= 2 &&
+          punctuationNormalizedSearch.length >= MIN_INCLUDES_LENGTH &&
+          punctuationNormalizedTask.length >= MIN_INCLUDES_LENGTH &&
+          (punctuationNormalizedTask.includes(punctuationNormalizedSearch) ||
+            punctuationNormalizedSearch.includes(punctuationNormalizedTask))
+        ) {
+          console.log(`[Sprint E] ✓ Includes punctuation-normalized match at row ${sheetRowNumber}`);
           includesMatches.push({ rowIndex: sheetRowNumber, row });
           continue;
         }
@@ -678,27 +701,13 @@ ${candidateList}
                             contentName.toLowerCase().split(/\s+/).every((word) => candidateName.toLowerCase().includes(word));
           return { rowIndex: candidates[index].rowIndex, row: candidates[index].row };
         }
-      } catch (claudeError) {
-        console.error(`[Claude Matching] Error: ${claudeError}. Falling back to token overlap.`);
-        // Continue to token overlap fallback below
-      }
-
-      // Token overlap fallback if Claude fails
-      const highestScore = Math.max(...scoredMatches.map((match) => match.score));
-      const bestMatches = scoredMatches.filter((match) => match.score === highestScore);
-
-      if (highestScore < 1) {
-        console.log(`[Sprint 8] Highest score ${highestScore} below threshold; no match`);
+} catch (claudeError) {
+        // Stage E: Claude failure → return null. Do NOT fall back to weak token overlap.
+        // A failed Claude call means we have no confident match — safer to open Fast Track
+        // than to risk updating the wrong production row.
+        console.error(`[Claude Matching] Error: ${claudeError}. Returning null (no unsafe fallback).`);
         return null;
       }
-
-      if (bestMatches.length === 1) {
-        console.log(`[Sprint 8] Best token match at row ${bestMatches[0].rowIndex} with score ${highestScore}`);
-        return bestMatches[0];
-      }
-
-      console.log(`[Sprint 8] Multiple best token matches found with score ${highestScore}`);
-      return { ambiguous: true, matches: bestMatches };
     }
 
     console.log(`[Sprint 7] No production task found for content name: ${contentName}`);
