@@ -210,16 +210,22 @@ export const parseEditRequest = (text: string): { field: string; value: string }
 
   // 1. Explicit summary edits - check and return immediately without re-parsing value
   if (normalized.includes("סיכום") || normalized.includes("summary") ||
-      normalized.includes("תיאור")) {
+      normalized.includes("תיאור") || normalized.includes("כיוון")) {
     // Extract everything after summary indicators - explicit patterns only
+    // "כיוון" (direction) included because that's the label the bot itself
+    // shows in draft messages ("הכיוון: ...") — users naturally echo it back.
     const summaryPatterns = [
-      /תשנה את הסיכום ל[:\s]*(.+)/i,
-      /שנה את הסיכום ל[:\s]*(.+)/i,
-      /תעדכן את הסיכום ל[:\s]*(.+)/i,
-      /הסיכום צריך להיות[:\s]*(.+)/i,
-      /בסיכום תכתוב[:\s]*(.+)/i,
-      /שנה סיכום ל[:\s]*(.+)/i,
-      /(?:סיכום|summary|תיאור)[:\s]*(.+)/i,
+      /תשנה את הכיוון ל[:\s]*[\r\n]*\s*(.+)/is,
+      /שנה את הכיוון ל[:\s]*[\r\n]*\s*(.+)/is,
+      /תעדכן את הכיוון ל[:\s]*[\r\n]*\s*(.+)/is,
+      /הכיוון צריך להיות[:\s]*[\r\n]*\s*(.+)/is,
+      /תשנה את הסיכום ל[:\s]*[\r\n]*\s*(.+)/is,
+      /שנה את הסיכום ל[:\s]*[\r\n]*\s*(.+)/is,
+      /תעדכן את הסיכום ל[:\s]*[\r\n]*\s*(.+)/is,
+      /הסיכום צריך להיות[:\s]*[\r\n]*\s*(.+)/is,
+      /בסיכום תכתוב[:\s]*[\r\n]*\s*(.+)/is,
+      /שנה סיכום ל[:\s]*[\r\n]*\s*(.+)/is,
+      /(?:סיכום|summary|תיאור|כיוון)[:\s]*[\r\n]*\s*(.+)/is,
     ];
 
     for (const pattern of summaryPatterns) {
