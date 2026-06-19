@@ -271,6 +271,17 @@ export const handlePlanningSourceRoutingReply = (
   const normalizedReply = normalizeText(replyText);
   const activeOptions = getOptionsForSource(state, state.activeSource);
 
+  // The prompt itself offers ideaCta(...) as a way to skip straight to new-idea
+  // brainstorming (e.g. "תראי לי רעיונות לריל"). The user is very likely to type
+  // back exactly that text, so it must be recognized even though it isn't a
+  // numbered option or a yes/no answer.
+  if (normalizedReply === normalizeText(ideaCta(state.missingContentType))) {
+    return {
+      action: "new_idea",
+      message: buildMessageForSource(state, "newIdea"),
+    };
+  }
+
   if (["לא", "לא תודה", "עזבי", "עזוב", "ביטול"].includes(normalizedReply)) {
     if (state.activeSource === "newIdea") {
       return {
