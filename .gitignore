@@ -142,3 +142,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 karen-content-agent-*.json*.before-*
+
+# Google service account keys
+karen-content-agent-*.json
+*-service-account*.json
