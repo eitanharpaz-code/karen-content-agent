@@ -263,6 +263,36 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     const pendingQuestion = getPendingQuestion(sender);
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
 
+      if (pendingQuestion?.questionType === "edit_or_new_clarification") {
+        const rawAnswer = incomingText.trim().toLowerCase();
+        const wantsEdit = ["לערוך", "לערוך את הנוכחי", "את הנוכחי", "הנוכחי", "עריכה"].some(
+          (phrase) => rawAnswer.includes(phrase)
+        );
+        const wantsNew = ["לפתוח חדש", "חדש", "רעיון חדש"].some((phrase) => rawAnswer.includes(phrase));
+
+        const draftForClarification = getPendingConfirmation(sender);
+
+        if (wantsEdit && draftForClarification) {
+          clearPendingQuestion(sender);
+          const replyText = "בסדר, מה תרצי לשנות בכיוון הנוכחי?";
+          await safeSendWhatsAppMessage(sender, replyText);
+          return res.status(200).json({ status: "edit_clarification_resolved_edit", sender });
+        }
+
+        if (wantsNew) {
+          clearPendingQuestion(sender);
+          clearPendingConfirmation(sender);
+          const replyText = "בסדר, עזבנו את הרעיון הקודם. תכתבי לי את הרעיון החדש.";
+          await safeSendWhatsAppMessage(sender, replyText);
+          return res.status(200).json({ status: "edit_clarification_resolved_new", sender });
+        }
+
+        // Answer didn't match either option clearly — clear the state so we don't get
+        // stuck asking the same clarification forever, and fall through to normal routing.
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] edit_or_new_clarification: answer not understood, falling through`);
+      }
+
       if (pendingQuestion?.questionType === "overdue_reschedule_date") {
         const { contentId, contentName } = pendingQuestion.context as any;
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -1729,11 +1759,11 @@ ${updatedDraft.summary}
       return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
     }
 
+storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
     const clarificationPrompt = generateClarificationPrompt(true);
     await safeSendWhatsAppMessage(sender, clarificationPrompt);
     return res.status(200).json({ status: "edit_not_understood", sender });
   }
-
   const clarificationPrompt = generateClarificationPrompt(false);
   await safeSendWhatsAppMessage(sender, clarificationPrompt);
   return res.status(200).json({ status: "no_pending_for_edit", sender });
@@ -2463,15 +2493,19 @@ if (isArchiveCommand(incomingText)) {
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "archived", sender });
     }
-if (isDeadlineUpdate(incomingText)) {
+      if (isDeadlineUpdate(incomingText)) {
       const deadlineUpdate = extractDeadlineUpdate(incomingText);
       if (!deadlineUpdate) {
         await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב: תשני את הדדליין של [שם הסרטון] ל-[תאריך]");
         return res.status(200).json({ status: "deadline_update_parse_error", sender });
       }
     // Handle unsupported question-like messages (after visibilityIntent is ruled out)
-    if (questionLikeMessage) {
-      const clarificationPrompt = generateClarificationPrompt(!!getPendingConfirmation(sender));
+      if (questionLikeMessage) {
+      const hasDraftForClarification = !!getPendingConfirmation(sender);
+      if (hasDraftForClarification) {
+        storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
+      }
+      const clarificationPrompt = generateClarificationPrompt(hasDraftForClarification);
       await safeSendWhatsAppMessage(sender, clarificationPrompt);
       return res.status(200).json({ status: "question_clarification", sender });
     }
@@ -2714,6 +2748,9 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     }
 
     if (isMetaConversation(incomingText)) {
+      if (existingDraft) {
+        storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
+      }
       const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
       await safeSendWhatsAppMessage(sender, clarificationPrompt);
       return res.status(200).json({ status: "meta_conversation", sender });
@@ -2782,6 +2819,9 @@ ${existingDraft.summary}
 
     if (!hasConfidence) {
       console.log(`[Route Debug] reached fallback: low_confidence_idea`);
+      if (existingDraft) {
+        storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
+      }
       const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
       await safeSendWhatsAppMessage(sender, clarificationPrompt);
       return res.status(200).json({ status: "low_confidence_idea", sender });
