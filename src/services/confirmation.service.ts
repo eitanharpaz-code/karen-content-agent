@@ -113,31 +113,46 @@ export const isResetRequest = (text: string): boolean => {
     "אני רוצה לשלוח רעיון חדש",
   ];
 
-  return resetCommands.some((command) => normalized === command || normalized.startsWith(`${command}:`));
+  // "רעיון חדש" with a colon (e.g. "רעיון חדש: ...") is a new-idea command, not a reset —
+  // exclude it explicitly so the two detectors never both fire on the same message.
+  return resetCommands.some((command) => {
+    if (command === "רעיון חדש") return normalized === command;
+    return normalized === command || normalized.startsWith(`${command}:`);
+  });
 };
 
 export const isNewIdeaCommand = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
 
-  return (
-    normalized.startsWith("רעיון חדש:") ||
-    normalized.startsWith("רעיון חדש לפוסט:") ||
-    normalized.startsWith("רעיון חדש לריל:") ||
-    normalized === "רעיון חדש לפוסט" ||
-    normalized === "רעיון חדש לריל"
-  );
+  // Exact "רעיון חדש" alone (no extra words) is handled by isResetRequest, not here.
+  if (normalized === "רעיון חדש") return false;
+
+  // Stage F0: accept "רעיון חדש" / "רעיון חדש ל<כל מילה>" with or without ":",
+  // with or without a line break before the actual idea text.
+  // Examples that must match:
+  //   "רעיון חדש: ..."
+  //   "רעיון חדש לפוסט: ..."
+  //   "רעיון חדש לריל ...\n..."
+  //   "רעיון חדש לסרטון\n..."
+  //   "רעיון חדש על ..."
+  return normalized.startsWith("רעיון חדש") && normalized.length > "רעיון חדש".length;
 };
 
 export const getNewIdeaText = (text: string): string | null => {
-  const match = text.match(/רעיון חדש(?:\s+(?:לפוסט|לריל))?\s*:\s*(.+)/i);
-  return match ? match[1].trim() : null;
+  // Stage F0: tolerate missing ":", line breaks, and any "ל<תוכן>" / "על" qualifier
+  // between "רעיון חדש" and the actual idea description.
+  const match = text.match(/רעיון חדש(?:\s+(?:ל\S+|על))?\s*:?\s*[\r\n]*\s*(.+)/is);
+  if (!match) return null;
+  const captured = match[1].trim();
+  return captured.length > 0 ? captured : null;
 };
-
 export const getNewIdeaContentType = (text: string): "פוסט" | "ריל" | null => {
   const normalized = text.trim().toLowerCase();
 
   if (normalized.startsWith("רעיון חדש לפוסט")) return "פוסט";
   if (normalized.startsWith("רעיון חדש לריל")) return "ריל";
+  // Stage F0: "סרטון" is colloquial for "ריל" — treat it the same way.
+  if (normalized.startsWith("רעיון חדש לסרטון")) return "ריל";
 
   return null;
 };
