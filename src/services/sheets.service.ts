@@ -1053,24 +1053,13 @@ ${candidateList}
       console.log(`[Claude Summary] "${searchName}" → "${shortName}"`);
       return { shortName, idea: ideaText };
     }
-  } catch (error) {
-    console.error(`[Claude Summary] Error: ${error}`);
-    // Fallback to token overlap
-    const normalized = searchName.trim().toLowerCase();
-    const scored = values.slice(1)
-      .map((row) => {
-        const idea = (row[1] || "").toString();
-        const score = getTokenOverlapScore(normalized, idea.toLowerCase());
-        return { row, score };
-      })
-      .filter((entry) => entry.score >= 2)
-      .sort((a, b) => b.score - a.score);
-    const match = scored.length > 0 ? scored[0].row : null;
-    if (!match) return null;
-    const ideaText = (match[1] || "").toString();
-    return { shortName: ideaText.split(/\s+/).slice(0, 6).join(" "), idea: ideaText };
+} catch (error) {
+    // Stage E completion: Claude failure → null. Do NOT fall back to weak
+    // token overlap — same risk pattern fixed in the other matching
+    // functions today. A failed Claude call means no confident match.
+    console.error(`[Claude Summary] Error: ${error}. Returning null (no unsafe fallback).`);
+    return null;
   }
-
   return null;
 };
 // Get content metadata from both בנק רעיונות and תכנים שאושרו.
@@ -1302,19 +1291,13 @@ ${candidateList}
       return { contentId: candidates[index].contentId, idea: candidates[index].idea };
     }
   } catch (error) {
-    console.error(`[Claude Duplicate] Error: ${error}`);
-    // Fallback to token overlap
-    let bestMatch: { contentId: string; idea: string; score: number } | null = null;
-    for (const row of values.slice(1)) {
-      const idea = (row[1] || "").toString();
-      const score = getTokenOverlapScore(normalized, normalizeHebrewText(idea).toLowerCase());
-      if (score >= 2 && (!bestMatch || score > bestMatch.score)) {
-        bestMatch = { contentId: (row[0] || "").toString(), idea, score };
-      }
-    }
-    return bestMatch ? { contentId: bestMatch.contentId, idea: bestMatch.idea } : null;
+    // Stage E completion: Claude failure → null. Do NOT fall back to weak
+    // token overlap — a failed Claude call means we have no confident
+    // duplicate match, and a wrong "similar idea found" message would
+    // wrongly discourage the user from saving a genuinely new idea.
+    console.error(`[Claude Duplicate] Error: ${error}. Returning null (no unsafe fallback).`);
+    return null;
   }
-
   return null;
 };
 // Archive content idea - move from בנק רעיונות to רעיונות בצד and delete from source
@@ -1823,17 +1806,12 @@ ${candidateList}
       return { contentId: candidates[index].contentId, name: candidates[index].name, exact: confident };
     }
   } catch (error) {
-    console.error(`[Claude Matching] Error: ${error}`);
-    // Fallback to token overlap if Claude fails
-    let best: { contentId: string; name: string; score: number } | null = null;
-    for (const row of rows.slice(1)) {
-      const name = (row[1] || "").toString();
-      const score = getTokenOverlapScore(normalized, normalizeHebrewText(name).toLowerCase());
-      if (score >= 1 && (!best || score > best.score)) {
-        best = { contentId: row[0].toString(), name, score };
-      }
-    }
-    return best ? { contentId: best.contentId, name: best.name, exact: false } : null;
+    // Stage E completion: Claude failure → null. Do NOT fall back to weak
+    // token overlap — same risk pattern fixed earlier today in
+    // findProductionTaskByName: a failed Claude call means no confident
+    // match, and a weak fallback could schedule/confirm the wrong content.
+    console.error(`[Claude Matching] Error: ${error}. Returning null (no unsafe fallback).`);
+    return null;
   }
 
   return null;
