@@ -290,10 +290,14 @@ export const getCategoryByName = async (
   categoryName: string
 ): Promise<CategoryRegistryEntry | null> => {
   const categories = await getCategories(spreadsheetId);
-  const normalizedSearch = normalizeHebrewText(categoryName);
+  // Category names are a closed, known list (e.g. "חתונה" vs "על החתונה") —
+  // they must NOT go through normalizeHebrewText, which strips "על" as a
+  // filler word and would make these two distinct categories collide.
+  // Direct trimmed comparison is correct and safe here.
+  const normalizedSearch = categoryName.trim();
   return (
     categories.find(
-      (entry) => normalizeHebrewText(entry.categoryName) === normalizedSearch
+      (entry) => entry.categoryName.trim() === normalizedSearch
     ) || null
   );
 };
@@ -333,10 +337,12 @@ export const ensureCategoryExists = async (
   categoryName: string,
   allowCreate = false
 ): Promise<CategoryRegistryEntry | null> => {
-  const normalizedName = normalizeHebrewText(categoryName);
+  // Same fix as getCategoryByName: categories are a closed list, direct
+  // comparison avoids collisions like "חתונה" vs "על החתונה".
+  const normalizedName = categoryName.trim();
   const categories = await getCategories(spreadsheetId);
   const existing = categories.find(
-    (entry) => normalizeHebrewText(entry.categoryName) === normalizedName
+    (entry) => entry.categoryName.trim() === normalizedName
   );
 
   if (existing) {
