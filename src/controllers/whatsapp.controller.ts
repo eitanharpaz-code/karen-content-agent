@@ -1469,16 +1469,7 @@ await safeSendWhatsAppMessage(
           const draft = await createContentDraft(originalInput);
           const draftSummary = { ...draft, originalUserInput: originalInput };
           storePendingConfirmation(sender, draftSummary);
-          const categoryText = displayCategory(draft.category);
-const toneText = displayTone(draft.tone);
-const rawPriorityText = displayPriority(draft.priority);
-const priorityText =
-  rawPriorityText === "גבוה" ? "גבוהה" :
-  rawPriorityText === "בינוני" ? "בינונית" :
-  rawPriorityText === "נמוך" ? "נמוכה" :
-  rawPriorityText;
-
-const replyText = buildDraftPreviewMessage(draft);
+          const replyText = buildDraftPreviewMessage(draft);
           await safeSendWhatsAppMessage(sender, replyText);
           return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
         }
@@ -1535,17 +1526,7 @@ const replyText = `מעולה, הטרנד נשמר.
       };
       storePendingConfirmation(sender, draftSummary);
 
-      const categoryText = displayCategory(draftSummary.category);
-const contentTypeText = displayContentType(draftSummary.contentType);
-const toneText = displayTone(draftSummary.tone);
-const rawPriorityText = displayPriority(draftSummary.priority);
-const priorityText =
-  rawPriorityText === "גבוה" ? "גבוהה" :
-  rawPriorityText === "בינוני" ? "בינונית" :
-  rawPriorityText === "נמוך" ? "נמוכה" :
-  rawPriorityText;
-
-const replyText = buildDraftPreviewMessage(draftSummary, {
+      const replyText = buildDraftPreviewMessage(draftSummary, {
   intro: "יאללה, בניתי טיוטה לרעיון חדש.",
   includeContentType: true,
 });
@@ -1765,15 +1746,6 @@ if (
       }
 
       storePendingConfirmation(sender, updatedDraft);
-
-      const updatedCategoryText = displayCategory(updatedDraft.category);
-      const updatedToneText = displayTone(updatedDraft.tone);
-      const updatedRawPriorityText = displayPriority(updatedDraft.priority);
-      const updatedPriorityText =
-        updatedRawPriorityText === "גבוה" ? "גבוהה" :
-        updatedRawPriorityText === "בינוני" ? "בינונית" :
-        updatedRawPriorityText === "נמוך" ? "נמוכה" :
-        updatedRawPriorityText;
 
       const replyText = buildDraftPreviewMessage(updatedDraft, {
         intro: "קיבלתי, עדכנתי את הרעיון.",
@@ -2594,16 +2566,7 @@ if (isArchiveCommand(incomingText)) {
               const draft = await createContentDraft(statusUpdate.contentName);
               const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
               storePendingConfirmation(sender, draftSummary);
-              const fastTrackCategoryText = displayCategory(draft.category);
-const fastTrackToneText = displayTone(draft.tone);
-const fastTrackRawPriorityText = displayPriority(draft.priority);
-const fastTrackPriorityText =
-  fastTrackRawPriorityText === "גבוה" ? "גבוהה" :
-  fastTrackRawPriorityText === "בינוני" ? "בינונית" :
-  fastTrackRawPriorityText === "נמוך" ? "נמוכה" :
-  fastTrackRawPriorityText;
-
-const replyText = buildDraftPreviewMessage(draft, {
+              const replyText = buildDraftPreviewMessage(draft, {
   intro: [
     "לא מצאתי את זה בהפקה - נראה שצילמת משהו ספונטני, יופי.",
     "",
@@ -2870,15 +2833,7 @@ ${existingDraft.summary}
       originalUserInput: cleanedUserInput,
     };
     storePendingConfirmation(sender, draftSummary);
-    const categoryText = displayCategory(draft.category);
-const toneText = displayTone(draft.tone);
-const priorityText =
-  displayPriority(draft.priority) === "גבוה" ? "גבוהה" :
-  displayPriority(draft.priority) === "בינוני" ? "בינונית" :
-  displayPriority(draft.priority) === "נמוך" ? "נמוכה" :
-  displayPriority(draft.priority);
-
-const replyText = buildDraftPreviewMessage(draft);
+    const replyText = buildDraftPreviewMessage(draft);
     await safeSendWhatsAppMessage(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 
