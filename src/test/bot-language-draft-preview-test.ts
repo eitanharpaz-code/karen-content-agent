@@ -43,6 +43,16 @@ assert(
 );
 
 assert(
+  source.includes("const shouldIncludeContentType = options.includeContentType ?? true;"),
+  "Expected content type to be shown by default when draft.contentType exists."
+);
+
+assert(
+  !source.includes("if (options.includeContentType && draft.contentType)"),
+  "Content type should not require includeContentType=true to be shown."
+);
+
+assert(
   !source.includes("שם: ${draft.shortName}\nקטגוריה: ${categoryText}\nטון: ${toneText}\nעדיפות: ${priorityText}"),
   "Old duplicated draft template for draft.shortName still exists."
 );

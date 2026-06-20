@@ -244,7 +244,9 @@ const buildDraftPreviewMessage = (
     `קטגוריה: ${displayCategory(draft.category)}`,
   ];
 
-  if (options.includeContentType && draft.contentType) {
+  const shouldIncludeContentType = options.includeContentType ?? true;
+
+  if (shouldIncludeContentType && draft.contentType) {
     lines.push(`סוג תוכן: ${displayContentType(draft.contentType)}`);
   }
 
