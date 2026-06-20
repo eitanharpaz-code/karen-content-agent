@@ -33,13 +33,23 @@ assert(
 );
 
 assert(
-  count("options.previewLine || \"הייתי שומרת את זה ככה:\"") === 1,
-  "Expected default preview line to live only inside the helper."
+  count("options.previewLine || \"ככה הייתי שומרת את זה כרגע:\"") === 1,
+  "Expected updated default preview line to live only inside the helper."
 );
 
 assert(
-  count("previewLine: \"עכשיו הייתי שומרת את זה ככה:\"") === 1,
+  count("previewLine: \"ככה הייתי שומרת את זה עכשיו:\"") === 1,
   "Expected updated-draft preview line to be passed only as helper option."
+);
+
+assert(
+  source.includes("options.changeLine || \"אפשר גם להגיד לי מה לשנות.\""),
+  "Expected default change line to use softer helper copy."
+);
+
+assert(
+  source.includes("changeLine: \"אפשר גם להגיד לי מה עוד לשנות.\""),
+  "Expected updated-draft change line to use softer copy."
 );
 
 assert(

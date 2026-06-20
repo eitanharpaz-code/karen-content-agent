@@ -238,7 +238,7 @@ const buildDraftPreviewMessage = (
   const lines = [
     ...introLines,
     "",
-    options.previewLine || "הייתי שומרת את זה ככה:",
+    options.previewLine || "ככה הייתי שומרת את זה כרגע:",
     "",
     `שם: ${draft.shortName}`,
     `קטגוריה: ${displayCategory(draft.category)}`,
@@ -254,7 +254,7 @@ const buildDraftPreviewMessage = (
     `טון: ${displayTone(draft.tone)}`,
     `עדיפות: ${getDraftPriorityText(draft.priority)}`,
     "",
-    "הכיוון:",
+    "הכיוון בקצרה:",
     draft.summary
   );
 
@@ -265,7 +265,7 @@ const buildDraftPreviewMessage = (
   lines.push(
     "",
     "לשמור ככה?",
-    options.changeLine || "אם לא, תגידי לי מה לשנות."
+    options.changeLine || "אפשר גם להגיד לי מה לשנות."
   );
 
   return lines.join("\n");
@@ -1751,8 +1751,8 @@ if (
 
       const replyText = buildDraftPreviewMessage(updatedDraft, {
         intro: "קיבלתי, עדכנתי את הרעיון.",
-        previewLine: "עכשיו הייתי שומרת את זה ככה:",
-        changeLine: "אם לא, תגידי לי מה עוד לשנות.",
+        previewLine: "ככה הייתי שומרת את זה עכשיו:",
+        changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
       });
 
       await safeSendWhatsAppMessage(sender, replyText);
