@@ -211,6 +211,65 @@ const buildGeneralHelpResponse = (): string =>
   ].join("\n");
 
 
+const getDraftPriorityText = (priority: any): string => {
+  const rawPriorityText = displayPriority(priority);
+
+  if (rawPriorityText === "גבוה") return "גבוהה";
+  if (rawPriorityText === "בינוני") return "בינונית";
+  if (rawPriorityText === "נמוך") return "נמוכה";
+
+  return rawPriorityText;
+};
+
+const buildDraftPreviewMessage = (
+  draft: any,
+  options: {
+    intro?: string | string[];
+    previewLine?: string;
+    includeContentType?: boolean;
+    extraBeforeQuestion?: string[];
+    changeLine?: string;
+  } = {}
+): string => {
+  const introLines = Array.isArray(options.intro)
+    ? options.intro
+    : [options.intro || "יש פה כיוון טוב."];
+
+  const lines = [
+    ...introLines,
+    "",
+    options.previewLine || "הייתי שומרת את זה ככה:",
+    "",
+    `שם: ${draft.shortName}`,
+    `קטגוריה: ${displayCategory(draft.category)}`,
+  ];
+
+  if (options.includeContentType && draft.contentType) {
+    lines.push(`סוג תוכן: ${displayContentType(draft.contentType)}`);
+  }
+
+  lines.push(
+    `טון: ${displayTone(draft.tone)}`,
+    `עדיפות: ${getDraftPriorityText(draft.priority)}`,
+    "",
+    "הכיוון:",
+    draft.summary
+  );
+
+  if (options.extraBeforeQuestion?.length) {
+    lines.push("", ...options.extraBeforeQuestion);
+  }
+
+  lines.push(
+    "",
+    "לשמור ככה?",
+    options.changeLine || "אם לא, תגידי לי מה לשנות."
+  );
+
+  return lines.join("\n");
+};
+
+
 
 const getHebrewDayName = (dateText: string): string => {
   const parts = dateText.split("/").map((part) => parseInt(part, 10));
@@ -1419,20 +1478,7 @@ const priorityText =
   rawPriorityText === "נמוך" ? "נמוכה" :
   rawPriorityText;
 
-const replyText = `יש פה כיוון טוב.
-
-הייתי שומרת את זה ככה:
-
-שם: ${draft.shortName}
-קטגוריה: ${categoryText}
-טון: ${toneText}
-עדיפות: ${priorityText}
-
-הכיוון:
-${draft.summary}
-
-לשמור ככה?
-אם לא, תגידי לי מה לשנות.`;
+const replyText = buildDraftPreviewMessage(draft);
           await safeSendWhatsAppMessage(sender, replyText);
           return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
         }
@@ -1499,21 +1545,10 @@ const priorityText =
   rawPriorityText === "נמוך" ? "נמוכה" :
   rawPriorityText;
 
-const replyText = `יאללה, בניתי טיוטה לרעיון חדש.
-
-הייתי שומרת את זה ככה:
-
-שם: ${draftSummary.shortName}
-קטגוריה: ${categoryText}
-סוג תוכן: ${contentTypeText}
-טון: ${toneText}
-עדיפות: ${priorityText}
-
-הכיוון:
-${draftSummary.summary}
-
-לשמור ככה?
-אם לא, תגידי לי מה לשנות.`;
+const replyText = buildDraftPreviewMessage(draftSummary, {
+  intro: "יאללה, בניתי טיוטה לרעיון חדש.",
+  includeContentType: true,
+});
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "new_idea_started", sender, draft: draftSummary });
     }
@@ -1740,20 +1775,11 @@ if (
         updatedRawPriorityText === "נמוך" ? "נמוכה" :
         updatedRawPriorityText;
 
-      const replyText = `קיבלתי, עדכנתי את הרעיון.
-
-עכשיו הייתי שומרת את זה ככה:
-
-שם: ${updatedDraft.shortName}
-קטגוריה: ${updatedCategoryText}
-טון: ${updatedToneText}
-עדיפות: ${updatedPriorityText}
-
-הכיוון:
-${updatedDraft.summary}
-
-לשמור ככה?
-אם לא, תגידי לי מה עוד לשנות.`;
+      const replyText = buildDraftPreviewMessage(updatedDraft, {
+        intro: "קיבלתי, עדכנתי את הרעיון.",
+        previewLine: "עכשיו הייתי שומרת את זה ככה:",
+        changeLine: "אם לא, תגידי לי מה עוד לשנות.",
+      });
 
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
@@ -2577,26 +2603,16 @@ const fastTrackPriorityText =
   fastTrackRawPriorityText === "נמוך" ? "נמוכה" :
   fastTrackRawPriorityText;
 
-const replyText = [
-  "לא מצאתי את זה בהפקה - נראה שצילמת משהו ספונטני, יופי.",
-  "",
-  "יצרתי טיוטה לתוכן מהיר.",
-  "",
-  "הייתי שומרת את זה ככה:",
-  "",
-  `שם: ${draft.shortName}`,
-  `קטגוריה: ${fastTrackCategoryText}`,
-  `טון: ${fastTrackToneText}`,
-  `עדיפות: ${fastTrackPriorityText}`,
-  "",
-  "הכיוון:",
-  draft.summary,
-  "",
-  "אחרי אישור אכניס את זה ישר לתכנים שאושרו ואחפש לזה תאריך בגאנט.",
-  "",
-  "לשמור ככה?",
-  "אם לא, תגידי לי מה לשנות.",
-].join("\n");
+const replyText = buildDraftPreviewMessage(draft, {
+  intro: [
+    "לא מצאתי את זה בהפקה - נראה שצילמת משהו ספונטני, יופי.",
+    "",
+    "יצרתי טיוטה לתוכן מהיר.",
+  ],
+  extraBeforeQuestion: [
+    "אחרי אישור אכניס את זה ישר לתכנים שאושרו ואחפש לזה תאריך בגאנט.",
+  ],
+});
 
 await safeSendWhatsAppMessage(sender, replyText);
 return res.status(200).json({ status: "fast_track_draft_created", sender });
@@ -2862,20 +2878,7 @@ const priorityText =
   displayPriority(draft.priority) === "נמוך" ? "נמוכה" :
   displayPriority(draft.priority);
 
-const replyText = `יש פה כיוון טוב.
-
-הייתי שומרת את זה ככה:
-
-שם: ${draft.shortName}
-קטגוריה: ${categoryText}
-טון: ${toneText}
-עדיפות: ${priorityText}
-
-הכיוון:
-${draft.summary}
-
-לשמור ככה?
-אם לא, תגידי לי מה לשנות.`;
+const replyText = buildDraftPreviewMessage(draft);
     await safeSendWhatsAppMessage(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 
