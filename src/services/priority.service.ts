@@ -1,7 +1,7 @@
 /**
  * priority.service.ts
  * מנוע תעדוף משותף ל-Daily Brief, Afternoon Reminder ו-"מה דחוף"
- * לא מחובר עדיין לאף flow — שלב א בלבד.
+ * מחובר ופעיל: computePriorityItems נקרא מ-daily-brief.service.ts.
  */
 
 export const getBriefDisplayTitle = (name: string): string => {
