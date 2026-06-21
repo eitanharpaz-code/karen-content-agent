@@ -63,6 +63,21 @@ assert(
 );
 
 assert(
+  source.includes("מספר פנימי: ${contentId}"),
+  "Expected content library save confirmation to use softer internal-id label."
+);
+
+assert(
+  source.includes("בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה."),
+  "Expected content library save confirmation to explain idea status softly."
+);
+
+assert(
+  !source.includes("כרגע זה עדיין רעיון, לא משימת הפקה."),
+  "Old technical idea-vs-production wording should not remain."
+);
+
+assert(
   count("options.previewLine || \"ככה הייתי שומרת את זה כרגע:\"") === 1,
   "Expected updated default preview line to live only inside the helper."
 );

@@ -1645,16 +1645,16 @@ await safeSendWhatsAppMessage(
 
          // STEP 3: Send WhatsApp confirmation
           const replyText = [
-  "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
-  "",
-  `שם: ${pendingDraft.shortName}`,
-  `ID: ${contentId}`,
-  "",
-  "כרגע זה עדיין רעיון, לא משימת הפקה.",
-  "",
-  "כשתרצי לקדם אותו להפקה, תכתבי:",
-  `תוסיפי את ${pendingDraft.shortName} להפקה`,
-].join("\n");
+            "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
+            "",
+            `שם: ${pendingDraft.shortName}`,
+            `מספר פנימי: ${contentId}`,
+            "",
+            "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
+            "",
+            "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
+            `תוסיפי את ${pendingDraft.shortName} להפקה`,
+          ].join("\n");
 
 await safeSendWhatsAppMessage(sender, replyText);
           console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
