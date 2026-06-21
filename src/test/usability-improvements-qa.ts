@@ -64,6 +64,8 @@ console.log("\n--- Test: Meta-Conversation Detection ---");
 const metaTests = [
   { input: "על מה ענית?", expected: true },
   { input: "לא הבנת אותי", expected: true },
+  { input: "לא הבנת", expected: true },
+  { input: "לא לזה התכוונתי", expected: true },
   { input: "למה התכוונת?", expected: true },
   { input: "זה לא מה שאמרתי", expected: true },
   { input: "מה התכוננת?", expected: true },
@@ -111,8 +113,13 @@ console.log("\n--- Test: Clarification Prompts ---");
 const clarificationWithDraft = generateClarificationPrompt(true);
 const clarificationWithoutDraft = generateClarificationPrompt(false);
 
-const clarificationCheck1 = clarificationWithDraft.includes("לערוך את הרעיון הקיים");
-const clarificationCheck2 = clarificationWithoutDraft.includes("להשתיל רעיון חדש");
+const clarificationCheck1 =
+  clarificationWithDraft.includes("לערוך את הרעיון הנוכחי") &&
+  clarificationWithDraft.includes("לפתוח חדש");
+
+const clarificationCheck2 =
+  clarificationWithoutDraft.includes("לפתוח רעיון חדש") &&
+  clarificationWithoutDraft.includes("מה הסטטוס של");
 
 testResults.push({ name: "Clarification with active draft", passed: clarificationCheck1 });
 testResults.push({ name: "Clarification without active draft", passed: clarificationCheck2 });

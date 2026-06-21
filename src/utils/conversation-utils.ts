@@ -104,6 +104,8 @@ export const isContinuationMessage = (text: string): boolean => {
 const META_CONVERSATION_PATTERNS = [
   /^על מה ענית/,
   /^לא הבנת אותי/,
+  /^לא הבנת/,
+  /^לא לזה התכוונתי/,
   /^למה התכוננת/,
   /^למה התכוונת/,
   /^מה התכוננת/,
