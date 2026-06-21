@@ -348,10 +348,20 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           return res.status(200).json({ status: "edit_clarification_resolved_new", sender });
         }
 
-        // Answer didn't match either option clearly — clear the state so we don't get
-        // stuck asking the same clarification forever, and fall through to normal routing.
-        clearPendingQuestion(sender);
-        console.log(`[Route Debug] edit_or_new_clarification: answer not understood, falling through`);
+        storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
+
+        const replyText = [
+          "לא בטוחה למה התכוונת.",
+          "",
+          "אפשר לענות:",
+          "לערוך את הרעיון הנוכחי",
+          "",
+          "או:",
+          "לפתוח רעיון חדש",
+        ].join("\n");
+
+        await safeSendWhatsAppMessage(sender, replyText);
+        return res.status(200).json({ status: "edit_or_new_clarification_still_unclear", sender });
       }
 
       if (pendingQuestion?.questionType === "overdue_reschedule_date") {
