@@ -1,5 +1,5 @@
 import { google, sheets_v4 } from "googleapis";
-import { normalizeHebrewText, getTokenOverlapScore } from "./production-status.service";
+import { normalizeHebrewText, getTokenOverlapScore, tokenizeHebrewText } from "./production-status.service";
 import { parseDateFromSheet, getHebrewDayName } from "../utils/date-utils";
 
 // Sheet name mapping: English reference names to actual Hebrew sheet names
@@ -522,6 +522,35 @@ const removePunctuationForMatching = (text: string): string => {
     .trim();
 };
 
+const PRODUCTION_MATCH_GENERIC_TOKENS = new Set<string>([
+  "חדש",
+  "חדשה",
+  "חתונה",
+  "חתונות",
+  "זוגיות",
+  "שמלה",
+  "שמלות",
+  "טיקטוק",
+  "טרנד",
+  "סטורי",
+]);
+
+const hasMeaningfulProductionTaskOverlap = (
+  searchText: string,
+  candidateName: string
+): boolean => {
+  const searchTokens = tokenizeHebrewText(searchText).filter(
+    (token) => !PRODUCTION_MATCH_GENERIC_TOKENS.has(token)
+  );
+  const candidateTokens = new Set(
+    tokenizeHebrewText(candidateName).filter(
+      (token) => !PRODUCTION_MATCH_GENERIC_TOKENS.has(token)
+    )
+  );
+
+  return searchTokens.some((token) => candidateTokens.has(token));
+};
+
 // Sprint 7: Find production task by content name with Hebrew normalization
 // Performs deterministic matching using normalized Hebrew text
 export const findProductionTaskByName = async (
@@ -700,6 +729,11 @@ ${candidateList}
               console.log(`[Claude Matching] Rejected weak generic match for new content: "${contentName}" → "${candidateName}"`);
               return null; // Return null to allow Fast Track flow
             }
+          }
+
+          if (!hasMeaningfulProductionTaskOverlap(contentName, candidateName)) {
+            console.log(`[Claude Matching] Rejected weak Claude match: "${contentName}" → "${candidateName}"`);
+            return null;
           }
 
           // If search term appears in the matched name — Claude is confident

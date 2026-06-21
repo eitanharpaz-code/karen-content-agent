@@ -8,7 +8,7 @@
  * Run with:  npx ts-node src/test/sprint-e-matching-qa.ts
  */
 
-import { normalizeHebrewText } from "../services/production-status.service";
+import { normalizeHebrewText, tokenizeHebrewText } from "../services/production-status.service";
 
 // ---------------------------------------------------------------------------
 // Inline copy of the helpers we need (no import from sheets.service to avoid
@@ -26,6 +26,35 @@ const getTokenOverlapScore = (a: string, b: string): number => {
   const tokensA = a.split(/\s+/).filter(Boolean);
   const tokensB = new Set(b.split(/\s+/).filter(Boolean));
   return tokensA.filter((t) => tokensB.has(t)).length;
+};
+
+const PRODUCTION_MATCH_GENERIC_TOKENS = new Set<string>([
+  "חדש",
+  "חדשה",
+  "חתונה",
+  "חתונות",
+  "זוגיות",
+  "שמלה",
+  "שמלות",
+  "טיקטוק",
+  "טרנד",
+  "סטורי",
+]);
+
+const hasMeaningfulProductionTaskOverlap = (
+  searchText: string,
+  candidateName: string
+): boolean => {
+  const searchTokens = tokenizeHebrewText(searchText).filter(
+    (token) => !PRODUCTION_MATCH_GENERIC_TOKENS.has(token)
+  );
+  const candidateTokens = new Set(
+    tokenizeHebrewText(candidateName).filter(
+      (token) => !PRODUCTION_MATCH_GENERIC_TOKENS.has(token)
+    )
+  );
+
+  return searchTokens.some((token) => candidateTokens.has(token));
 };
 
 // ---------------------------------------------------------------------------
@@ -138,6 +167,12 @@ const matchOffline = (
     }
     const idx = claudeIndexOverride - 1;
     if (idx >= 0 && idx < scoredMatches.length) {
+      const candidateName = (scoredMatches[idx].row[1] || "").toString();
+
+      if (!hasMeaningfulProductionTaskOverlap(contentName, candidateName)) {
+        return null;
+      }
+
       return { rowIndex: scoredMatches[idx].rowIndex, row: scoredMatches[idx].row };
     }
     return null;
@@ -217,21 +252,35 @@ const TESTS: Test[] = [
     expect: "exact", // we treat a Claude pick as a match (rowIndex returned)
     expectedContentId: "WED-002",
   },
-  // 9. Claude error → null (no token overlap fallback)
+  // 9. Claude weak generic success → null
+  {
+    description: "Claude mock WEAK — generic חתונה alone must not update a production row",
+    input: "חתונה",
+    claudeMock: 1,
+    expect: "null",
+  },
+  // 10. Claude weak generic success → null
+  {
+    description: "Claude mock WEAK — generic שמלה alone must not update a production row",
+    input: "שמלה",
+    claudeMock: 1,
+    expect: "null",
+  },
+  // 11. Claude error → null (no token overlap fallback)
   {
     description: "Claude error → null, no fallback mutation risk",
     input: "קיצ׳י",
     claudeMock: "error",
     expect: "null",
   },
-  // 10. Claude invalid/zero response → null
+  // 12. Claude invalid/zero response → null
   {
     description: "Claude returns 0 → null",
     input: "קיצ׳י",
     claudeMock: "invalid",
     expect: "null",
   },
-  // 11. content_id preserved in result
+  // 13. content_id preserved in result
   {
     description: "content_id preserved — PRW-004 result contains correct id",
     input: "פרידה מהשם משפחה כפכפי",
