@@ -426,6 +426,16 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
       if (pendingQuestion?.questionType === "planning_source_routing") {
         const state = pendingQuestion.context as PlanningSourceRoutingState;
+        const isExplicitCommandWhilePlanningSourceRouting =
+          isArchiveCommand(incomingText) ||
+          isApproveForProductionCommand(incomingText) ||
+          isRestoreCommand(incomingText) ||
+          isDeadlineUpdate(incomingText);
+
+        if (isExplicitCommandWhilePlanningSourceRouting) {
+          clearPendingQuestion(sender);
+          console.log(`[Route Debug] planning_source_routing: explicit command detected, falling through`);
+        } else {
         const result = handlePlanningSourceRoutingReply(state, incomingText);
 
         if (result.action === "next_source") {
@@ -607,6 +617,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             status: "planning_source_routing_date_suggested",
             sender,
           });
+        }
         }
       }
     const duplicateSensitivePendingTypes = new Set([
