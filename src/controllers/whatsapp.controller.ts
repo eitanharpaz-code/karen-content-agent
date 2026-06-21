@@ -378,7 +378,29 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       if (pendingQuestion?.questionType === "overdue_reschedule_date") {
         const { contentId, contentName } = pendingQuestion.context as any;
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
-        const normalizedDate = normalizeUserDateInput(incomingText.trim());
+        const rawAnswer = incomingText.trim();
+        const normalizedAnswer = rawAnswer.toLowerCase();
+        const isExplicitCommandWhileChoosingOverdueRescheduleDate =
+          isArchiveCommand(incomingText) ||
+          isApproveForProductionCommand(incomingText) ||
+          isRestoreCommand(incomingText) ||
+          isDeadlineUpdate(incomingText);
+
+        if (isExplicitCommandWhileChoosingOverdueRescheduleDate) {
+          clearPendingQuestion(sender);
+          console.log(`[Route Debug] overdue_reschedule_date: explicit command detected, falling through`);
+        } else {
+
+        if (["ביטול", "בטלי", "עזבי", "עזוב", "לא עכשיו", "אחר כך", "אחכ", 'אח"כ'].includes(normalizedAnswer)) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "בסדר, לא מעבירה את התוכן כרגע.");
+          return res.status(200).json({
+            status: "overdue_reschedule_cancelled",
+            sender,
+          });
+        }
+
+        const normalizedDate = normalizeUserDateInput(rawAnswer);
 
         if (!normalizedDate) {
           await safeSendWhatsAppMessage(
@@ -422,6 +444,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           status: "overdue_rescheduled",
           sender,
         });
+        }
       }
 
       if (pendingQuestion?.questionType === "planning_source_routing") {
