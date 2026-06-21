@@ -1291,6 +1291,17 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         return res.status(200).json({ status: "monthly_planning_continue_after_upload_time", sender });
       };
 
+      const isExplicitCommandWhileChoosingUploadTime =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileChoosingUploadTime) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] gantt_upload_time: explicit command detected, falling through`);
+      } else {
+
       const skipUploadTime =
         isRejectionMessage(rawTimeInput) ||
         /^(דלגי|דלג|אחר כך|אח"כ|לא עכשיו|בלי שעה)$/i.test(rawTimeInput);
@@ -1321,6 +1332,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return await continueMonthlyPlanning(
         `מעולה, עדכנתי את שעת ההעלאה של "${shortTimeName}" ל-${normalizedUploadTime}.`
       );
+      }
     }
     if (pendingQuestion?.questionType === "confirm_gantt_write") {
       const { contentId, contentName, date, dayName, ganttStatus, monthlyPlanning } = pendingQuestion.context as any;
