@@ -1312,10 +1312,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     }
     if (pendingQuestion?.questionType === "confirm_gantt_write") {
       const { contentId, contentName, date, dayName, ganttStatus, monthlyPlanning } = pendingQuestion.context as any;
-      clearPendingQuestion(sender);
+      const isExplicitCommandWhileConfirmingGanttWrite =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileConfirmingGanttWrite) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] confirm_gantt_write: explicit command detected, falling through`);
+      } else {
 const rawAnswer = incomingText.trim();
 
 if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עזבי כרגע", "עזוב כרגע"].includes(rawAnswer)) {
+  clearPendingQuestion(sender);
   const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
   await safeSendWhatsAppMessage(
@@ -1358,6 +1368,7 @@ const alternatives = available
   .slice(0, 5);
 
         if (alternatives.length === 0) {
+          clearPendingQuestion(sender);
           await safeSendWhatsAppMessage(sender, "בסדר. לא מצאתי עוד תאריכים פנויים באותו חודש. אפשר לשבץ ידנית עם תאריך אחר.");
           return res.status(200).json({ status: "gantt_write_no_alternatives", sender });
         }
@@ -1460,6 +1471,19 @@ await safeSendWhatsAppMessage(
   ].filter(Boolean).join("\n")
 );
         return res.status(200).json({ status: "gantt_write_confirmed", sender });
+      }
+
+      const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
+      await safeSendWhatsAppMessage(
+        sender,
+        [
+          `לא בטוחה אם לשבץ את "${shortName}" ב-${date}.`,
+          "",
+          "אפשר לענות כן, לא, לא עכשיו, או לכתוב פקודה אחרת.",
+        ].join("\n")
+      );
+
+      return res.status(200).json({ status: "confirm_gantt_write_unclear", sender });
       }
     }
     if (pendingQuestion?.questionType === "set_deadline") {
