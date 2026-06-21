@@ -235,11 +235,10 @@ const STATUS_SUFFIX_CLEANUP = /\s*(?:עלה(?:\s+לאוויר)?|הועלה|פו�
 /**
  * Expand detected status types with their production dependencies.
  * One-directional cascade:
- * - uploaded → filmed + edited + cover_ready + copy_ready + uploaded
+ * - uploaded → filmed + edited + cover_ready + uploaded
  * - edited → filmed + edited
  * - filmed → filmed only
  * - cover_ready → cover_ready only
- * - copy_ready → copy_ready only
  *
  * Results are deduplicated.
  */

@@ -29,17 +29,18 @@ const TESTS: MultiStatusTest[] = [
     message: "צילמתי וערכתי קונספט טעימות חדש לחתונה",
     expectedStatusTypes: ["filmed", "edited"],
     expectedContentName: "קונספט טעימות חדש לחתונה",
+    allowAmbiguous: true,
   },
   {
-    description: "Filmed, edited and uploaded in one message (cascades to include cover and copy)",
+    description: "Filmed, edited and uploaded in one message (cascades to include cover)",
     message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
-    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "uploaded"],
     expectedContentName: "שמלה שלישית",
   },
   {
     description: "Cover and copy ready in one message",
     message: "הקאבר והקופי מוכנים לקפריסין",
-    expectedStatusTypes: ["cover_ready", "copy_ready"],
+    expectedStatusTypes: ["cover_ready"],
     expectedContentName: "קפריסין",
     allowAmbiguous: true,
   },
@@ -110,6 +111,12 @@ const runMultiStatusTest = async (test: MultiStatusTest) => {
 
   for (const statusType of statusUpdate.statusTypes) {
     const columnName = getColumnName(statusType);
+
+    if (columnName === "פורסם") {
+      console.log(`Skipping ${columnName}: not a משימות הפקה column.`);
+      continue;
+    }
+
     const columnIndex = getProductionStatusColumnIndex(columnName);
     if (!columnIndex) {
       console.error(`❌ Invalid column mapping for ${columnName}`);

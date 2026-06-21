@@ -1,8 +1,9 @@
 import dotenv from "dotenv";
-dotenv.config();
-import { isProductionStatusUpdate, detectStatusUpdate } from "../services/production-status.service";
+import { detectStatusUpdate } from "../services/production-status.service";
 
-const testCases = [
+dotenv.config();
+
+const testCases: Array<{ text: string; expected: string | null }> = [
   { text: "צילמנו את הסרטון על קפריסין", expected: "filmed" },
   { text: "סיימנו לצלם את הסרטון על השמלה", expected: "filmed" },
   { text: "גמרתי לצלם את הלוקים", expected: "filmed" },
@@ -11,28 +12,42 @@ const testCases = [
   { text: "עריכה מוכנה לסרטון על קפריסין", expected: "edited" },
   { text: "קאבר מוכן לסרטון על השמלה", expected: "cover_ready" },
   { text: "הכנתי קאבר לסרטון על הלוקים", expected: "cover_ready" },
-  { text: "קופי מוכן לסרטון על החתונה", expected: "copy_ready" },
-  { text: "כתבתי קופי לסרטון על קפריסין", expected: "copy_ready" },
+  { text: "קופי מוכן לסרטון על החתונה", expected: null },
+  { text: "כתבתי קופי לסרטון על קפריסין", expected: null },
   { text: "פרסמנו את הסרטון על השמלה", expected: "uploaded" },
   { text: "יצא לאוויר הסרטון על הלוקים", expected: "uploaded" },
   { text: "הסרטון פורסם", expected: "uploaded" },
-
-  // Sprint 11: Fast Track detection with "על" pattern and new content
-  { text: "צילמתי וערכתי סרטון חדש על סיור לוקיישנים לחתונה בתל אביב", expected: "filmed" }, // Will set both filmed+edited
-  { text: "צילמתי וערכתי סרטון חדש על זוגיות", expected: "filmed" }, // Simplified version
+  { text: "צילמתי וערכתי סרטון חדש על סיור לוקיישנים לחתונה בתל אביב", expected: "filmed" },
+  { text: "צילמתי וערכתי סרטון חדש על זוגיות", expected: "filmed" },
   { text: "צילמתי סרטון חדש על שמלה שלישית", expected: "filmed" },
   { text: "ערכתי סרטון חדש על קטגוריית קפריסין", expected: "edited" },
 ];
 
 console.log("בודק ביטויי הפקה:\n");
-for (const { text, expected } of testCases) {
-  const detected = detectStatusUpdate(text);
-  const ok = detected?.statusType === expected ? "✅" : "❌";
-  console.log(`${ok} "${text}"`);
-  if (detected?.statusType !== expected) {
-    console.log(`   צפוי: ${expected} | קיבל: ${detected?.statusType || "null"}`);
+
+let passed = 0;
+let failed = 0;
+
+for (const test of testCases) {
+  const result = detectStatusUpdate(test.text);
+  const actual = result?.statusType ?? null;
+  const ok = actual === test.expected;
+
+  if (ok) {
+    console.log(`✅ "${test.text}"`);
+    if (result?.contentName) {
+      console.log(`   Content: "${result.contentName}"`);
+    }
+    passed++;
+  } else {
+    console.log(`❌ "${test.text}"`);
+    console.log(`   צפוי: ${test.expected} | קיבל: ${actual}`);
+    failed++;
   }
-  if (detected?.contentName) {
-    console.log(`   Content: "${detected.contentName}"`);
-  }
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+
+if (failed > 0) {
+  throw new Error("production-phrases-qa failed");
 }

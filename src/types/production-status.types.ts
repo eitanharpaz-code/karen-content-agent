@@ -3,7 +3,6 @@ export type ProductionStatusType =
   | "filmed"
   | "edited"
   | "cover_ready"
-  | "copy_ready"
   | "uploaded";
 
 export interface StatusUpdateRequest {

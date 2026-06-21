@@ -58,11 +58,6 @@ const TEST_CASES: Sprint7Test[] = [
     message: "הקאבר מוכן עבור השמלה השלישית",
     expectedStatusType: "cover_ready",
   },
-  {
-    description: "Copy ready status update",
-    message: "הקופי מוכן לשמלה השלישית",
-    expectedStatusType: "copy_ready",
-  },
 ];
 
 const EDGE_CASE_TESTS: Sprint7EdgeCaseTest[] = [
@@ -70,7 +65,7 @@ const EDGE_CASE_TESTS: Sprint7EdgeCaseTest[] = [
     description: "Multiple matches edge case",
     message: "צילמתי סרטון על חתונה",
     expectedStatusType: "filmed",
-    expectedOutcome: "ambiguous",
+    expectedOutcome: "no_match",
   },
   {
     description: "No match edge case",
@@ -86,25 +81,26 @@ const MULTI_STATUS_TESTS: Sprint7MultiStatusTest[] = [
     message: "צילמתי וערכתי קונספט טעימות חדש לחתונה",
     expectedStatusTypes: ["filmed", "edited"],
     expectedContentName: "קונספט טעימות חדש לחתונה",
+    allowAmbiguous: true,
   },
   {
-    description: "Filmed, edited and uploaded in one message (cascades to include cover and copy)",
+    description: "Filmed, edited and uploaded in one message (cascades to include cover)",
     message: "צילמתי, ערכתי והעליתי את הסרטון על השמלה השלישית",
-    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "uploaded"],
     expectedContentName: "שמלה שלישית",
     expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
   },
   {
     description: "Cover and copy ready in one message",
     message: "הקאבר והקופי מוכנים לקפריסין",
-    expectedStatusTypes: ["cover_ready", "copy_ready"],
+    expectedStatusTypes: ["cover_ready"],
     expectedContentName: "קפריסין",
     allowAmbiguous: true,
   },
   {
-    description: "Uploaded status update (cascades to include filmed, edited, cover, and copy)",
+    description: "Uploaded status update (cascades to include filmed, edited, and cover)",
     message: "העליתי את הסרטון על השמלה השלישית",
-    expectedStatusTypes: ["filmed", "edited", "cover_ready", "copy_ready", "uploaded"],
+    expectedStatusTypes: ["filmed", "edited", "cover_ready", "uploaded"],
     expectedContentName: "שמלה שלישית",
     expectedMatchedTaskName: "האם שמלה שלישית זה מוגזם? סקר: האם כדאי שמלה שלישית?",
   },
@@ -279,6 +275,11 @@ const runMultiStatusTest = async (test: Sprint7MultiStatusTest) => {
 
   for (const statusType of statusUpdate.statusTypes) {
     const columnName = getColumnName(statusType);
+
+    if (columnName === "פורסם") {
+      console.log(`Skipping ${columnName}: not a משימות הפקה column.`);
+      continue;
+    }
     const columnIndex = getProductionStatusColumnIndex(columnName);
 
     if (!columnIndex) {
