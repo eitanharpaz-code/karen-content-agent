@@ -74,4 +74,40 @@ assert(
   `Expected content type value ריל, got ${explicitReelEdit?.value}`
 );
 
+const toneContinuation = parseEditRequest("ואת הטון למצחיק");
+
+assert(
+  toneContinuation?.field === "tone",
+  `Expected tone continuation edit, got ${JSON.stringify(toneContinuation)}`
+);
+
+assert(
+  toneContinuation?.value === "מצחיק",
+  `Expected tone value מצחיק, got ${toneContinuation?.value}`
+);
+
+const priorityContinuation = parseEditRequest("ואת העדיפות לגבוהה");
+
+assert(
+  priorityContinuation?.field === "priority",
+  `Expected priority continuation edit, got ${JSON.stringify(priorityContinuation)}`
+);
+
+assert(
+  priorityContinuation?.value === "גבוה",
+  `Expected priority value גבוה, got ${priorityContinuation?.value}`
+);
+
+const summaryContinuation = parseEditRequest("ואת הכיוון לצבע ירוק");
+
+assert(
+  summaryContinuation?.field === "summary",
+  `Expected summary continuation edit, got ${JSON.stringify(summaryContinuation)}`
+);
+
+assert(
+  summaryContinuation?.value === "צבע ירוק",
+  `Expected summary value צבע ירוק, got ${summaryContinuation?.value}`
+);
+
 console.log("✅ draft-continuity-edit-test passed");
