@@ -641,10 +641,20 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     }
    if (pendingQuestion?.questionType === "gantt_collision") {
       const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName, ganttStatus } = pendingQuestion.context as any;
-      clearPendingQuestion(sender);
+      const isExplicitCommandWhileResolvingGanttCollision =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileResolvingGanttCollision) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] gantt_collision: explicit command detected, falling through`);
+      } else {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
       if (isConfirmationMessage(incomingText)) {
+        clearPendingQuestion(sender);
         // קרן רוצה להחליף — כניסת Y לתאריך, הזזת X למקום חדש
         const available = await findAvailableDatesInMonth(spreadsheetId, newDate);
         const suggested = available[0];
@@ -679,6 +689,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       }
 
       if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
         // קרן לא רוצה להחליף — מחפש מקום חדש ל-Y
         const available = await findAvailableDatesInMonth(spreadsheetId, newDate);
         const suggested = available[0];
@@ -699,11 +710,36 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         await safeSendWhatsAppMessage(sender, `הזמן הפנוי הקרוב הוא ${suggested} (יום ${suggestedDayName}). נכניס את "${shortNew}" שם?`);
         return res.status(200).json({ status: "gantt_collision_suggest_new_date", sender });
       }
+
+      const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
+      const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
+
+      await safeSendWhatsAppMessage(
+        sender,
+        [
+          `לא בטוחה אם להחליף בין "${shortNew}" לבין "${shortExisting}".`,
+          "",
+          "אפשר לענות כן, לא, או לכתוב פקודה אחרת.",
+        ].join("\n")
+      );
+
+      return res.status(200).json({ status: "gantt_collision_unclear", sender });
+      }
     }
 
     if (pendingQuestion?.questionType === "gantt_move_existing") {
       const { newContentId, newContentName, newDate, newDayName, existingContentId, existingName, suggestedDate, suggestedDayName, ganttStatus } = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const isExplicitCommandWhileMovingExistingGanttItem =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileMovingExistingGanttItem) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] gantt_move_existing: explicit command detected, falling through`);
+      } else {
       const confirmedSuggestedDate = isConfirmationMessage(incomingText);
       const targetDate = confirmedSuggestedDate
         ? suggestedDate
@@ -729,6 +765,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
       await safeSendWhatsAppMessage(sender, `מעולה! העברתי את "${shortExisting}" ל-${targetDate} והוספתי את "${shortNew}" ל-${newDate}.\nבאיזו שעה לתכנן את ההעלאה?`);
       return res.status(200).json({ status: "gantt_move_confirmed", sender });
+      }
     }
 
    if (pendingQuestion?.questionType === "gantt_write_new_date") {
