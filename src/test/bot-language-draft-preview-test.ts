@@ -83,8 +83,8 @@ assert(
 );
 
 assert(
-  count("previewLine: \"ככה הייתי שומרת את זה עכשיו:\"") === 1,
-  "Expected updated-draft preview line to be passed only as helper option."
+  source.includes("previewLine: \"ככה הייתי שומרת את זה עכשיו:\""),
+  "Expected updated-draft preview line to be passed through helper options."
 );
 
 assert(

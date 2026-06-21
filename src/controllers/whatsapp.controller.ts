@@ -2764,31 +2764,31 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     console.log(`[Route Debug] isContinuationMessage: ${isContinuation}`);
 
     if (existingDraft && isContinuation) {
-      // Treat as edit/continuation context
-      const continuationCategoryText = displayCategory(existingDraft.category);
-      const continuationToneText = displayTone(existingDraft.tone);
-      const continuationRawPriorityText = displayPriority(existingDraft.priority);
-      const continuationPriorityText =
-  continuationRawPriorityText === "גבוה" ? "גבוהה" :
-  continuationRawPriorityText === "בינוני" ? "בינונית" :
-  continuationRawPriorityText === "נמוך" ? "נמוכה" :
-  continuationRawPriorityText;
+      const continuationText = incomingText.trim();
+      const cleanedContinuationText = continuationText
+        .replace(/^(וגם|ו|אבל|בעצם|כאילו|הרעיון הוא|יותר בדיוק)\s*/i, "")
+        .trim();
 
-      const replyText = `זה דווקא יכול להתחבר ממש טוב.
+      const continuationValue = cleanedContinuationText || continuationText;
+      const existingSummary = (existingDraft.summary || "").trim();
 
-      כרגע הייתי שומרת את הרעיון ככה:
-      שם: ${existingDraft.shortName}
-    קטגוריה: ${continuationCategoryText}
-    טון: ${continuationToneText}
-    עדיפות: ${continuationPriorityText}
+      const updatedDraft = {
+        ...existingDraft,
+        summary: existingSummary
+          ? `${existingSummary}\nבנוסף: ${continuationValue}`
+          : continuationValue,
+      };
 
-הכיוון:
-${existingDraft.summary}
+      storePendingConfirmation(sender, updatedDraft);
 
-לשמור ככה?
-אם לא, תגידי לי מה עוד לשנות.`;
+      const replyText = buildDraftPreviewMessage(updatedDraft, {
+        intro: "קיבלתי, הוספתי את זה לכיוון של הרעיון.",
+        previewLine: "ככה הייתי שומרת את זה עכשיו:",
+        changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+      });
+
       await safeSendWhatsAppMessage(sender, replyText);
-      return res.status(200).json({ status: "continuation_acknowledged", sender, draft: existingDraft });
+      return res.status(200).json({ status: "draft_continuation_updated", sender, draft: updatedDraft });
     }
 
     // ===== FIX 5: Lightweight confidence gating =====
