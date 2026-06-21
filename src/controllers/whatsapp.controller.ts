@@ -1625,6 +1625,55 @@ await safeSendWhatsAppMessage(
       return res.status(200).json({ status: "deadline_set", sender });
       }
     }
+    if (pendingQuestion?.questionType === "confirm_duplicate") {
+      const isExplicitCommandWhileConfirmingDuplicate =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileConfirmingDuplicate) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] confirm_duplicate: explicit command detected, falling through`);
+      } else {
+        if (isRejectionMessage(incomingText)) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "אין בעיה, לא שמרתי את הרעיון הכפול.");
+          return res.status(200).json({ status: "duplicate_rejected", sender });
+        }
+
+        if (isConfirmationMessage(incomingText)) {
+          clearPendingQuestion(sender);
+          const originalInput = pendingQuestion.context?.originalInput as string;
+
+          if (!originalInput) {
+            await safeSendWhatsAppMessage(sender, "משהו השתבש, נסי שוב.");
+            return res.status(200).json({ status: "duplicate_context_missing", sender });
+          }
+
+          const draft = await createContentDraft(originalInput);
+          const draftSummary = { ...draft, originalUserInput: originalInput };
+          storePendingConfirmation(sender, draftSummary);
+
+          const replyText = buildDraftPreviewMessage(draft);
+          await safeSendWhatsAppMessage(sender, replyText);
+
+          return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
+        }
+
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            "לא בטוחה אם לשמור את הרעיון הזה למרות שהוא דומה לרעיון קיים.",
+            "",
+            "אפשר לענות כן, לא, או לכתוב פקודה אחרת.",
+          ].join("\n")
+        );
+
+        return res.status(200).json({ status: "confirm_duplicate_unclear", sender });
+      }
+    }
+
     if (pendingQuestion && isRejectionMessage(incomingText)) {
       clearPendingQuestion(sender);
       await safeSendWhatsAppMessage(sender, "אין בעיה, עזבתי את הרעיון.");
