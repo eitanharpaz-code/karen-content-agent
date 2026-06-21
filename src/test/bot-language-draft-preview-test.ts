@@ -43,6 +43,26 @@ assert(
 );
 
 assert(
+  source.includes("לא בטוחה איזה טרנד רצית לשמור."),
+  "Expected softer trend missing-text message."
+);
+
+assert(
+  !source.includes("לא בטוחה שהבנתי איזה טרנד התכוונת."),
+  "Old trend missing-text message should not remain."
+);
+
+assert(
+  source.includes("כדי לפתוח רעיון חדש, תשלחי לי למשל:"),
+  "Expected softer new-idea missing-text message."
+);
+
+assert(
+  !source.includes("רוצה לפתוח רעיון חדש?\\nתשלחי לי:"),
+  "Old new-idea missing-text message should not remain."
+);
+
+assert(
   count("options.previewLine || \"ככה הייתי שומרת את זה כרגע:\"") === 1,
   "Expected updated default preview line to live only inside the helper."
 );

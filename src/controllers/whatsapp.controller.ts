@@ -1485,7 +1485,7 @@ await safeSendWhatsAppMessage(
       clearPendingConfirmation(sender);
 
       if (!trendText) {
-        const replyText = "לא בטוחה שהבנתי איזה טרנד התכוונת.\nנסי לכתוב: טרנד: שם הסרטון";
+        const replyText = "לא בטוחה איזה טרנד רצית לשמור.\nאפשר לכתוב למשל:\nטרנד: שם הסרטון";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "trend_missing_text", sender });
       }
@@ -1513,7 +1513,7 @@ await safeSendWhatsAppMessage(
       clearPendingConfirmation(sender);
 
       if (!newIdeaText) {
-        const replyText = "רוצה לפתוח רעיון חדש?\nתשלחי לי:\nרעיון חדש: ...\nאו:\nרעיון חדש לפוסט: ...\nרעיון חדש לריל: ...\nואני אמשיך משם.";
+        const replyText = "כדי לפתוח רעיון חדש, תשלחי לי למשל:\nרעיון חדש: ...\nאו:\nרעיון חדש לריל: ...\nרעיון חדש לפוסט: ...\nואני אמשיך משם.";
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "new_idea_command_missing_text", sender });
       }
