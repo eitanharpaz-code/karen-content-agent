@@ -348,11 +348,27 @@ export const parseEditRequest = (text: string): { field: string; value: string }
     // 5. Explicit content type edits - check and return immediately
     if (
       normalized.includes("סוג תוכן") ||
+      normalized.includes("סוג התוכן") ||
       normalized.includes("זה ריל") ||
       normalized.includes("זה פוסט") ||
       normalized.includes("זה סטורי") ||
       normalized.includes("content type")
     ) {
+      const contentTypePatterns = [
+        /(?:ואת\s+)?(?:סוג\s+התוכן|סוג\s+תוכן)\s*(?:ל|ל־|בתור|כ)?\s*(.+)/i,
+        /(?:תשני|שני|תעדכני|עדכני|תשנה|שנה|תעדכן|עדכן)\s*(?:את\s+)?(?:סוג\s+התוכן|סוג\s+תוכן)\s*(?:ל|ל־|בתור|כ)?\s*(.+)/i,
+      ];
+
+      for (const pattern of contentTypePatterns) {
+        const match = text.match(pattern);
+        if (match) {
+          const contentTypeValue = findHebrewValue(match[1], CONTENT_TYPE_HEBREW_VALUES);
+          if (contentTypeValue) {
+            return { field: "contentType", value: contentTypeValue };
+          }
+        }
+      }
+
       const contentTypeValue = findHebrewValue(normalized, CONTENT_TYPE_HEBREW_VALUES);
       if (contentTypeValue) {
         return { field: "contentType", value: contentTypeValue };
