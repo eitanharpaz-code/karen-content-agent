@@ -325,6 +325,16 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
 
       if (pendingQuestion?.questionType === "edit_or_new_clarification") {
+        const isExplicitCommandWhileClarifying =
+          isArchiveCommand(incomingText) ||
+          isApproveForProductionCommand(incomingText) ||
+          isRestoreCommand(incomingText) ||
+          isDeadlineUpdate(incomingText);
+
+        if (isExplicitCommandWhileClarifying) {
+          clearPendingQuestion(sender);
+          console.log(`[Route Debug] edit_or_new_clarification: explicit command detected, falling through`);
+        } else {
         const rawAnswer = incomingText.trim().toLowerCase();
         const wantsEdit = ["לערוך", "לערוך את הנוכחי", "את הנוכחי", "הנוכחי", "עריכה"].some(
           (phrase) => rawAnswer.includes(phrase)
@@ -362,6 +372,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "edit_or_new_clarification_still_unclear", sender });
+        }
       }
 
       if (pendingQuestion?.questionType === "overdue_reschedule_date") {

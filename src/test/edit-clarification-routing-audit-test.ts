@@ -41,6 +41,24 @@ assert(
 );
 
 assert(
+  branch.includes("isExplicitCommandWhileClarifying"),
+  "edit_or_new_clarification must let explicit management commands escape the clarification state."
+);
+
+assert(
+  branch.includes("isArchiveCommand(incomingText)") &&
+    branch.includes("isApproveForProductionCommand(incomingText)") &&
+    branch.includes("isRestoreCommand(incomingText)") &&
+    branch.includes("isDeadlineUpdate(incomingText)"),
+  "Explicit command escape must include archive, approve-for-production, restore, and deadline commands."
+);
+
+assert(
+  branch.indexOf("isExplicitCommandWhileClarifying") < branch.indexOf("const rawAnswer"),
+  "Explicit command escape must run before interpreting the message as a clarification answer."
+);
+
+assert(
   !branch.includes("clearPendingQuestion(sender);\n        console.log(`[Route Debug] edit_or_new_clarification: answer not understood, falling through`);"),
   "Unclear clarification answers must not clear pending question and fall through."
 );
