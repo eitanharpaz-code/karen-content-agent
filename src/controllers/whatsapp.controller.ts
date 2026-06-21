@@ -1500,12 +1500,10 @@ await safeSendWhatsAppMessage(
       };
       storePendingConfirmation(sender, trendDraft);
 
-const replyText = `מעולה, הטרנד נשמר.
-שם: ${trendText}
-קטגוריה: טרנד
-עדיפות: גבוהה
-
-לשמור?`;
+      const replyText = buildDraftPreviewMessage(trendDraft, {
+        intro: "מעולה, קלטתי את הטרנד.",
+        previewLine: "ככה הייתי שומרת אותו כרגע:",
+      });
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "trend_started", sender, draft: trendDraft });
     }

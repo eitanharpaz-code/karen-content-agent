@@ -33,6 +33,16 @@ assert(
 );
 
 assert(
+  source.includes("const replyText = buildDraftPreviewMessage(trendDraft, {"),
+  "Expected trend draft preview to use draft preview helper."
+);
+
+assert(
+  !source.includes("מעולה, הטרנד נשמר."),
+  "Trend draft preview should not say it was saved before confirmation."
+);
+
+assert(
   count("options.previewLine || \"ככה הייתי שומרת את זה כרגע:\"") === 1,
   "Expected updated default preview line to live only inside the helper."
 );
