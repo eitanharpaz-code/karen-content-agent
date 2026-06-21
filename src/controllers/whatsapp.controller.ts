@@ -1015,6 +1015,26 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       .toString()
       .trim();
 
+  const monthlyPlanningVisibilityIntent = detectVisibilityIntent(incomingText);
+  const monthlyPlanningLikelyVisibilityQuestion = isLikelyVisibilityQuery(incomingText);
+
+  if (monthlyPlanningVisibilityIntent || monthlyPlanningLikelyVisibilityQuestion) {
+    storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
+
+    await safeSendWhatsAppMessage(
+      sender,
+      [
+        `אני עדיין בתוך תכנון ${monthName}, אז לא אשבץ את זה כתוכן.`,
+        "",
+        "כדי לא לשבש את התכנון, אפשר לבחור שם של תוכן מהרשימה או לכתוב שיבוץ מלא עם תאריך.",
+        "",
+        "אם רצית לצאת רגע ולבדוק סטטוס, כתבי סיימתי ואז שאלי אותי.",
+      ].join("\n")
+    );
+
+    return res.status(200).json({ status: "monthly_planning_visibility_query_guarded", sender });
+  }
+
   const normalizedChoice = normalizeMonthlyPlanningText(incomingText);
 
   const chosenContent = (remainingContent as any[]).find((content) => {
