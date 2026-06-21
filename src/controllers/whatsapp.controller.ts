@@ -746,6 +746,17 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
   const rawAnswer = incomingText.trim();
 
+  const isExplicitCommandWhileChoosingGanttDate =
+    isArchiveCommand(incomingText) ||
+    isApproveForProductionCommand(incomingText) ||
+    isRestoreCommand(incomingText) ||
+    isDeadlineUpdate(incomingText);
+
+  if (isExplicitCommandWhileChoosingGanttDate) {
+    clearPendingQuestion(sender);
+    console.log(`[Route Debug] gantt_write_new_date: explicit command detected, falling through`);
+  } else {
+
   if (["ביטול", "עזבי", "עזוב", "לא משנה", "תבטלי"].includes(rawAnswer)) {
     clearPendingQuestion(sender);
     await safeSendWhatsAppMessage(sender, "סבבה, לא שיבצתי. אפשר לחזור לזה אחר כך.");
@@ -917,6 +928,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   );
 
   return res.status(200).json({ status: "gantt_write_new_date_confirmed", sender });
+}
 }
     
 if (pendingQuestion?.questionType === "monthly_planning") {
