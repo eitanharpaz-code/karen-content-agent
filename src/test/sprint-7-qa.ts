@@ -13,6 +13,22 @@ import type { ProductionTaskMatch } from "../services/sheets.service";
 
 dotenv.config();
 
+const requireLiveQaOptIn = () => {
+  if (process.env.ALLOW_LIVE_QA !== "true") {
+    console.error(
+      [
+        "❌ This is a Live QA script.",
+        "It can write to the real Google Sheet.",
+        "",
+        "Run explicitly with:",
+        `ALLOW_LIVE_QA=true npx ts-node ${__filename.replace(process.cwd() + "/", "")}`,
+      ].join("\\n")
+    );
+    process.exit(1);
+  }
+};
+
+
 type Sprint7Test = {
   description: string;
   message: string;
@@ -395,5 +411,7 @@ const main = async () => {
     process.exit(1);
   }
 };
+
+requireLiveQaOptIn();
 
 main();
