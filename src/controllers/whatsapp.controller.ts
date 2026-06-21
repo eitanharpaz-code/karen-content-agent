@@ -2420,13 +2420,21 @@ const replyText = [
     if (isRestoreCommand(incomingText)) {
       const target = extractRestoreTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון להחזיר. נסי לכתוב: תחזרי את [שם הרעיון] לרעיונות");
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            "לא בטוחה איזה רעיון להחזיר מהרשימה.",
+            "",
+            "אפשר לכתוב למשל:",
+            "תחזירי את רעיון שמלות לרעיונות",
+          ].join("\n")
+        );
         return res.status(200).json({ status: "restore_parse_error", sender });
       }
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       const result = await restoreFromArchive(spreadsheetId, target);
       if (!result) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון בארכיון. תנסי עם שם קצת יותר מדויק.");
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון בארכיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "restore_not_found", sender });
       }
       await safeSendWhatsAppMessage(sender, `מעולה, החזרתי את הרעיון "${result.restoredName}" לבנק הרעיונות.`);
@@ -2435,7 +2443,15 @@ const replyText = [
     if (isApproveForProductionCommand(incomingText)) {
       const target = extractApproveTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון להוסיף להפקה. נסי לכתוב: תוסיפי את [שם הרעיון] להפקה");
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            "לא בטוחה איזה רעיון להוסיף להפקה.",
+            "",
+            "אפשר לכתוב למשל:",
+            "תוסיפי את רעיון שמלות להפקה",
+          ].join("\n")
+        );
         return res.status(200).json({ status: "approve_parse_error", sender });
       }
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -2444,7 +2460,7 @@ const replyText = [
       try {
         result = await approveContentForProduction(spreadsheetId, target);
       } catch (approveError) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. נסי עם שם קצת יותר מדויק או עם Content_ID.");
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "approve_not_found", sender });
       }
 
@@ -2505,7 +2521,15 @@ const replyText = [
 if (isArchiveCommand(incomingText)) {
       const target = extractArchiveTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה רעיון לשמור בצד. נסי לכתוב: תעבירי את [שם הרעיון] לארכיון");
+        await safeSendWhatsAppMessage(
+        sender,
+        [
+          "לא בטוחה איזה רעיון לשמור בצד.",
+          "",
+          "אפשר לכתוב למשל:",
+          "תעבירי את רעיון שמלות לארכיון",
+        ].join("\n")
+      );
         return res.status(200).json({ status: "archive_parse_error", sender });
       }
 
@@ -2513,7 +2537,7 @@ if (isArchiveCommand(incomingText)) {
       const result = await archiveContentIdea(spreadsheetId, target);
 
       if (!result) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. תנסי עם שם קצת יותר מדויק.");
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "archive_not_found", sender });
       }
 
@@ -2524,7 +2548,15 @@ if (isArchiveCommand(incomingText)) {
       if (isDeadlineUpdate(incomingText)) {
       const deadlineUpdate = extractDeadlineUpdate(incomingText);
       if (!deadlineUpdate) {
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב: תשני את הדדליין של [שם הסרטון] ל-[תאריך]");
+        await safeSendWhatsAppMessage(
+        sender,
+        [
+          "לא בטוחה איזה דדליין לעדכן.",
+          "",
+          "אפשר לכתוב למשל:",
+          "תשני את הדדליין של סרטון שמלות ל-17/06",
+        ].join("\n")
+      );
         return res.status(200).json({ status: "deadline_update_parse_error", sender });
       }
     // Handle unsupported question-like messages (after visibilityIntent is ruled out)
@@ -2543,12 +2575,12 @@ if (isArchiveCommand(incomingText)) {
       const matchResult = await findProductionTaskByName(spreadsheetId, deadlineUpdate.contentName);
 
       if (!matchResult) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הסרטון. תנסי עם שם קצת יותר מדויק.");
+        await safeSendWhatsAppMessage(sender, "לא מצאתי את הסרטון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "deadline_update_no_match", sender });
       }
 
       if ("ambiguous" in matchResult && matchResult.ambiguous) {
-        await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. תנסי עם שם יותר מדויק.");
+        await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
         return res.status(200).json({ status: "deadline_update_ambiguous", sender });
       }
 
