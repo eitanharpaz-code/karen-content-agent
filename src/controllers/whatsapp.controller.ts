@@ -1584,6 +1584,16 @@ await safeSendWhatsAppMessage(
     if (pendingQuestion?.questionType === "set_deadline") {
       const contentId = pendingQuestion.context?.contentId as string;
       const rawDeadline = incomingText.trim();
+      const isExplicitCommandWhileSettingDeadline =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandWhileSettingDeadline) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] set_deadline: explicit command detected, falling through`);
+      } else {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
@@ -1613,6 +1623,7 @@ await safeSendWhatsAppMessage(
         }
       }
       return res.status(200).json({ status: "deadline_set", sender });
+      }
     }
     if (pendingQuestion && isRejectionMessage(incomingText)) {
       clearPendingQuestion(sender);
