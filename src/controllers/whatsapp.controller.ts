@@ -299,8 +299,15 @@ const markOverdueItemPublished = async (
     }
   }
 
-  await updateApprovedContentStatusById(spreadsheetId, contentId, "פורסם");
-  await updateGanttStatus(spreadsheetId, contentId, "פורסם");
+  const approvedUpdated = await updateApprovedContentStatusById(spreadsheetId, contentId, "פורסם");
+  if (!approvedUpdated) {
+    throw new Error(`Failed to mark approved content as published for contentId: ${contentId}`);
+  }
+
+  const ganttUpdated = await updateGanttStatus(spreadsheetId, contentId, "פורסם");
+  if (!ganttUpdated) {
+    throw new Error(`Failed to mark gantt row as published for contentId: ${contentId}`);
+  }
 };
 
 export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
@@ -2475,12 +2482,19 @@ const replyText = [
 
           if (overdueDecisionIntent.type === "archive") {
             clearPendingQuestion(sender);
-            await updateApprovedContentStatusById(
+            const approvedCancelled = await updateApprovedContentStatusById(
               spreadsheetId,
               contentId,
               "בוטל"
             );
-            await updateGanttStatus(spreadsheetId, contentId, "בוטל");
+            if (!approvedCancelled) {
+              throw new Error(`Failed to mark approved content as cancelled for contentId: ${contentId}`);
+            }
+
+            const ganttCancelled = await updateGanttStatus(spreadsheetId, contentId, "בוטל");
+            if (!ganttCancelled) {
+              throw new Error(`Failed to mark gantt row as cancelled for contentId: ${contentId}`);
+            }
 
             await safeSendWhatsAppMessage(
               sender,
@@ -2869,6 +2883,13 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           console.log(`[Sprint 7 Workflow] Found match: "${exactMatch.row[1]}" at row ${exactMatch.rowIndex}`);
           console.log(`[Sprint 7 Workflow] Updating status columns: ${uniqueUpdates.map((update) => update.columnName).join(", ")}`);
 
+          const secondaryUpdateFailures: string[] = [];
+          const recordSecondaryUpdateFailure = (label: string) => {
+            if (!secondaryUpdateFailures.includes(label)) {
+              secondaryUpdateFailures.push(label);
+            }
+          };
+
     for (const update of uniqueUpdates) {
             if (update.columnName === "פורסם") continue; // לא קיים בטאב הפקה
             await updateProductionStatus(spreadsheetId, exactMatch.rowIndex, update.columnIndex);
@@ -2888,8 +2909,12 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 
             if (approvedStatus) {
               try {
-                await updateApprovedContentStatusById(spreadsheetId, contentId, approvedStatus);
+                const approvedUpdated = await updateApprovedContentStatusById(spreadsheetId, contentId, approvedStatus);
+                if (!approvedUpdated) {
+                  recordSecondaryUpdateFailure("תכנים שאושרו");
+                }
               } catch (approvedStatusError) {
+                recordSecondaryUpdateFailure("תכנים שאושרו");
                 console.error(`[Sprint 7 Workflow] ⚠️ Failed to update approved content status: ${approvedStatusError}`);
               }
             }
@@ -2903,9 +2928,14 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           ) {
             if (contentId) {
               try {
-                await updateGanttStatus(spreadsheetId, contentId, "מוכן");
-                console.log(`[Sprint 7 Workflow] ✅ Gantt status updated to מוכן for: ${contentId}`);
+                const ganttUpdated = await updateGanttStatus(spreadsheetId, contentId, "מוכן");
+                if (ganttUpdated) {
+                  console.log(`[Sprint 7 Workflow] ✅ Gantt status updated to מוכן for: ${contentId}`);
+                } else {
+                  recordSecondaryUpdateFailure("גאנט");
+                }
               } catch (ganttReadyError) {
+                recordSecondaryUpdateFailure("גאנט");
                 console.error(`[Sprint 7 Workflow] ⚠️ Failed to update gantt to ready: ${ganttReadyError}`);
               }
             }
@@ -2915,28 +2945,41 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           if (statusUpdate.statusTypes.includes("uploaded")) {
             if (contentId) {
               try {
-                await updateGanttStatus(spreadsheetId, contentId, "פורסם");
-                console.log(`[Sprint 7 Workflow] ✅ Gantt status updated to פורסם for: ${contentId}`);
+                const ganttUpdated = await updateGanttStatus(spreadsheetId, contentId, "פורסם");
+                if (ganttUpdated) {
+                  console.log(`[Sprint 7 Workflow] ✅ Gantt status updated to פורסם for: ${contentId}`);
+                } else {
+                  recordSecondaryUpdateFailure("גאנט");
+                }
               } catch (ganttError) {
+                recordSecondaryUpdateFailure("גאנט");
                 console.error(`[Sprint 7 Workflow] ⚠️ Failed to update gantt: ${ganttError}`);
               }
             }
           }
           const contentNameDisplay = exactMatch.row[1] || statusUpdate.contentName;
           const isUploaded = statusUpdate.statusTypes.includes("uploaded");
-          const replyText = isUploaded
-            ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
-            : `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${uniqueUpdates.map((u) => u.columnName).join(", ")}`;
+          const hasSecondaryFailures = secondaryUpdateFailures.length > 0;
+          const replyText = hasSecondaryFailures
+            ? `עדכנתי את משימות ההפקה של "${contentNameDisplay}", אבל לא הצלחתי להשלים עדכון ב: ${secondaryUpdateFailures.join(", ")}.\nכדאי לבדוק ידנית.`
+            : isUploaded
+              ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
+              : `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${uniqueUpdates.map((u) => u.columnName).join(", ")}`;
           await safeSendWhatsAppMessage(sender, replyText);
 
-          console.log(`[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}\n`);
+          console.log(
+            `[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}` +
+              (hasSecondaryFailures ? ` with secondary failures: ${secondaryUpdateFailures.join(", ")}` : "") +
+              "\n"
+          );
 
           return res.status(200).json({
-            status: "status_updated",
+            status: hasSecondaryFailures ? "status_updated_with_secondary_failures" : "status_updated",
             sender,
             contentName: contentNameDisplay,
             statusTypes: statusUpdate.statusTypes,
             columnNames: uniqueUpdates.map((update) => update.columnName),
+            secondaryUpdateFailures,
           });
         } catch (statusError) {
           const errorMessage =

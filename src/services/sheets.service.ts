@@ -1670,7 +1670,7 @@ export const updateGanttStatus = async (
   spreadsheetId: string,
   contentId: string,
   status: string
-): Promise<void> => {
+): Promise<boolean> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
@@ -1683,7 +1683,7 @@ export const updateGanttStatus = async (
   const rowIndex = rows.findIndex((row, i) => i > 0 && (row[0] || "").toString().trim() === contentId);
   if (rowIndex === -1) {
     console.log(`[Gantt] No gantt row found for contentId: ${contentId}`);
-    return;
+    return false;
   }
 
   // עמודה K היא סטטוס (index 10, עמודה 11)
@@ -1712,6 +1712,8 @@ export const updateGanttStatus = async (
 
     console.log(`[Gantt] ✅ Wrote publish timestamp to N${rowIndex + 1}: ${israelTime}`);
   }
+
+  return true;
 };
 // Get gantt rows that are NOT published (status ≠ "פורסם")
 export const getGanttNotPublished = async (spreadsheetId: string): Promise<any[]> => {
