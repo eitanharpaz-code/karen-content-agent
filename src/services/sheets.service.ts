@@ -928,12 +928,6 @@ export const getTasksMissingCover = async (spreadsheetId: string): Promise<Produ
   return tasks.filter((task) => task.coverReady !== "כן");
 };
 
-// Get tasks missing copy: copy ready != כן
-export const getTasksMissingCopy = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
-  const tasks = await getAllProductionTasks(spreadsheetId);
-  return tasks.filter((task) => task.copyReady !== "כן");
-};
-
 // Get tasks not uploaded: uploaded != כן
 export const getTasksNotUploaded = async (spreadsheetId: string): Promise<ProductionTaskRow[]> => {
   const tasks = await getAllProductionTasks(spreadsheetId);
@@ -1212,7 +1206,6 @@ export const getTasksByCategory = async (
       case "filmed":   return task.filmed !== "כן";
       case "edited":   return task.edited !== "כן";
       case "cover":    return task.coverReady !== "כן";
-      case "copy":     return task.copyReady !== "כן";
       case "uploaded": return task.uploaded !== "כן";
       default:         return false;
     }

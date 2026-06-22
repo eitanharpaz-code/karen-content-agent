@@ -12,7 +12,6 @@ import { detectStatusUpdate } from "../services/production-status.service";
 import {
   getTasksMissingEdit,
   getTasksMissingCover,
-  getTasksMissingCopy,
   getTasksNotUploaded,
   getTasksEditedAndNotUploaded,
   getStuckTasks,
@@ -94,10 +93,11 @@ const TEST_CASES: VisibilityTestCase[] = [
     shouldReadFromSheets: true,
   },
   {
-    description: "Detect missing copy intent",
+    description: "Copy is no longer a tracked visibility intent",
     query: "איזה תכנים בלי קופי?",
-    expectedIntent: "missing_copy",
-    shouldReadFromSheets: true,
+    expectedIntent: null,
+    shouldReadFromSheets: false,
+    isQuestionLike: true,
   },
   {
     description: "Detect upload status intent",
@@ -231,10 +231,6 @@ const runVisibilityTest = async (testCase: VisibilityTestCase) => {
         case "missing_cover":
           tasks = await getTasksMissingCover(spreadsheetId);
           console.log(`📊 Found ${tasks.length} tasks missing cover`);
-          break;
-        case "missing_copy":
-          tasks = await getTasksMissingCopy(spreadsheetId);
-          console.log(`📊 Found ${tasks.length} tasks missing copy`);
           break;
         case "not_uploaded":
           tasks = await getTasksNotUploaded(spreadsheetId);

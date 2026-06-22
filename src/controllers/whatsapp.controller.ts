@@ -48,7 +48,6 @@ import {
   getTasksByCategory,
   getContentIdeaSummary,
   getTasksMissingCover,
-  getTasksMissingCopy,
   getTasksNotUploaded,
   getTasksEditedAndNotUploaded,
   getStuckTasks,
@@ -2129,9 +2128,6 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             break;
           case "missing_cover":
             tasks = await getTasksMissingCover(spreadsheetId);
-            break;
-          case "missing_copy":
-            tasks = await getTasksMissingCopy(spreadsheetId);
             break;
           case "not_uploaded": {
             const ganttItems = await getGanttNotPublished(spreadsheetId);

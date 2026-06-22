@@ -11,7 +11,6 @@ export type VisibilityIntent =
   | "edited_not_uploaded"
   | "task_status"
   | "missing_cover"
-  | "missing_copy"
   | "not_uploaded"
   | "category_search"
   | "stuck_workflow"
@@ -276,21 +275,6 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     return "missing_cover";
   }
 
-  // --- Missing Copy Intent ---
-  const copyPhrases = [
-    "קופי",
-    "בלי קופי",
-    "מה צריך קופי",
-    "מה עוד בלי קופי",
-    "חסר קופי",
-    "אין קופי",
-    "ללא קופי",
-    "קופי חסר",
-  ];
-  if (copyPhrases.some((p) => rawText.includes(p))) {
-    return "missing_copy";
-  }
-
   // --- Upload / Not Uploaded Intent ---
   const uploadPhrases = [
     "מה עדיין לא עלה",
@@ -506,7 +490,7 @@ export const isLikelyVisibilityQuery = (text: string): boolean => {
   }
 
   const queryIndicators = ["מה", "איזה", "נשאר", "עוד", "מחכה", "?", "?", "למה"];
-  const visibilityKeywords = ["ערוך", "עריכה", "קאבר", "קופי", "העלאה", "עלה", "פורסם", "תקוע", "סטטוס", "פרסם", "במק"];
+  const visibilityKeywords = ["ערוך", "עריכה", "קאבר", "העלאה", "עלה", "פורסם", "תקוע", "סטטוס", "פרסם", "במק"];
   const planningKeywords = ["גאנט", "מתוכנן", "מתוכננת", "בתכנון", "השבוע", "החודש"];
 
   const hasQueryWord = queryIndicators.some((q) => raw.includes(q));
@@ -843,12 +827,6 @@ export const formatWhatsImportantResponse = (
         "חסר קאבר",
         `לסגור קאבר ל-"${shortenTaskName(t.taskName)}". זה קטן, אבל תוקע העלאה.`
       );
-    } else if (t.copyReady !== "כן") {
-      addProductionIssue(
-        t,
-        "חסר קופי",
-        `לסגור קופי ל-"${shortenTaskName(t.taskName)}". זה הדבר האחרון לפני העלאה.`
-      );
     }
   });
 
@@ -978,7 +956,7 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
           titleSingular: "יש תוכן אחד שכבר ערוך ומחכה לעלות.",
           titlePlural: (count: number) => `יש ${count} תכנים שכבר ערוכים ומחכים לעלות.`,
           listTitle: "מה מוכן לעלייה:",
-          nextAction: (name: string) => `הייתי בודקת אם "${name}" מוכן גם בקאבר ובקופי, ואז לשבץ להעלאה.`,
+          nextAction: (name: string) => `הייתי בודקת אם "${name}" מוכן גם בקאבר, ואז לשבץ להעלאה.`,
         };
 
       case "missing_cover":
@@ -988,15 +966,6 @@ export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: Vis
           titlePlural: (count: number) => `יש ${count} תכנים שחסר להם קאבר.`,
           listTitle: "מה צריך קאבר:",
           nextAction: (name: string) => `הייתי סוגרת קודם קאבר ל-"${name}". זה קטן, אבל יכול לתקוע העלאה.`,
-        };
-
-      case "missing_copy":
-        return {
-          empty: "אין כרגע תוכן שחסר לו קופי.",
-          titleSingular: "יש תוכן אחד שחסר לו קופי.",
-          titlePlural: (count: number) => `יש ${count} תכנים שחסר להם קופי.`,
-          listTitle: "מה צריך קופי:",
-          nextAction: (name: string) => `הייתי סוגרת קודם קופי ל-"${name}". זה בדרך כלל הדבר האחרון לפני העלאה.`,
         };
 
       case "not_uploaded":
@@ -1096,7 +1065,6 @@ export const extractCategoryAndStage = (text: string, categoryNames: string[]): 
     { keywords: ["צולם", "צילום", "לצלם"], stage: "filmed" },
     { keywords: ["נערך", "עריכה", "לערוך", "ערוך"], stage: "edited" },
     { keywords: ["קאבר"], stage: "cover" },
-    { keywords: ["קופי"], stage: "copy" },
     { keywords: ["עלה", "הועלה", "לעלות", "פורסם"], stage: "uploaded" },
   ];
 
@@ -1128,7 +1096,6 @@ export const formatCategoryStageResponse = (
     filmed: "צולמו",
     edited: "נערכו",
     cover: "יש להם קאבר",
-    copy: "יש להם קופי",
     uploaded: "עלו",
   };
 
