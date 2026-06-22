@@ -153,3 +153,6 @@ karen-content-agent-*.json
 
 # Generated code context exports
 Karen_Content_Agent_Code_Context.md
+
+# Local non-source working artifacts
+.local-artifacts/
