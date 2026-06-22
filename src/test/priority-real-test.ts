@@ -34,6 +34,8 @@ const main = async () => {
       edited: t.edited,
       coverReady: t.coverReady,
       deadline: t.deadline,
+      readyAt: t.readyAt,
+      updatedAt: t.updatedAt,
     }))
   );
 
@@ -45,6 +47,9 @@ const main = async () => {
     console.log(`    contentId:         ${item.contentId}`);
     console.log(`    ganttDate:         ${item.ganttDate ?? "אין"}`);
     console.log(`    daysUntilUpload:   ${item.daysUntilUpload ?? "אין גאנט"}`);
+    console.log(`    productionDeadline:${item.productionDeadline ?? "אין"}`);
+    console.log(`    readyAt:           ${item.readyAt ?? "אין"}`);
+    console.log(`    updatedAt:         ${item.updatedAt ?? "אין"}`);
     console.log(`    priorityLevel:     ${item.priorityLevel}`);
     console.log(`    riskType:          ${item.riskType}`);
     console.log(`    recommendedAction: ${item.recommendedAction}`);
