@@ -1644,7 +1644,7 @@ await safeSendWhatsAppMessage(
       } else {
         if (isRejectionMessage(incomingText)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "אין בעיה, לא שמרתי את הרעיון הכפול.");
+          await safeSendWhatsAppMessage(sender, "סבבה, לא שמרתי את זה.");
           return res.status(200).json({ status: "duplicate_rejected", sender });
         }
 
@@ -1653,7 +1653,7 @@ await safeSendWhatsAppMessage(
           const originalInput = pendingQuestion.context?.originalInput as string;
 
           if (!originalInput) {
-            await safeSendWhatsAppMessage(sender, "משהו השתבש, נסי שוב.");
+            await safeSendWhatsAppMessage(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
 
@@ -1691,7 +1691,7 @@ await safeSendWhatsAppMessage(
           clearPendingQuestion(sender);
           const originalInput = pendingQuestion.context?.originalInput as string;
           if (!originalInput) {
-            await safeSendWhatsAppMessage(sender, "משהו השתבש, נסי שוב.");
+            await safeSendWhatsAppMessage(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
           const draft = await createContentDraft(originalInput);
@@ -1823,7 +1823,7 @@ await safeSendWhatsAppMessage(
               return d >= today;
             });
 
-            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.\nID: ${contentId}`;
+            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.\nמספר פנימי: ${contentId}`;
             await safeSendWhatsAppMessage(sender, replyText);
 
             if (futureAvailable.length > 0) {
@@ -1899,7 +1899,7 @@ await safeSendWhatsAppMessage(sender, replyText);
             sheetError instanceof Error ? sheetError.message : "Unknown error";
           console.error(`[Sprint 6 Workflow] ❌ CRITICAL ERROR: ${errorMessage}\n`);
 
-          const replyText = "אישור התקבל אבל קרתה שגיאה בשמירה. אנא נסי שוב.";
+          const replyText = "קיבלתי את האישור, אבל השמירה לא הצליחה. תנסי שוב עוד רגע.";
           await safeSendWhatsAppMessage(sender, replyText);
 
           return res.status(500).json({
@@ -2982,7 +2982,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
             statusError instanceof Error ? statusError.message : "Unknown error";
           console.error(`[Sprint 7 Workflow] ❌ Error updating status: ${errorMessage}\n`);
 
-          const replyText = "קרתה שגיאה בעדכון הסטטוס. אנא נסי שוב בעוד רגע.";
+          const replyText = "לא הצלחתי לעדכן את הסטטוס כרגע. תנסי שוב עוד רגע.";
           await safeSendWhatsAppMessage(sender, replyText);
 
           return res.status(500).json({
@@ -3111,8 +3111,10 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
         questionType: "confirm_duplicate",
         context: { originalInput: cleanedUserInput },
       });
-      const replyText = `שימי לב - מצאתי רעיון דומה שכבר קיים: "${similar.idea.substring(0, 50)}..." (${similar.contentId})
-רוצה לשמור בכל זאת?`;
+      const replyText = `שימי לב - מצאתי רעיון דומה שכבר קיים:
+"${similar.idea.substring(0, 50)}..."
+
+רוצה לשמור גם את הרעיון החדש?`;
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "duplicate_found", sender });
     }
@@ -3149,7 +3151,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     console.error("WhatsApp webhook error:", message);
 
     try {
-      await safeSendWhatsAppMessage(sender, "מצטערת, קרתה שגיאה. נסי שוב בעוד רגע.");
+      await safeSendWhatsAppMessage(sender, "לא הצלחתי להשלים את זה כרגע. תנסי שוב עוד רגע.");
     } catch (sendError) {
       console.error("Failed to send error message:", sendError);
     }
