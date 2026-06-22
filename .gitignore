@@ -146,3 +146,10 @@ karen-content-agent-*.json*.before-*
 # Google service account keys
 karen-content-agent-*.json
 *-service-account*.json
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Generated code context exports
+Karen_Content_Agent_Code_Context.md
