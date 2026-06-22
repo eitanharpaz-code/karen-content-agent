@@ -10,6 +10,14 @@ const controllerPath = path.join(
 );
 
 const source = fs.readFileSync(controllerPath, "utf8");
+const systemPromptSource = fs.readFileSync(
+  path.join(process.cwd(), "prompts/system-prompt.md"),
+  "utf8"
+);
+const contentServiceSource = fs.readFileSync(
+  path.join(process.cwd(), "src/services/content.service.ts"),
+  "utf8"
+);
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) {
@@ -120,6 +128,61 @@ assert(
 assert(
   !source.includes("שם: ${updatedDraft.shortName}\nקטגוריה: ${updatedCategoryText}"),
   "Old duplicated updated-draft template still exists."
+);
+
+assert(
+  systemPromptSource.includes("personal content assistant"),
+  "System prompt should define the bot as Karen's personal content assistant."
+);
+
+assert(
+  systemPromptSource.includes("not a CRM"),
+  "System prompt should explicitly avoid CRM-style behavior."
+);
+
+assert(
+  systemPromptSource.includes("Do not ask Karen to approve inside the Claude response"),
+  "System prompt should keep approval copy in the app layer."
+);
+
+assert(
+  !systemPromptSource.includes("content operations assistant"),
+  "Old CRM-ish system prompt role should not remain."
+);
+
+assert(
+  !systemPromptSource.includes("אשר כדי לשמור"),
+  "Old approval wording should not remain in the system prompt."
+);
+
+assert(
+  contentServiceSource.includes("עוזרת התוכן האישית של קרן"),
+  "Content draft prompt should use the new personal-assistant framing."
+);
+
+assert(
+  contentServiceSource.includes("לא CRMית"),
+  "Content draft prompt should explicitly avoid CRM-style language."
+);
+
+assert(
+  contentServiceSource.includes("אל תשאלי אם לשמור"),
+  "Claude draft prompt should not ask Karen for approval directly."
+);
+
+assert(
+  contentServiceSource.includes("Short Name:") &&
+    contentServiceSource.includes("Category:") &&
+    contentServiceSource.includes("Tone:") &&
+    contentServiceSource.includes("Priority:") &&
+    contentServiceSource.includes("Content Type:") &&
+    contentServiceSource.includes("Summary:"),
+  "Content draft prompt must preserve parser field labels."
+);
+
+assert(
+  !contentServiceSource.includes("אחרי זה, שאל אם זה בסדר לשמור"),
+  "Old instruction for Claude to ask about saving should not remain."
 );
 
 console.log("✅ bot-language-draft-preview-test passed");
