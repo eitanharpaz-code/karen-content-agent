@@ -110,7 +110,7 @@ import {
   hasEditConfidence,
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
-import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
+import { isThisWeek, normalizeUserDateInput, getHebrewDayName as getHebrewDayNameFromDate } from "../utils/date-utils";
 import {
   fetchOverdueDecisionItems,
   fetchPriorityItems,
@@ -601,7 +601,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
                 newContentId: result.option.contentId,
                 newContentName: result.option.title,
                 suggestedDate: formatDate(nextWeekStart),
-                suggestedDayName: ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][nextWeekStart.getDay()],
+                suggestedDayName: getHebrewDayNameFromDate(nextWeekStart),
                 alternatives: [],
                 ganttStatus: "בתכנון",
               },
@@ -614,10 +614,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           }
 
           const suggestedDate = availableDates[0];
-          const suggestedParts = suggestedDate.split("/");
-          const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][
-            new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()
-          ];
+          const suggestedDayName = getHebrewDayName(suggestedDate);
 
           storePendingQuestion(sender, {
             questionType: "gantt_write_new_date",
@@ -711,8 +708,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           return res.status(200).json({ status: "gantt_collision_replaced_no_slot", sender });
         }
 
-        const suggestedParts = suggested.split("/");
-        const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()];
+        const suggestedDayName = getHebrewDayName(suggested);
         const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
 
         storePendingQuestion(sender, {
@@ -739,8 +735,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           return res.status(200).json({ status: "gantt_collision_no_slot", sender });
         }
 
-        const suggestedParts = suggested.split("/");
-        const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()];
+        const suggestedDayName = getHebrewDayName(suggested);
         const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
 
         storePendingQuestion(sender, {
@@ -791,8 +786,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       }
 
       clearPendingQuestion(sender);
-      const targetParts = targetDate.split("/");
-      const targetDayName = confirmedSuggestedDate ? suggestedDayName : ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(targetParts[2]), parseInt(targetParts[1]) - 1, parseInt(targetParts[0])).getDay()];
+      const targetDayName = confirmedSuggestedDate ? suggestedDayName : getHebrewDayName(targetDate);
 
       await updateGanttRowDate(spreadsheetId, existingContentId, targetDate, targetDayName);
       await addRowToGantt(spreadsheetId, newContentId, newContentName, newDate, newDayName, "", ganttStatus || "בתכנון");
@@ -965,7 +959,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       parseInt(targetParts[0])
     );
 
-    targetDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][parsedTarget.getDay()];
+    targetDayName = getHebrewDayNameFromDate(parsedTarget);
   }
 
   clearPendingQuestion(sender);
@@ -1283,7 +1277,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
   const parsedDate = params.date.split("/");
   const dateObj = new Date(parseInt(parsedDate[2]), parseInt(parsedDate[1]) - 1, parseInt(parsedDate[0]));
-  const dayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][dateObj.getDay()];
+  const dayName = getHebrewDayNameFromDate(dateObj);
 
   await addRowToGantt(monthlySpreadsheetId, match.contentId, match.name, params.date, dayName);
   await sortGanttByDate(monthlySpreadsheetId);
@@ -1475,13 +1469,11 @@ const alternatives = available
         }
 
         const firstAlternative = alternatives[0];
-        const firstParts = firstAlternative.split("/");
-        const firstAlternativeDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(firstParts[2]), parseInt(firstParts[1]) - 1, parseInt(firstParts[0])).getDay()];
+        const firstAlternativeDayName = getHebrewDayName(firstAlternative);
 
         const optionsText = alternatives
           .map((candidateDate, index) => {
-            const parts = candidateDate.split("/");
-            const candidateDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
+            const candidateDayName = getHebrewDayName(candidateDate);
             return `${index + 1}. ${candidateDate} (${candidateDayName})`;
           })
           .join("\n");
@@ -1828,8 +1820,7 @@ await safeSendWhatsAppMessage(
 
             if (futureAvailable.length > 0) {
               const suggested = futureAvailable[0];
-              const parts = suggested.split("/");
-              const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
+              const suggestedDayName = getHebrewDayName(suggested);
               storePendingQuestion(sender, {
                 questionType: "confirm_gantt_write",
                 context: {
@@ -2294,7 +2285,7 @@ const replyText = [
               parseInt(parsedDate[1]) - 1,
               parseInt(parsedDate[0])
             );
-            const dayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][dateObj.getDay()];
+            const dayName = getHebrewDayNameFromDate(dateObj);
 
             if (!match) {
               await safeSendWhatsAppMessage(sender, `לא מצאתי תוכן בשם "${params.contentName}" בתכנים שאושרו. תבדקי את השם ותנסי שוב.`);
@@ -2685,8 +2676,7 @@ const replyText = [
 
       if (futureAvailable.length > 0) {
         const suggested = futureAvailable[0];
-        const parts = suggested.split("/");
-        const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getDay()];
+        const suggestedDayName = getHebrewDayName(suggested);
 
         storePendingQuestion(sender, {
           questionType: "confirm_gantt_write",
