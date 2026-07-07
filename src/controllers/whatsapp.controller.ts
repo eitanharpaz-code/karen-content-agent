@@ -283,6 +283,44 @@ const getHebrewDayName = (dateText: string): string => {
   ];
 };
 
+// Finds the nearest available Gantt date in the given month: tomorrow or
+// later, earliest first. Returns null when the month has no future free
+// slot. Extracted from two previously-duplicated blocks in the
+// monthly_planning flow (the callers keep their own status responses).
+const findNearestAvailableGanttDate = async (
+  spreadsheetId: string,
+  month: number,
+  year: number
+): Promise<{ date: string; dayName: string } | null> => {
+  const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
+  const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
+
+  const earliestGanttDate = new Date();
+  earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
+  earliestGanttDate.setHours(0, 0, 0, 0);
+
+  const futureAvailable = available
+    .filter((candidateDate) => {
+      const parts = candidateDate.split("/");
+      const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      return parsed >= earliestGanttDate;
+    })
+    .sort((a, b) => {
+      const aParts = a.split("/");
+      const bParts = b.split("/");
+      const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
+      const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
+      return aDate.getTime() - bDate.getTime();
+    });
+
+  if (futureAvailable.length === 0) {
+    return null;
+  }
+
+  const date = futureAvailable[0];
+  return { date, dayName: getHebrewDayName(date) };
+};
+
 const markOverdueItemPublished = async (
   spreadsheetId: string,
   contentId: string
@@ -1023,38 +1061,15 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     }
 
     const monthlySpreadsheetId = process.env.GOOGLE_SHEETS_ID!;
-    const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
+    const nearest = await findNearestAvailableGanttDate(monthlySpreadsheetId, month, year);
 
-    const available = await findAvailableDatesInMonth(monthlySpreadsheetId, firstOfMonth);
-
-    const earliestGanttDate = new Date();
-    earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
-    earliestGanttDate.setHours(0, 0, 0, 0);
-
-    const futureAvailable = available
-      .filter((candidateDate) => {
-        const parts = candidateDate.split("/");
-        const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-        return parsed >= earliestGanttDate;
-      })
-      .sort((a, b) => {
-        const aParts = a.split("/");
-        const bParts = b.split("/");
-        const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
-        const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
-        return aDate.getTime() - bDate.getTime();
-      });
-
-    if (futureAvailable.length === 0) {
+    if (!nearest) {
       await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
       return res.status(200).json({ status: "monthly_planning_no_available_date", sender });
     }
 
-    const suggestedDate = futureAvailable[0];
-    const suggestedParts = suggestedDate.split("/");
-    const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][
-      new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()
-    ];
+    const suggestedDate = nearest.date;
+    const suggestedDayName = nearest.dayName;
 
    storePendingQuestion(sender, {
   questionType: "confirm_gantt_write",
@@ -1157,38 +1172,15 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   if (chosenContent) {
     const chosenContentName = getContentDisplayName(chosenContent);
     const monthlySpreadsheetId = process.env.GOOGLE_SHEETS_ID!;
-    const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
+    const nearest = await findNearestAvailableGanttDate(monthlySpreadsheetId, month, year);
 
-    const available = await findAvailableDatesInMonth(monthlySpreadsheetId, firstOfMonth);
-
-    const earliestGanttDate = new Date();
-    earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
-    earliestGanttDate.setHours(0, 0, 0, 0);
-
-    const futureAvailable = available
-      .filter((candidateDate) => {
-        const parts = candidateDate.split("/");
-        const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-        return parsed >= earliestGanttDate;
-      })
-      .sort((a, b) => {
-        const aParts = a.split("/");
-        const bParts = b.split("/");
-        const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
-        const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
-        return aDate.getTime() - bDate.getTime();
-      });
-
-    if (futureAvailable.length === 0) {
+    if (!nearest) {
       await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
       return res.status(200).json({ status: "monthly_planning_no_available_date_for_choice", sender });
     }
 
-    const suggestedDate = futureAvailable[0];
-    const suggestedParts = suggestedDate.split("/");
-    const suggestedDayName = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"][
-      new Date(parseInt(suggestedParts[2]), parseInt(suggestedParts[1]) - 1, parseInt(suggestedParts[0])).getDay()
-    ];
+    const suggestedDate = nearest.date;
+    const suggestedDayName = nearest.dayName;
 
     storePendingQuestion(sender, {
       questionType: "confirm_gantt_write",
