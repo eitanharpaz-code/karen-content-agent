@@ -1,6 +1,10 @@
 import { google, sheets_v4 } from "googleapis";
 import { normalizeHebrewText, getTokenOverlapScore, tokenizeHebrewText } from "./production-status.service";
 import { parseDateFromSheet, getHebrewDayName } from "../utils/date-utils";
+// Stage 2 wiring (1/4): unified matching path. Matching calls NEVER use the
+// Karen persona prompt — see src/types/claude-context.types.ts.
+import { askClaudeForMatching } from "./claude.service";
+import type { MatchingClaudeContext } from "../types/claude-context.types";
 
 // Sheet name mapping: English reference names to actual Hebrew sheet names
 const SHEET_NAMES = {
@@ -1047,36 +1051,26 @@ export const getContentIdeaSummary = async (
   if (candidates.length === 0) return null;
 
   try {
-    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.idea}`).join("\n");
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
-        max_tokens: 50,
-        messages: [
-          {
-            role: "user",
-            content: `המשתמש מחפש: "${searchName}"
-הנה רשימת הרעיונות:
-${candidateList}
+    // Stage 2 wiring (1/4): route through the unified matching path instead
+    // of an ad-hoc fetch(). askClaudeForMatching never uses the persona and
+    // returns the matched candidate index, or null (no unsafe fallback).
+    const context: MatchingClaudeContext = {
+      kind: "matching",
+      purpose: "content_idea_match",
+      query: searchName,
+      candidates: candidates.map((c, i) => ({
+        index: i,
+        label: c.idea,
+        contentId: c.contentId,
+      })),
+      usesSystemPrompt: false,
+      expectedReturn: "number_or_zero",
+    };
 
-החזר רק את המספר של הרעיון שהכי מתאים לחיפוש, או "0" אם אין התאמה. רק מספר, בלי הסבר.`,
-          },
-        ],
-      }),
-    });
+    const matchedIndex = await askClaudeForMatching(context);
 
-    const data = await response.json() as any;
-    const resultText = (data.content?.[0]?.text || "0").trim();
-    const index = parseInt(resultText) - 1;
-
-    if (index >= 0 && index < candidates.length) {
-      const ideaText = candidates[index].idea;
+    if (matchedIndex !== null && matchedIndex >= 0 && matchedIndex < candidates.length) {
+      const ideaText = candidates[matchedIndex].idea;
       const shortName = ideaText.split(/\s+/).slice(0, 6).join(" ");
       console.log(`[Claude Summary] "${searchName}" → "${shortName}"`);
       return { shortName, idea: ideaText };

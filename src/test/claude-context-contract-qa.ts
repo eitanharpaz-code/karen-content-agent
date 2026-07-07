@@ -48,15 +48,19 @@ check(
   !sheetsServiceSource.includes("system-prompt.md")
 );
 
+// Stage 2 wiring update: sheets.service.ts is now ALLOWED (and required) to
+// import askClaudeForMatching — the persona-free unified matching path. It
+// must still never reference the drafting function askClaude itself.
 check(
-  "sheets.service.ts does not import or call askClaude",
-  !/askClaude/.test(sheetsServiceSource)
+  "sheets.service.ts does not import or call askClaude (drafting path)",
+  !/\baskClaude\b(?!ForMatching)/.test(sheetsServiceSource)
 );
 
 check(
-  "sheets.service.ts does not import claude.service",
-  !/from ["']\.\.\/services\/claude\.service["']/.test(sheetsServiceSource) &&
-    !/from ["']\.\/claude\.service["']/.test(sheetsServiceSource)
+  "sheets.service.ts imports askClaudeForMatching from claude.service",
+  /import\s*\{\s*askClaudeForMatching\s*\}\s*from\s*["']\.\/claude\.service["']/.test(
+    sheetsServiceSource
+  )
 );
 
 // ---------------------------------------------------------------------------
@@ -64,11 +68,20 @@ check(
 // ---------------------------------------------------------------------------
 console.log("\n[3] Matching functions must request number-or-zero only");
 
-const matchingFunctionNames = [
+// Stage 2 wiring progress: functions move from `unwired` to `wired` one at
+// a time. Wired functions must use askClaudeForMatching (no ad-hoc fetch);
+// unwired functions must still match the original ad-hoc fetch contract.
+const wiredMatchingFunctionNames = ["getContentIdeaSummary"];
+
+const unwiredMatchingFunctionNames = [
   "findProductionTaskByName",
-  "getContentIdeaSummary",
   "findSimilarContentIdea",
   "findApprovedContentByName",
+];
+
+const matchingFunctionNames = [
+  ...wiredMatchingFunctionNames,
+  ...unwiredMatchingFunctionNames,
 ];
 
 const extractFunctionBody = (source: string, fnName: string): string => {
@@ -92,24 +105,50 @@ const extractFunctionBody = (source: string, fnName: string): string => {
   return source.slice(startIndex, endIndex);
 };
 
-for (const fnName of matchingFunctionNames) {
+for (const fnName of unwiredMatchingFunctionNames) {
   const body = extractFunctionBody(sheetsServiceSource, fnName);
 
   check(`${fnName} is found in sheets.service.ts`, body.length > 0);
 
   check(
-    `${fnName} calls fetch("https://api.anthropic.com/v1/messages")`,
+    `${fnName} (unwired) calls fetch("https://api.anthropic.com/v1/messages")`,
     /fetch\(\s*["']https:\/\/api\.anthropic\.com\/v1\/messages["']/.test(body)
   );
 
   check(
-    `${fnName} instructs Claude to return only a number or "0"`,
+    `${fnName} (unwired) instructs Claude to return only a number or "0"`,
     /רק מספר/.test(body) && /"0"/.test(body)
   );
 
   check(
-    `${fnName} parses the result with parseInt (number-only expectation)`,
+    `${fnName} (unwired) parses the result with parseInt (number-only expectation)`,
     /parseInt\(resultText\)/.test(body)
+  );
+}
+
+for (const fnName of wiredMatchingFunctionNames) {
+  const body = extractFunctionBody(sheetsServiceSource, fnName);
+
+  check(`${fnName} is found in sheets.service.ts`, body.length > 0);
+
+  check(
+    `${fnName} (wired) does NOT call fetch directly`,
+    !/fetch\(\s*["']https:\/\/api\.anthropic\.com\/v1\/messages["']/.test(body)
+  );
+
+  check(
+    `${fnName} (wired) calls askClaudeForMatching`,
+    /askClaudeForMatching\(/.test(body)
+  );
+
+  check(
+    `${fnName} (wired) builds a MatchingClaudeContext`,
+    /MatchingClaudeContext/.test(body) && /kind:\s*"matching"/.test(body)
+  );
+
+  check(
+    `${fnName} (wired) guards against a null match result`,
+    /matchedIndex\s*!==\s*null/.test(body)
   );
 }
 

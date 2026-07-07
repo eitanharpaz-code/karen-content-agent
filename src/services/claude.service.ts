@@ -50,11 +50,11 @@ export const askClaude = async (message: string): Promise<string> => {
 // ---------------------------------------------------------------------------
 // Stage 2B — askClaudeForMatching
 //
-// This function is NOT used anywhere yet. It is not called by
-// sheets.service.ts or any other production code. It exists as a prepared,
-// tested replacement for the matching logic that is duplicated across the
-// four matching functions in sheets.service.ts (findProductionTaskByName,
-// getContentIdeaSummary, findSimilarContentIdea, findApprovedContentByName).
+// Stage 2 wiring status: getContentIdeaSummary (sheets.service.ts) is wired
+// to this path. Still on ad-hoc fetch(): findProductionTaskByName,
+// findSimilarContentIdea, findApprovedContentByName. This is the single
+// unified replacement for the matching logic previously duplicated across
+// the four matching functions in sheets.service.ts.
 //
 // Per the Drafting vs Matching Claude context contract
 // (src/types/claude-context.types.ts), matching calls NEVER use the Karen
