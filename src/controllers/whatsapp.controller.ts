@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
-import { createContentDraft } from "../services/content.service";
+import { createContentDraft, askClaudeForEdit } from "../services/content.service";
 import {
   isConfirmationMessage,
   isRejectionMessage,
@@ -1966,6 +1966,24 @@ if (
       return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
     }
 
+    // AI fallback: hardcoded parser could not interpret this edit. Ask Claude
+    // to apply the requested change onto the draft. Null result → fall through
+    // to today's clarification prompt below (no crash).
+    const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText);
+
+    if (aiEditedDraft) {
+      storePendingConfirmation(sender, aiEditedDraft);
+
+      const aiReplyText = buildDraftPreviewMessage(aiEditedDraft, {
+        intro: "קיבלתי, עדכנתי את הרעיון.",
+        previewLine: "ככה הייתי שומרת את זה עכשיו:",
+        changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+      });
+
+      await safeSendWhatsAppMessage(sender, aiReplyText);
+      return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
+    }
+
 storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
     const clarificationPrompt = generateClarificationPrompt(true);
     await safeSendWhatsAppMessage(sender, clarificationPrompt);
@@ -3079,7 +3097,29 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
       return res.status(200).json({ status: "low_confidence_idea", sender });
     }
 
-// Create new content draft
+// AI edit fallback: if a draft is pending and the message wasn't matched by
+    // any specific command upstream (including isEditRequest), try to interpret
+    // it as an edit. Only fall through to "new idea" if Claude says it's not
+    // an edit. This catches natural phrasings like "זה יותר דחוף ממה שחשבתי"
+    // that don't contain any edit keyword but are clearly edit intents.
+    {
+      const pendingDraft = getPendingConfirmation(sender);
+      if (pendingDraft) {
+        const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText);
+        if (aiEditedDraft) {
+          storePendingConfirmation(sender, aiEditedDraft);
+          const aiReplyText = buildDraftPreviewMessage(aiEditedDraft, {
+            intro: "קיבלתי, עדכנתי את הרעיון.",
+            previewLine: "ככה הייתי שומרת את זה עכשיו:",
+            changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+          });
+          await safeSendWhatsAppMessage(sender, aiReplyText);
+          return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
+        }
+      }
+    }
+
+    // Create new content draft
     const cleanedUserInput = cleanIdeaPrefix(incomingText);
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 
