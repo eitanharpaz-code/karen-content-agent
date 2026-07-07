@@ -1,23 +1,24 @@
 import { DraftSummary } from "../types/content.types";
+import { getValue, setValue, deleteValue } from "./persistence.service";
 
-// In-memory storage for pending confirmations (MVP)
-const pendingConfirmations = new Map<string, DraftSummary>();
+// Stage G: pending state moved from in-memory Maps to persistence.service
+// (data/agent-state.json) so it survives restarts. Public function
+// signatures are unchanged — only the storage engine was replaced.
 
 // Pending question context - what the agent last asked
 type PendingQuestion = {
   questionType: string;  // e.g. "show_trends", "confirm_deadline", "show_more"
   context?: Record<string, unknown>;  // optional extra data
 };
-const pendingQuestions = new Map<string, PendingQuestion>();
 
 export const storePendingQuestion = (userId: string, question: PendingQuestion): void => {
-  pendingQuestions.set(userId, question);
+  setValue("pendingQuestions", userId, question);
 };
 export const getPendingQuestion = (userId: string): PendingQuestion | undefined => {
-  return pendingQuestions.get(userId);
+  return getValue<PendingQuestion>("pendingQuestions", userId);
 };
 export const clearPendingQuestion = (userId: string): void => {
-  pendingQuestions.delete(userId);
+  deleteValue("pendingQuestions", userId);
 };
 
 // Translation mappings: Hebrew (canonical) to Hebrew display
@@ -435,15 +436,15 @@ export const applyEditToDraft = (draft: DraftSummary, edit: { field: string; val
 };
 
 export const storePendingConfirmation = (userId: string, draft: DraftSummary): void => {
-  pendingConfirmations.set(userId, draft);
+  setValue("pendingConfirmations", userId, draft);
 };
 
 export const getPendingConfirmation = (userId: string): DraftSummary | undefined => {
-  return pendingConfirmations.get(userId);
+  return getValue<DraftSummary>("pendingConfirmations", userId);
 };
 
 export const clearPendingConfirmation = (userId: string): void => {
-  pendingConfirmations.delete(userId);
+  deleteValue("pendingConfirmations", userId);
 };
 // Archive intent detection
 export const isArchiveCommand = (message: string): boolean => {

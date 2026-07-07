@@ -1,3 +1,4 @@
+import { getValue, setValue } from "./persistence.service";
 import {
   getAllProductionTasksWithPriority,
   getGanttByDateRange,
@@ -26,14 +27,14 @@ const getSpreadsheetId = (): string => {
 };
 
 // ===== Interaction Tracking =====
-const interactionLog = new Map<string, string>();
-
+// Stage G: moved from an in-memory Map to persistence.service so the
+// "already interacted today" flag survives restarts.
 export const markInteractionToday = (sender: string): void => {
-  interactionLog.set(sender, getTodayDateString());
+  setValue("interactionLog", sender, getTodayDateString());
 };
 
 export const hasInteractedToday = (sender: string): boolean => {
-  return interactionLog.get(sender) === getTodayDateString();
+  return getValue<string>("interactionLog", sender) === getTodayDateString();
 };
 
 const getTodayDateString = (): string => {
