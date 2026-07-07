@@ -50,9 +50,9 @@ export const askClaude = async (message: string): Promise<string> => {
 // ---------------------------------------------------------------------------
 // Stage 2B — askClaudeForMatching
 //
-// Stage 2 wiring status: getContentIdeaSummary and findApprovedContentByName
-// (sheets.service.ts) are wired to this path. Still on ad-hoc fetch():
-// findProductionTaskByName, findSimilarContentIdea. This is the single
+// Stage 2 wiring status: getContentIdeaSummary, findApprovedContentByName
+// and findSimilarContentIdea (sheets.service.ts) are wired to this path.
+// Still on ad-hoc fetch(): findProductionTaskByName. This is the single
 // unified replacement for the matching logic previously duplicated across
 // the four matching functions in sheets.service.ts.
 //
@@ -68,6 +68,22 @@ export const askClaude = async (message: string): Promise<string> => {
 //
 // Returns the matched candidate's `index` (as given in the input
 // candidates array), or null if there is no match or the call fails.
+// Prompt builder for matching calls. Two wordings, selected by purpose:
+// - similar_idea_match: duplicate detection ("is there a VERY similar
+//   existing idea?"). Wording copied verbatim from the original
+//   findSimilarContentIdea prompt so wiring is not a behavior change.
+// - all other purposes: best-match selection among candidates.
+const buildMatchingPrompt = (
+  context: MatchingClaudeContext,
+  candidateList: string
+): string => {
+  if (context.purpose === "similar_idea_match") {
+    return `רעיון חדש: "${context.query}"\nהנה רעיונות קיימים:\n${candidateList}\n\nהאם יש רעיון קיים שדומה מאוד לרעיון החדש (אותו נושא, אותו קונספט)? החזר רק את המספר של הרעיון הדומה, או "0" אם אין רעיון דומה. רק מספר, בלי הסבר.`;
+  }
+
+  return `המשתמש חיפש: "${context.query}"\nהנה רשימת המועמדים:\n${candidateList}\n\nהחזר רק את המספר של המועמד שהכי מתאים לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`;
+};
+
 export const askClaudeForMatching = async (
   context: MatchingClaudeContext
 ): Promise<number | null> => {
@@ -82,7 +98,14 @@ export const askClaudeForMatching = async (
     .map((candidate, i) => `${i + 1}. ${candidate.label}`)
     .join("\n");
 
-  const prompt = `המשתמש חיפש: "${context.query}"\nהנה רשימת המועמדים:\n${candidateList}\n\nהחזר רק את המספר של המועמד שהכי מתאים לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`;
+  // Prompt wording is selected by purpose. The unified contract is about
+  // behavior (persona-free, number-or-zero, null on failure) — not about a
+  // single prompt text. similar_idea_match is duplicate DETECTION ("is there
+  // a very similar idea?" — usually the answer should be 0), while the other
+  // purposes are best-match SELECTION ("which candidate best matches?").
+  // Using the selection wording for duplicate detection would produce false
+  // "similar idea found" answers for genuinely new ideas.
+  const prompt = buildMatchingPrompt(context, candidateList);
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {

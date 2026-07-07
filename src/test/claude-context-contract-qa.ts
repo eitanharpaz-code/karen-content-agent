@@ -74,11 +74,11 @@ console.log("\n[3] Matching functions must request number-or-zero only");
 const wiredMatchingFunctionNames = [
   "getContentIdeaSummary",
   "findApprovedContentByName",
+  "findSimilarContentIdea",
 ];
 
 const unwiredMatchingFunctionNames = [
   "findProductionTaskByName",
-  "findSimilarContentIdea",
 ];
 
 const matchingFunctionNames = [

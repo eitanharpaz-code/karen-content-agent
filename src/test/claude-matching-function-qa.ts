@@ -54,7 +54,8 @@ type MockScenario = {
 };
 
 const runScenario = async (
-  scenario: MockScenario
+  scenario: MockScenario,
+  context: MatchingClaudeContext = baseContext
 ): Promise<{ result: number | null; sentBody: any }> => {
   let capturedBody: any = null;
 
@@ -72,7 +73,7 @@ const runScenario = async (
     } as any;
   }) as any;
 
-  const result = await askClaudeForMatching(baseContext);
+  const result = await askClaudeForMatching(context);
   return { result, sentBody: capturedBody };
 };
 
@@ -191,6 +192,77 @@ const main = async (): Promise<void> => {
     check(
       "Network/API failure returns null, with no token-overlap fallback",
       result === null
+    );
+  }
+
+  // -------------------------------------------------------------------
+  // Scenario 7 (Stage 2 wiring 3/4): purpose "similar_idea_match" must
+  // use the duplicate-DETECTION prompt wording, not the best-match
+  // SELECTION wording — otherwise genuinely new ideas would trigger
+  // false "similar idea found" answers.
+  // -------------------------------------------------------------------
+  {
+    const similarIdeaContext: MatchingClaudeContext = {
+      kind: "matching",
+      purpose: "similar_idea_match",
+      query: "ריל על טיפים לבחירת שמלת כלה",
+      candidates: [
+        { index: 5, label: "פוסט על מקומות אירוח בקפריסין", contentId: "PRW-1" },
+        { index: 8, label: "ריל טיפים לשמלת כלה מושלמת", contentId: "DRS-2" },
+      ],
+      usesSystemPrompt: false,
+      expectedReturn: "number_or_zero",
+    };
+
+    const { result, sentBody } = await runScenario(
+      { description: "similar_idea_match duplicate found", mockClaudeText: "2" },
+      similarIdeaContext
+    );
+
+    check(
+      'similar_idea_match: Claude response "2" resolves to the second candidate\'s index (8)',
+      result === 8
+    );
+
+    const sentPrompt = sentBody?.messages?.[0]?.content ?? "";
+    check(
+      "similar_idea_match prompt uses duplicate-detection wording (דומה מאוד)",
+      sentPrompt.includes("דומה מאוד") && sentPrompt.includes("רעיון חדש:")
+    );
+    check(
+      "similar_idea_match prompt does NOT use best-match selection wording (הכי מתאים)",
+      !sentPrompt.includes("הכי מתאים")
+    );
+
+    const { result: noDuplicateResult } = await runScenario(
+      { description: "similar_idea_match no duplicate", mockClaudeText: "0" },
+      similarIdeaContext
+    );
+
+    check(
+      'similar_idea_match: Claude response "0" (no similar idea) returns null',
+      noDuplicateResult === null
+    );
+  }
+
+  // -------------------------------------------------------------------
+  // Scenario 8 (Stage 2 wiring 3/4): non-duplicate purposes must keep the
+  // best-match selection wording.
+  // -------------------------------------------------------------------
+  {
+    const { sentBody } = await runScenario({
+      description: "selection purposes keep selection wording",
+      mockClaudeText: "1",
+    });
+
+    const sentPrompt = sentBody?.messages?.[0]?.content ?? "";
+    check(
+      "production_task_match prompt uses best-match selection wording (הכי מתאים)",
+      sentPrompt.includes("הכי מתאים")
+    );
+    check(
+      "production_task_match prompt does NOT use duplicate-detection wording (דומה מאוד)",
+      !sentPrompt.includes("דומה מאוד")
     );
   }
 

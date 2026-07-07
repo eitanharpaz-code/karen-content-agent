@@ -1279,37 +1279,28 @@ export const findSimilarContentIdea = async (
   if (candidates.length === 0) return null;
 
   try {
-    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.idea}`).join("\n");
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
-        max_tokens: 50,
-        messages: [
-          {
-            role: "user",
-            content: `רעיון חדש: "${ideaText}"
-הנה רעיונות קיימים:
-${candidateList}
+    // Stage 2 wiring (3/4): route through the unified matching path.
+    // purpose: "similar_idea_match" selects the duplicate-detection prompt
+    // wording inside askClaudeForMatching (see buildMatchingPrompt) — the
+    // exact wording this function used before, so behavior is unchanged.
+    const context: MatchingClaudeContext = {
+      kind: "matching",
+      purpose: "similar_idea_match",
+      query: ideaText,
+      candidates: candidates.map((c, i) => ({
+        index: i,
+        label: c.idea,
+        contentId: c.contentId,
+      })),
+      usesSystemPrompt: false,
+      expectedReturn: "number_or_zero",
+    };
 
-האם יש רעיון קיים שדומה מאוד לרעיון החדש (אותו נושא, אותו קונספט)? החזר רק את המספר של הרעיון הדומה, או "0" אם אין רעיון דומה. רק מספר, בלי הסבר.`,
-          },
-        ],
-      }),
-    });
+    const matchedIndex = await askClaudeForMatching(context);
 
-    const data = await response.json() as any;
-    const resultText = (data.content?.[0]?.text || "0").trim();
-    const index = parseInt(resultText) - 1;
-
-    if (index >= 0 && index < candidates.length) {
-      console.log(`[Claude Duplicate] "${ideaText}" → "${candidates[index].idea}"`);
-      return { contentId: candidates[index].contentId, idea: candidates[index].idea };
+    if (matchedIndex !== null && matchedIndex >= 0 && matchedIndex < candidates.length) {
+      console.log(`[Claude Duplicate] "${ideaText}" → "${candidates[matchedIndex].idea}"`);
+      return { contentId: candidates[matchedIndex].contentId, idea: candidates[matchedIndex].idea };
     }
   } catch (error) {
     // Stage E completion: Claude failure → null. Do NOT fall back to weak
