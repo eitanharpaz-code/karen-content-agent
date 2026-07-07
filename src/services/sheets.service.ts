@@ -1793,40 +1793,30 @@ export const findApprovedContentByName = async (
   if (candidates.length === 0) return null;
 
   try {
-    const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
-        max_tokens: 50,
-        messages: [
-          {
-            role: "user",
-            content: `המשתמש חיפש: "${contentName}"
-הנה רשימת התכנים הקיימים:
-${candidateList}
+    // Stage 2 wiring (2/4): route through the unified matching path instead
+    // of an ad-hoc fetch(). askClaudeForMatching never uses the persona and
+    // returns the matched candidate index, or null (no unsafe fallback).
+    const context: MatchingClaudeContext = {
+      kind: "matching",
+      purpose: "approved_content_match",
+      query: contentName,
+      candidates: candidates.map((c, i) => ({
+        index: i,
+        label: c.name,
+        contentId: c.contentId,
+      })),
+      usesSystemPrompt: false,
+      expectedReturn: "number_or_zero",
+    };
 
-החזר רק את המספר של התוכן שהכי מתאים לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`,
-          },
-        ],
-      }),
-    });
+    const matchedIndex = await askClaudeForMatching(context);
 
-    const data = await response.json() as any;
-    const resultText = (data.content?.[0]?.text || "0").trim();
-    const index = parseInt(resultText) - 1;
-
-  if (index >= 0 && index < candidates.length) {
-      console.log(`[Claude Matching] "${contentName}" → "${candidates[index].name}"`);
+    if (matchedIndex !== null && matchedIndex >= 0 && matchedIndex < candidates.length) {
+      console.log(`[Claude Matching] "${contentName}" → "${candidates[matchedIndex].name}"`);
       // אם השם המחופש מופיע בשם המלא — Claude בטוח
-      const confident = candidates[index].name.toLowerCase().includes(contentName.toLowerCase()) ||
-                        contentName.toLowerCase().split(/\s+/).every((word) => candidates[index].name.toLowerCase().includes(word));
-      return { contentId: candidates[index].contentId, name: candidates[index].name, exact: confident };
+      const confident = candidates[matchedIndex].name.toLowerCase().includes(contentName.toLowerCase()) ||
+                        contentName.toLowerCase().split(/\s+/).every((word) => candidates[matchedIndex].name.toLowerCase().includes(word));
+      return { contentId: candidates[matchedIndex].contentId, name: candidates[matchedIndex].name, exact: confident };
     }
   } catch (error) {
     // Stage E completion: Claude failure → null. Do NOT fall back to weak

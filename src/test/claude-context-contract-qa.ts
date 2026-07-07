@@ -71,12 +71,14 @@ console.log("\n[3] Matching functions must request number-or-zero only");
 // Stage 2 wiring progress: functions move from `unwired` to `wired` one at
 // a time. Wired functions must use askClaudeForMatching (no ad-hoc fetch);
 // unwired functions must still match the original ad-hoc fetch contract.
-const wiredMatchingFunctionNames = ["getContentIdeaSummary"];
+const wiredMatchingFunctionNames = [
+  "getContentIdeaSummary",
+  "findApprovedContentByName",
+];
 
 const unwiredMatchingFunctionNames = [
   "findProductionTaskByName",
   "findSimilarContentIdea",
-  "findApprovedContentByName",
 ];
 
 const matchingFunctionNames = [

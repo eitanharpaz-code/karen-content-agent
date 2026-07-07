@@ -50,9 +50,9 @@ export const askClaude = async (message: string): Promise<string> => {
 // ---------------------------------------------------------------------------
 // Stage 2B — askClaudeForMatching
 //
-// Stage 2 wiring status: getContentIdeaSummary (sheets.service.ts) is wired
-// to this path. Still on ad-hoc fetch(): findProductionTaskByName,
-// findSimilarContentIdea, findApprovedContentByName. This is the single
+// Stage 2 wiring status: getContentIdeaSummary and findApprovedContentByName
+// (sheets.service.ts) are wired to this path. Still on ad-hoc fetch():
+// findProductionTaskByName, findSimilarContentIdea. This is the single
 // unified replacement for the matching logic previously duplicated across
 // the four matching functions in sheets.service.ts.
 //
