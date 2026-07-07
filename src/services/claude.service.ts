@@ -50,9 +50,10 @@ export const askClaude = async (message: string): Promise<string> => {
 // ---------------------------------------------------------------------------
 // Stage 2B — askClaudeForMatching
 //
-// Stage 2 wiring status: getContentIdeaSummary, findApprovedContentByName
-// and findSimilarContentIdea (sheets.service.ts) are wired to this path.
-// Still on ad-hoc fetch(): findProductionTaskByName. This is the single
+// Stage 2 wiring status: COMPLETE. All four matching functions in
+// sheets.service.ts (findProductionTaskByName, getContentIdeaSummary,
+// findSimilarContentIdea, findApprovedContentByName) are wired to this
+// path. No matching function calls the Anthropic API directly. This is the single
 // unified replacement for the matching logic previously duplicated across
 // the four matching functions in sheets.service.ts.
 //

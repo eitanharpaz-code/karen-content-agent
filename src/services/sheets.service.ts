@@ -682,37 +682,27 @@ export const findProductionTaskByName = async (
           name: (match.row[1] || "").toString(),
         }));
 
-        const candidateList = candidates.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
-        const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
-            max_tokens: 50,
-            messages: [
-              {
-                role: "user",
-                content: `המשתמש חיפש: "${contentName}"
-הנה רשימת המשימות המועמדות:
-${candidateList}
+        // Stage 2 wiring (4/4): route through the unified matching path.
+        // The caller-side safety checks below (new-content indicators +
+        // meaningful-overlap requirement) are preserved unchanged.
+        const context: MatchingClaudeContext = {
+          kind: "matching",
+          purpose: "production_task_match",
+          query: contentName,
+          candidates: candidates.map((c, i) => ({
+            index: i,
+            label: c.name,
+            contentId: (c.row[0] || "").toString(),
+          })),
+          usesSystemPrompt: false,
+          expectedReturn: "number_or_zero",
+        };
 
-החזר רק את המספר של המשימה שהכי מתאימה לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`,
-              },
-            ],
-          }),
-        });
+        const matchedIndex = await askClaudeForMatching(context);
 
-        const data = await claudeResponse.json() as any;
-        const resultText = (data.content?.[0]?.text || "0").trim();
-        const index = parseInt(resultText) - 1;
-
-        if (index >= 0 && index < candidates.length) {
-          const candidateName = candidates[index].name;
-          console.log(`[Claude Matching] "${contentName}" → "${candidateName}" (row ${candidates[index].rowIndex})`);
+        if (matchedIndex !== null && matchedIndex >= 0 && matchedIndex < candidates.length) {
+          const candidateName = candidates[matchedIndex].name;
+          console.log(`[Claude Matching] "${contentName}" → "${candidateName}" (row ${candidates[matchedIndex].rowIndex})`);
 
           // Safety check: if user says this is new content, require meaningful (non-generic) overlap
           const newContentIndicators = ["סרטון חדש", "תוכן חדש", "רעיון חדש", "צילמתי", "ערכתי", "חדש"];
@@ -740,10 +730,9 @@ ${candidateList}
             return null;
           }
 
-          // If search term appears in the matched name — Claude is confident
-          const confident = candidateName.toLowerCase().includes(contentName.toLowerCase()) ||
-                            contentName.toLowerCase().split(/\s+/).every((word) => candidateName.toLowerCase().includes(word));
-          return { rowIndex: candidates[index].rowIndex, row: candidates[index].row };
+          // Note: the pre-wiring version computed a `confident` flag here
+          // that was never used in the return value — removed as dead code.
+          return { rowIndex: candidates[matchedIndex].rowIndex, row: candidates[matchedIndex].row };
         }
 } catch (claudeError) {
         // Stage E: Claude failure → return null. Do NOT fall back to weak token overlap.

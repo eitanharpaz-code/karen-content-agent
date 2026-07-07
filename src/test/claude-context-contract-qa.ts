@@ -68,22 +68,14 @@ check(
 // ---------------------------------------------------------------------------
 console.log("\n[3] Matching functions must request number-or-zero only");
 
-// Stage 2 wiring progress: functions move from `unwired` to `wired` one at
-// a time. Wired functions must use askClaudeForMatching (no ad-hoc fetch);
-// unwired functions must still match the original ad-hoc fetch contract.
-const wiredMatchingFunctionNames = [
-  "getContentIdeaSummary",
-  "findApprovedContentByName",
-  "findSimilarContentIdea",
-];
-
-const unwiredMatchingFunctionNames = [
-  "findProductionTaskByName",
-];
-
+// Stage 2 wiring COMPLETE: all four matching functions are wired to the
+// unified askClaudeForMatching path. Every function is held to the wired
+// contract: no direct fetch, builds a MatchingClaudeContext, guards null.
 const matchingFunctionNames = [
-  ...wiredMatchingFunctionNames,
-  ...unwiredMatchingFunctionNames,
+  "findProductionTaskByName",
+  "getContentIdeaSummary",
+  "findSimilarContentIdea",
+  "findApprovedContentByName",
 ];
 
 const extractFunctionBody = (source: string, fnName: string): string => {
@@ -107,28 +99,7 @@ const extractFunctionBody = (source: string, fnName: string): string => {
   return source.slice(startIndex, endIndex);
 };
 
-for (const fnName of unwiredMatchingFunctionNames) {
-  const body = extractFunctionBody(sheetsServiceSource, fnName);
-
-  check(`${fnName} is found in sheets.service.ts`, body.length > 0);
-
-  check(
-    `${fnName} (unwired) calls fetch("https://api.anthropic.com/v1/messages")`,
-    /fetch\(\s*["']https:\/\/api\.anthropic\.com\/v1\/messages["']/.test(body)
-  );
-
-  check(
-    `${fnName} (unwired) instructs Claude to return only a number or "0"`,
-    /רק מספר/.test(body) && /"0"/.test(body)
-  );
-
-  check(
-    `${fnName} (unwired) parses the result with parseInt (number-only expectation)`,
-    /parseInt\(resultText\)/.test(body)
-  );
-}
-
-for (const fnName of wiredMatchingFunctionNames) {
+for (const fnName of matchingFunctionNames) {
   const body = extractFunctionBody(sheetsServiceSource, fnName);
 
   check(`${fnName} is found in sheets.service.ts`, body.length > 0);
