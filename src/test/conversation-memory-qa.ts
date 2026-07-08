@@ -188,6 +188,90 @@ const main = async () => {
     typeof replyNoSender === "string" && replyNoSender.length > 0
   );
 
+  // ---- KAREN'S EXACT LIVE TRANSCRIPT (13:01) ----
+  // The failing sequence: send an idea → send "תודה, קצת אחר כך" →
+  // send "בעצם כן, בואי נשמור". Should route smoothly, not lock into
+  // an edit_or_new_clarification loop.
+  console.log("\nTest 6: KAREN'S LIVE FLOW — thank+postpone then natural save");
+  resetAll();
+  const step1 = await sendMessage("יש לי רעיון לסרטון על שמלה קיצית לחתונה בחורף");
+  assert(
+    "Step 1: draft created",
+    step1?.status === "draft_created" || step1?.status === "duplicate_found",
+    `got status="${step1?.status}"`
+  );
+
+  const step2 = await sendMessage("תודה, קצת אחר כך");
+  console.log(`    → step2 status=${step2?.status}`);
+  // The old META pattern would have returned meta_conversation and locked
+  // Karen into edit_or_new_clarification. Now it should route to Claude
+  // as a conversational reply.
+  assert(
+    "Step 2: 'תודה, קצת אחר כך' does NOT lock into edit_or_new_clarification",
+    step2?.status !== "meta_conversation" &&
+      step2?.status !== "edit_or_new_clarification_still_unclear",
+    `got status="${step2?.status}"`
+  );
+
+  const step3 = await sendMessage("בעצם כן, בואי נשמור");
+  console.log(`    → step3 status=${step3?.status}`);
+  assert(
+    "Step 3: 'בעצם כן, בואי נשמור' routes to confirmation, not clarification loop",
+    step3?.status !== "edit_or_new_clarification_still_unclear",
+    `got status="${step3?.status}"`
+  );
+
+  // ---- Reset command (Karen tried ביטול and /reset — they didn't work) ----
+  console.log("\nTest 7: Reset commands clear pending state");
+
+  // Setup: put user in a pendingQuestion state (simulate being stuck)
+  resetAll();
+  await sendMessage("יש לי רעיון לסרטון על שמלה קיצית");
+  const { storePendingQuestion } = require("../services/confirmation.service");
+  storePendingQuestion(TEST_SENDER, { questionType: "edit_or_new_clarification", context: {} });
+
+  const resetResult = await sendMessage("ביטול");
+  assert(
+    "'ביטול' clears state and returns state_reset",
+    resetResult?.status === "state_reset",
+    `got status="${resetResult?.status}"`
+  );
+  const { getPendingConfirmation, getPendingQuestion } = require("../services/confirmation.service");
+  assert(
+    "'ביטול' cleared pending confirmation",
+    !getPendingConfirmation(TEST_SENDER)
+  );
+  assert(
+    "'ביטול' cleared pending question",
+    !getPendingQuestion(TEST_SENDER)
+  );
+
+  // Also test /reset and cancel
+  resetAll();
+  await sendMessage("יש לי רעיון על שמלה");
+  storePendingQuestion(TEST_SENDER, { questionType: "edit_or_new_clarification", context: {} });
+  const resetSlash = await sendMessage("/reset");
+  assert(
+    "'/reset' also clears state",
+    resetSlash?.status === "state_reset"
+  );
+
+  // ---- isConfirmationMessage extended matching ----
+  console.log("\nTest 8: Natural confirmation phrases recognised");
+  const { isConfirmationMessage } = require("../services/confirmation.service");
+  assert("'כן' still recognised (exact)", isConfirmationMessage("כן"));
+  assert("'בעצם כן, בואי נשמור' now recognised", isConfirmationMessage("בעצם כן, בואי נשמור"));
+  assert("'כן, בואי נשמור' now recognised", isConfirmationMessage("כן, בואי נשמור"));
+  assert("'תשמרי בבקשה' now recognised", isConfirmationMessage("תשמרי בבקשה"));
+  assert(
+    "'לא, בעצם כן' NOT recognised (negation prefix blocks it)",
+    !isConfirmationMessage("לא, בעצם כן")
+  );
+  assert(
+    "'אני חושבת שכן, אבל...' NOT recognised (doesn't start with a yes phrase)",
+    !isConfirmationMessage("אני חושבת שכן, אבל אולי מחר")
+  );
+
   // ---- Persistence: memory survives via getValue/setValue path ----
   console.log("\nTest 5: Persistence — reload keeps history");
   resetAll();

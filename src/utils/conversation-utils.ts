@@ -120,13 +120,17 @@ const META_CONVERSATION_PATTERNS = [
   /^מה אמרתי/,
   /^איך אתה הבנת/,
   /^זה שגוי/,
-  /^תודה/,
-  /^תודה רבה/,
-  /^אוקיי תודה/,
-  /^בסדר תודה/,
-  /^סבבה תודה/,
-  /^נהדר תודה/,
-  /^מעולה תודה/,
+  // Standalone thank-yous only. Anchored to end-of-string so multi-word
+  // pleasantries like "תודה, קצת אחר כך" fall through to the Phase A
+  // conversational classifier instead of being locked into
+  // edit_or_new_clarification.
+  /^תודה\s*[.!?]*\s*$/,
+  /^תודה רבה\s*[.!?]*\s*$/,
+  /^אוקיי תודה\s*[.!?]*\s*$/,
+  /^בסדר תודה\s*[.!?]*\s*$/,
+  /^סבבה תודה\s*[.!?]*\s*$/,
+  /^נהדר תודה\s*[.!?]*\s*$/,
+  /^מעולה תודה\s*[.!?]*\s*$/,
 ];
 
 /**

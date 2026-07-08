@@ -93,8 +93,26 @@ export const displayPlatform = (platform: string): string => {
 
 export const isConfirmationMessage = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
-  const yesWords = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב"];
-  return yesWords.includes(normalized);
+
+  // Exact-match yes messages — original behavior preserved.
+  const exactYes = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב", "אישור"];
+  if (exactYes.includes(normalized)) return true;
+
+  // Natural confirmation phrasings. Prefix matches (not substring) so
+  // that a negation like "לא, בעצם כן" cannot false-positive — the
+  // negation would come first, so startsWith rules it out.
+  const confirmationPrefixes = [
+    "בעצם כן",       // "בעצם כן, בואי נשמור"
+    "כן ",           // "כן תשמרי" / "כן שמרי"
+    "כן,",           // "כן, בואי נשמור"
+    "כן.",           // "כן. תשמרי"
+    "כן!",
+    "בואי נשמור",
+    "בוא נשמור",
+    "תשמרי בבקשה",
+    "תשמור בבקשה",
+  ];
+  return confirmationPrefixes.some((prefix) => normalized.startsWith(prefix));
 };
 export const isRejectionMessage = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();

@@ -375,6 +375,24 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // inside safeSendWhatsAppMessage.
     appendUserMessage(sender, incomingText);
 
+    // Escape hatch: reset command clears pending confirmations and questions
+    // so Karen can never get stuck in a modal state. Runs before any other
+    // routing so it works even when a pendingQuestion has hijacked routing.
+    const RESET_PATTERNS: RegExp[] = [
+      /^\s*(ביטול|בטל|בטלי)\s*[,.!?]?\s*$/i,
+      /^\s*(cancel|\/reset|reset|nvm|never\s*mind)\s*[,.!?]?\s*$/i,
+      /^\s*(מחקי הכל|נקי הכל|תתחילי מהתחלה|start over)\s*[,.!?]?\s*$/i,
+    ];
+    if (RESET_PATTERNS.some((p) => p.test(incomingText))) {
+      clearPendingConfirmation(sender);
+      clearPendingQuestion(sender);
+      await safeSendWhatsAppMessage(
+        sender,
+        "בסדר, איפסתי הכל. איך אני יכולה לעזור?"
+      );
+      return res.status(200).json({ status: "state_reset", sender });
+    }
+
  // Mark interaction for afternoon reminder
     markInteractionToday(sender);
 
@@ -399,9 +417,31 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         );
         const wantsNew = ["לפתוח חדש", "חדש", "רעיון חדש"].some((phrase) => rawAnswer.includes(phrase));
 
+        // Natural confirmation phrases should also exit the clarification.
+        // If Karen answers with something like "בעצם כן, בואי נשמור" she
+        // wants to save the pending draft — the router shouldn't demand
+        // the exact word "לערוך" or "חדש" to unlock this state.
+        const wantsSave = [
+          "בואי נשמור",
+          "בוא נשמור",
+          "תשמרי",
+          "לשמור",
+          "נשמור",
+          "בעצם כן",
+          "כן תשמרי",
+          "כן שמרי",
+          "אישור",
+          "מאשרת",
+        ].some((phrase) => rawAnswer.includes(phrase));
+
         const draftForClarification = getPendingConfirmation(sender);
 
-        if (wantsEdit && draftForClarification) {
+        if (wantsSave && draftForClarification) {
+          clearPendingQuestion(sender);
+          console.log(`[Route Debug] edit_or_new_clarification: user confirmed save, falling through to confirmation handler`);
+          // Fall through — the confirmation handler downstream will detect
+          // the pending draft and the "yes" intent and save it.
+        } else if (wantsEdit && draftForClarification) {
           clearPendingQuestion(sender);
           const replyText = "בסדר, מה תרצי לשנות בכיוון הנוכחי?";
           await safeSendWhatsAppMessage(sender, replyText);
