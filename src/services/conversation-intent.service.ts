@@ -1,4 +1,4 @@
-import { askClaude } from "./claude.service";
+import { askClaude, CLASSIFIER_MODEL } from "./claude.service";
 import { formatHistoryForPrompt } from "./conversation-memory.service";
 
 // Level-2 conversational intelligence: classify a message that fell through
@@ -65,7 +65,8 @@ export const classifyMessageIntent = async (
 - רק אם באמת אין שום דבר לזהות — unclear.`;
 
   try {
-    const response = await askClaude(prompt);
+    // Classifier task (one of 4 enum values) — route to Haiku for ~1/3 cost.
+    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL });
     const cleaned = response
       .trim()
       .toLowerCase()

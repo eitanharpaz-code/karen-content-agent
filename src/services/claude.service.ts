@@ -6,6 +6,17 @@ import type { MatchingClaudeContext } from "../types/claude-context.types";
 const SYSTEM_PROMPT_PATH = path.resolve(process.cwd(), "prompts", "system-prompt.md");
 let cachedSystemPrompt: string | null = null;
 
+// Model routing. Two tiers:
+// - CREATIVE_MODEL for prose generation (draft creation, edits,
+//   conversational replies) where Sonnet quality matters.
+// - CLASSIFIER_MODEL for narrow, bounded-output calls (return a number,
+//   or one of N enum values). Haiku 4.5 is ~1/3 the cost of Sonnet and
+//   is more than smart enough for classification.
+// Either can be overridden per-deployment via .env.
+export const CREATIVE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+export const CLASSIFIER_MODEL =
+  process.env.ANTHROPIC_CLASSIFIER_MODEL || "claude-haiku-4-5-20251001";
+
 const loadSystemPrompt = async (): Promise<string> => {
   if (cachedSystemPrompt) return cachedSystemPrompt;
   try {
@@ -16,7 +27,14 @@ const loadSystemPrompt = async (): Promise<string> => {
   }
 };
 
-export const askClaude = async (message: string): Promise<string> => {
+export interface AskClaudeOptions {
+  model?: string;
+}
+
+export const askClaude = async (
+  message: string,
+  options: AskClaudeOptions = {}
+): Promise<string> => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error("Missing ANTHROPIC_API_KEY in environment variables.");
@@ -25,15 +43,28 @@ export const askClaude = async (message: string): Promise<string> => {
   const systemPrompt = await loadSystemPrompt();
   const client = new Anthropic({ apiKey });
 
+  const model = options.model || CREATIVE_MODEL;
 
-
-  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
-
+  // Two improvements over the previous shape:
+  // 1) System prompt lives in the `system` field, not stuffed into the
+  //    user message — cleaner semantics; the model treats it as the
+  //    stable persona frame, which is a better fit for how it's used.
+  // 2) cache_control: ephemeral tags the system prompt for prompt
+  //    caching. Subsequent calls within ~5 minutes reuse the cached
+  //    prefix at ~10% of the normal input cost. The system prompt must
+  //    reach the model's minimum cache size for this to take effect;
+  //    if it's under threshold the response is unchanged and pricing
+  //    stays as normal input tokens (no downside).
   const response = await client.messages.create({
     model,
-    messages: [
-      { role: "user", content: `${systemPrompt}\n\n${message}` },
+    system: [
+      {
+        type: "text",
+        text: systemPrompt,
+        cache_control: { type: "ephemeral" },
+      },
     ],
+    messages: [{ role: "user", content: message }],
     max_tokens: 1024,
   });
 
@@ -93,7 +124,13 @@ export const askClaudeForMatching = async (
     throw new Error("Missing ANTHROPIC_API_KEY in environment variables.");
   }
 
-  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+  // Matching is a classifier task (return a number 1..N or 0). Use the
+  // cheaper Haiku tier — it's plenty smart for this and roughly 1/3
+  // the cost of Sonnet.
+  const model =
+    process.env.ANTHROPIC_MATCHING_MODEL ||
+    process.env.ANTHROPIC_CLASSIFIER_MODEL ||
+    CLASSIFIER_MODEL;
 
   const candidateList = context.candidates
     .map((candidate, i) => `${i + 1}. ${candidate.label}`)

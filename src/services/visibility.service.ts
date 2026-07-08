@@ -2,7 +2,7 @@ import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.serv
 import type { ContentPriorityItem } from "./priority.service";
 import type { PlanningHealthSignal } from "./planning-health.service";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
-import { askClaude } from "./claude.service";
+import { askClaude, CLASSIFIER_MODEL } from "./claude.service";
 
 // Sprint 10: Visibility Intent Detection
 // Deterministic routing for natural Hebrew visibility queries
@@ -1265,9 +1265,28 @@ type AiRoutableIntent = typeof AI_ROUTABLE_INTENTS[number];
 const isAiRoutableIntent = (value: string): value is AiRoutableIntent =>
   (AI_ROUTABLE_INTENTS as readonly string[]).includes(value);
 
+// Sync defense: certain markers in the message mean we should NOT route to
+// an AI classifier at all, because those signals imply the user wants a
+// specific target/period that our no-arg intents cannot honour. Sonnet
+// respected the prompt-level rule "return NONE for months/dates"; Haiku
+// (which we route classifiers through for cost) is less strict about that,
+// so we enforce the guard here in code.
+const MONTH_NAMES_HE = [
+  "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+  "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
+];
+
+const containsMonthOrDate = (text: string): boolean => {
+  if (MONTH_NAMES_HE.some((m) => text.includes(m))) return true;
+  // Numeric dates like 15/7 or 3.8.2026
+  if (/\d{1,2}[./-]\d{1,2}/.test(text)) return true;
+  return false;
+};
+
 export const askClaudeForVisibilityIntent = async (
   userMessage: string
 ): Promise<VisibilityIntent> => {
+  if (containsMonthOrDate(userMessage)) return null;
   const prompt = `קרן שולחת שאלה על הצינור התוכן שלה בוואטסאפ. המטרה שלך היא לזהות איזה סוג שאלה זו, מתוך רשימה סגורה, כדי שהקוד יוכל לענות אוטומטית מהגיליון שלה.
 
 הודעת קרן:
@@ -1299,7 +1318,10 @@ export const askClaudeForVisibilityIntent = async (
 החזירי רק את המזהה.`;
 
   try {
-    const response = await askClaude(prompt);
+    // Classifier task (one of ~10 intent names or NONE) — route to Haiku
+    // for ~1/3 cost. This can fire on any question-shaped message that
+    // hardcoded detection missed, so cost matters.
+    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL });
     const cleaned = response
       .trim()
       .replace(/[.,;:!?"׳״'`]/g, "")
