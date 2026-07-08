@@ -13,6 +13,7 @@ import type {
   GanttItemInput,
   ProductionTaskInput,
 } from "./priority.service";
+import { humanizeBrief } from "./brief-humanizer.service";
 import {
   computePlanningHealthSignals,
 } from "./planning-health.service";
@@ -316,12 +317,19 @@ export const buildMorningBrief = async (): Promise<string | null> => {
   const { priorityItems, futureHoles, planningSignals } = await fetchBriefData();
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
-  return buildMorningBriefFromData({
+  const deterministic = buildMorningBriefFromData({
     priorityItems,
     futureHoles,
     monthName,
     planningSignals,
   });
+
+  if (!deterministic) return null;
+
+  // Phase B extension — Claude rewrites the phrasing in Karen's persona.
+  // All facts, names, and CTAs stay intact (humanizer enforces this and
+  // falls back to the deterministic string on any failure).
+  return await humanizeBrief(deterministic, "morning");
 };
 
 
@@ -486,12 +494,20 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
     ).length < 3;
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
+  const deterministic = buildAfternoonReminderFromData({
+    priorityItems,
+    ganttIsLight,
+    monthName,
+  });
+
+  // Phase B extension — humanize the afternoon reminder in Karen's
+  // persona. Falls back to deterministic on any failure.
+  const humanized = deterministic
+    ? await humanizeBrief(deterministic, "afternoon")
+    : null;
+
   return {
-    message: buildAfternoonReminderFromData({
-      priorityItems,
-      ganttIsLight,
-      monthName,
-    }),
+    message: humanized,
     bypassInteraction: shouldBypassInteractionForAfternoonReminder(
       priorityItems,
       ganttIsLight
