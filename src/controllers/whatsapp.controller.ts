@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
-import { classifyMessageIntent, generateConversationalReply } from "../services/conversation-intent.service";
+import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import {
   isConfirmationMessage,
   isRejectionMessage,
@@ -3013,6 +3013,18 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     // Don't create content from meta-conversation messages
     const existingDraft = getPendingConfirmation(sender);
     console.log(`[Route Debug] pendingConfirmation: ${existingDraft ? "exists" : "null"}`);
+
+    // Pure greeting / pleasantry intercept: runs BEFORE the hardcoded
+    // general-help and meta-conversation branches so a bare "היי" or
+    // "תודה" gets a short warm Claude reply instead of the fixed menu
+    // or the "not sure I understood" clarification. Actual help requests
+    // ("עזרה", "מה אפשר לעשות") don't match isPureGreeting, so they still
+    // fall through to buildGeneralHelpResponse below.
+    if (isPureGreeting(incomingText)) {
+      const replyText = await generateConversationalReply(incomingText);
+      await safeSendWhatsAppMessage(sender, replyText);
+      return res.status(200).json({ status: "conversational_reply", sender, intent: "greeting" });
+    }
 
     if (!existingDraft && isGeneralChatOrHelpMessage(incomingText)) {
       await safeSendWhatsAppMessage(sender, buildGeneralHelpResponse());
