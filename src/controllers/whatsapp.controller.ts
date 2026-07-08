@@ -3,6 +3,7 @@ import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
+import { humanizeDraftPreview } from "../services/response-humanizer.service";
 import {
   isConfirmationMessage,
   isRejectionMessage,
@@ -237,6 +238,7 @@ const buildDraftPreviewMessage = (
     includeContentType?: boolean;
     extraBeforeQuestion?: string[];
     changeLine?: string;
+    closingQuestion?: string;
   } = {}
 ): string => {
   const introLines = Array.isArray(options.intro)
@@ -272,7 +274,7 @@ const buildDraftPreviewMessage = (
 
   lines.push(
     "",
-    "לשמור ככה?",
+    options.closingQuestion || "לשמור ככה?",
     options.changeLine || "אפשר גם להגיד לי מה לשנות."
   );
 
@@ -2010,10 +2012,12 @@ if (
 
       storePendingConfirmation(sender, updatedDraft);
 
+      const previewCopy = await humanizeDraftPreview(updatedDraft, sender, "edit", incomingText);
       const replyText = buildDraftPreviewMessage(updatedDraft, {
-        intro: "קיבלתי, עדכנתי את הרעיון.",
+        intro: previewCopy.intro,
         previewLine: "ככה הייתי שומרת את זה עכשיו:",
-        changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+        closingQuestion: previewCopy.closingQuestion,
+        changeLine: previewCopy.changeLine,
       });
 
       await safeSendWhatsAppMessage(sender, replyText);
@@ -2028,10 +2032,12 @@ if (
     if (aiEditedDraft) {
       storePendingConfirmation(sender, aiEditedDraft);
 
+      const aiPreviewCopy = await humanizeDraftPreview(aiEditedDraft, sender, "edit", incomingText);
       const aiReplyText = buildDraftPreviewMessage(aiEditedDraft, {
-        intro: "קיבלתי, עדכנתי את הרעיון.",
+        intro: aiPreviewCopy.intro,
         previewLine: "ככה הייתי שומרת את זה עכשיו:",
-        changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+        closingQuestion: aiPreviewCopy.closingQuestion,
+        changeLine: aiPreviewCopy.changeLine,
       });
 
       await safeSendWhatsAppMessage(sender, aiReplyText);
@@ -3174,10 +3180,12 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
         const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText, sender);
         if (aiEditedDraft) {
           storePendingConfirmation(sender, aiEditedDraft);
+          const aiPreviewCopy = await humanizeDraftPreview(aiEditedDraft, sender, "edit", incomingText);
           const aiReplyText = buildDraftPreviewMessage(aiEditedDraft, {
-            intro: "קיבלתי, עדכנתי את הרעיון.",
+            intro: aiPreviewCopy.intro,
             previewLine: "ככה הייתי שומרת את זה עכשיו:",
-            changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+            closingQuestion: aiPreviewCopy.closingQuestion,
+            changeLine: aiPreviewCopy.changeLine,
           });
           await safeSendWhatsAppMessage(sender, aiReplyText);
           return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
@@ -3233,7 +3241,16 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
       originalUserInput: cleanedUserInput,
     };
     storePendingConfirmation(sender, draftSummary);
-    const replyText = buildDraftPreviewMessage(draft);
+    // Phase B: Claude generates the wrapping copy (intro, closing question,
+    // change-line) in Karen's persona instead of the same hardcoded strings.
+    // Fields inside the preview stay deterministic; only the phrasing around
+    // them varies. humanizeDraftPreview falls back to defaults on any error.
+    const previewCopy = await humanizeDraftPreview(draft, sender, "new");
+    const replyText = buildDraftPreviewMessage(draft, {
+      intro: previewCopy.intro,
+      closingQuestion: previewCopy.closingQuestion,
+      changeLine: previewCopy.changeLine,
+    });
     await safeSendWhatsAppMessage(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 

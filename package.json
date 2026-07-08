@@ -21,6 +21,7 @@
     "test:free-form-visibility": "ts-node src/test/free-form-visibility-qa.ts",
     "test:conversation-intent": "ts-node src/test/conversation-intent-qa.ts",
     "test:conversation-memory": "ts-node src/test/conversation-memory-qa.ts",
+    "test:response-humanizer": "ts-node src/test/response-humanizer-qa.ts",
     "export:code-context": "node scripts/export-code-context.cjs"
   },
   "repository": {
