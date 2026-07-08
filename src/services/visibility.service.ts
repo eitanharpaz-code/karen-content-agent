@@ -2,6 +2,7 @@ import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.serv
 import type { ContentPriorityItem } from "./priority.service";
 import type { PlanningHealthSignal } from "./planning-health.service";
 import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
+import { askClaude } from "./claude.service";
 
 // Sprint 10: Visibility Intent Detection
 // Deterministic routing for natural Hebrew visibility queries
@@ -518,7 +519,7 @@ export const isQuestionLikeMessage = (text: string): boolean => {
   }
 
   // Multi-word question starters
-  const multiWordPattern = /^(תראה לי|תראי לי|תציג לי|תציגי לי|תגיד לי|תגידי לי|יש משהו|יש תכנים|מה עם)\s/;
+  const multiWordPattern = /^(תראה לי|תראי לי|תציג לי|תציגי לי|תגיד לי|תגידי לי|תזכירי לי|תזכיר לי|תבדקי|תבדוק|יש משהו|יש תכנים|מה עם)\s/;
   if (multiWordPattern.test(normalized)) {
     return true;
   }
@@ -1226,4 +1227,107 @@ export const formatGanttHolesResponse = (availableDates: string[]): string => {
     "אפשר לכתוב למשל:",
     "תוסיפי את [שם התוכן] לגאנט ב-17/06/2026",
   ].join("\n");
+};
+
+// ---------------------------------------------------------------------------
+// AI fallback for visibility intent routing.
+//
+// The hardcoded detectVisibilityIntent above matches roughly 100 exact
+// Hebrew phrases across 17 intents. Any paraphrase not in those lists
+// returns null today, even when the intent is clear to a human.
+//
+// This AI fallback runs only when hardcoded detection fails AND the message
+// already looks question-like (cheap sync gate via isLikelyVisibilityQuery
+// or isQuestionLikeMessage). Cost is bounded: no AI call for routine
+// non-question traffic.
+//
+// v1 scope: only route to intents that don't need argument extraction. If
+// the user is asking about a specific content name, category, priority
+// level, month, or scheduling action, Claude is instructed to return NONE
+// so those queries stay on the hardcoded (exact-phrase) path where the
+// argument extractors live. Getting the target name wrong is worse than
+// returning "I don't understand".
+const AI_ROUTABLE_INTENTS = [
+  "missing_edit",
+  "edited_not_uploaded",
+  "missing_cover",
+  "not_uploaded",
+  "stuck_workflow",
+  "whats_important",
+  "missing_filmed",
+  "gantt_query",
+  "gantt_holes",
+  "ideas_list",
+] as const;
+
+type AiRoutableIntent = typeof AI_ROUTABLE_INTENTS[number];
+
+const isAiRoutableIntent = (value: string): value is AiRoutableIntent =>
+  (AI_ROUTABLE_INTENTS as readonly string[]).includes(value);
+
+export const askClaudeForVisibilityIntent = async (
+  userMessage: string
+): Promise<VisibilityIntent> => {
+  const prompt = `קרן שולחת שאלה על הצינור התוכן שלה בוואטסאפ. המטרה שלך היא לזהות איזה סוג שאלה זו, מתוך רשימה סגורה, כדי שהקוד יוכל לענות אוטומטית מהגיליון שלה.
+
+הודעת קרן:
+"${userMessage}"
+
+הסוגים האפשריים (מיפוי מזהה → משמעות):
+- missing_edit — מה עוד לא נערך / נשאר לערוך / מחכה לעריכה
+- edited_not_uploaded — מה כבר ערוך אבל עוד לא עלה / מוכן להעלאה
+- not_uploaded — מה עוד לא עלה / לא פורסם / מחכה להעלאה (כללי)
+- missing_cover — מה בלי קאבר / חסר לו קאבר
+- missing_filmed — מה עוד לא צולם / נשאר לצלם / מחכה לצילום
+- stuck_workflow — מה תקוע / לא מתקדם / נעצר
+- whats_important — מה הכי חשוב / דחוף עכשיו / מה הצעד הבא
+- gantt_query — מה מתוכנן השבוע / החודש / מה בגאנט / מה עולה
+- gantt_holes — אילו תאריכים / ימים פנויים בגאנט
+- ideas_list — תראי לי את הרעיונות / מה יש בבנק הרעיונות
+- NONE — אף אחד מהם, או שקרן שואלת על תוכן ספציפי בשם / קטגוריה / עדיפות / חודש / תאריך (במקרה כזה תמיד תחזירי NONE)
+
+כללים חשובים:
+- החזירי בדיוק מזהה אחד מהרשימה, בלי הסבר, בלי הקדמה, בלי סימני פיסוק.
+- אם קרן מזכירה שם ספציפי של תוכן — החזירי NONE.
+- אם קרן מזכירה שם קטגוריה (למשל: קפריסין, שמלות, חתונה, רווקות, טרנד) — החזירי NONE.
+- אם קרן מזכירה רמת עדיפות ("גבוה", "נמוך", "בינוני") — החזירי NONE.
+- אם קרן מזכירה חודש בשם (ינואר, פברואר, מרץ, אפריל, מאי, יוני, יולי, אוגוסט, ספטמבר, אוקטובר, נובמבר, דצמבר) — החזירי NONE ללא יוצא מן הכלל, גם אם השאלה נשמעת כמו שאלת גאנט.
+- אם קרן מזכירה תאריך מספרי (למשל 15/7 או 3.8) — החזירי NONE.
+- אם השאלה כללית מדי או שלא בטוחה — החזירי NONE.
+- אם קרן מתארת רעיון חדש ולא שואלת על הצינור — החזירי NONE.
+
+החזירי רק את המזהה.`;
+
+  try {
+    const response = await askClaude(prompt);
+    const cleaned = response
+      .trim()
+      .replace(/[.,;:!?"׳״'`]/g, "")
+      .split(/\s+/)[0]
+      .toLowerCase();
+
+    if (cleaned === "none" || cleaned === "") return null;
+    if (isAiRoutableIntent(cleaned)) return cleaned;
+    return null;
+  } catch (error) {
+    console.error(`[askClaudeForVisibilityIntent] Error: ${error}. Returning null.`);
+    return null;
+  }
+};
+
+// Wrapper: try hardcoded intent detection first (fast, free). If that returns
+// null AND the message already looks like a question about the pipeline
+// (cheap sync heuristic), only then ask Claude. This bounds the AI cost to
+// question-shaped fallback traffic.
+export const detectVisibilityIntentWithAI = async (
+  text: string
+): Promise<VisibilityIntent> => {
+  const syncIntent = detectVisibilityIntent(text);
+  if (syncIntent) return syncIntent;
+
+  if (!isLikelyVisibilityQuery(text) && !isQuestionLikeMessage(text)) {
+    return null;
+  }
+
+  return await askClaudeForVisibilityIntent(text);
 };

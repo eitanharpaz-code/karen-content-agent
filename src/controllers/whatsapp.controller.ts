@@ -85,6 +85,7 @@ import {
 } from "../services/production-status.service";
 import {
   detectVisibilityIntent,
+  detectVisibilityIntentWithAI,
   extractSearchKeyword,
   extractStatusQueryTarget,
   formatTaskStatusResponse,
@@ -2041,7 +2042,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
 
     // ===== VISIBILITY INTENT DETECTION =====
     console.log(`[Route Debug] About to detect visibility intent...`);
-    const visibilityIntent = detectVisibilityIntent(incomingText);
+    const visibilityIntent = await detectVisibilityIntentWithAI(incomingText);
     console.log(`[Route Debug] visibilityIntent: ${visibilityIntent || "null"}`);
     console.log(`[Route Debug] detectVisibilityIntent result: ${visibilityIntent || "null"}`);
     const questionLikeMessage = isQuestionLikeMessage(incomingText);

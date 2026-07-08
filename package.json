@@ -18,6 +18,7 @@
     "test:natural-hebrew": "ts-node src/test/natural-hebrew-edit-qa.ts",
     "test:usability": "ts-node src/test/usability-improvements-qa.ts",
     "test:free-form-edit": "ts-node src/test/free-form-edit-qa.ts",
+    "test:free-form-visibility": "ts-node src/test/free-form-visibility-qa.ts",
     "export:code-context": "node scripts/export-code-context.cjs"
   },
   "repository": {
