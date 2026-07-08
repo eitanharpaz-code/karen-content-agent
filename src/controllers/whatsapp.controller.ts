@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
+import { classifyMessageIntent, generateConversationalReply } from "../services/conversation-intent.service";
 import {
   isConfirmationMessage,
   isRejectionMessage,
@@ -3118,6 +3119,25 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
         }
       }
+    }
+
+    // Level-2 conversational intelligence: before we assume the message is a
+    // new content idea, ask Claude what it actually is. Catches greetings,
+    // small talk, and unclear messages that would otherwise get turned into
+    // full drafts. Only fires here — after every specific handler upstream
+    // has passed on the message.
+    {
+      const conversationIntent = await classifyMessageIntent(incomingText);
+      if (conversationIntent === "greeting" || conversationIntent === "small_talk") {
+        const replyText = await generateConversationalReply(incomingText);
+        await safeSendWhatsAppMessage(sender, replyText);
+        return res.status(200).json({ status: "conversational_reply", sender, intent: conversationIntent });
+      }
+      if (conversationIntent === "unclear") {
+        await safeSendWhatsAppMessage(sender, buildGeneralHelpResponse());
+        return res.status(200).json({ status: "unclear_message_help", sender });
+      }
+      // conversationIntent === "new_idea" → fall through to draft creation
     }
 
     // Create new content draft
