@@ -28,12 +28,14 @@ import path from "path";
 export type StateSection =
   | "pendingConfirmations"
   | "pendingQuestions"
-  | "interactionLog";
+  | "interactionLog"
+  | "conversationHistory";
 
 type PersistedState = {
   pendingConfirmations: Record<string, unknown>;
   pendingQuestions: Record<string, unknown>;
   interactionLog: Record<string, unknown>;
+  conversationHistory: Record<string, unknown>;
   savedAt: string;
 };
 
@@ -45,6 +47,7 @@ const emptyState = (): PersistedState => ({
   pendingConfirmations: {},
   pendingQuestions: {},
   interactionLog: {},
+  conversationHistory: {},
   savedAt: new Date().toISOString(),
 });
 
@@ -63,6 +66,7 @@ const loadStateFromDisk = (): PersistedState => {
       "pendingConfirmations",
       "pendingQuestions",
       "interactionLog",
+      "conversationHistory",
     ];
     const state = emptyState();
     for (const section of sections) {
@@ -139,4 +143,5 @@ export const __reloadFromDiskForTests = (): void => {
   state.pendingConfirmations = fresh.pendingConfirmations;
   state.pendingQuestions = fresh.pendingQuestions;
   state.interactionLog = fresh.interactionLog;
+  state.conversationHistory = fresh.conversationHistory;
 };

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
+import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
 import {
   isConfirmationMessage,
   isRejectionMessage,
@@ -127,6 +128,12 @@ import {
   type PlanningSourceRoutingState,
 } from "../services/planning-source-routing.service";
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
+  // Phase A — conversation memory: log every outbound turn regardless of
+  // whether Twilio delivery succeeds. Memory tracks what the assistant said,
+  // and Karen sees the message immediately in WhatsApp UI even if Twilio
+  // hiccups downstream, so behavior stays consistent.
+  appendAgentMessage(to, message);
+
   try {
     await sendWhatsAppMessage(to, message);
   } catch (error) {
@@ -362,6 +369,11 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
   try {
     // ===== ROUTE DEBUG LOGS =====
     console.log(`\n[Route Debug] incomingText: "${incomingText}"`);
+
+    // Phase A — conversation memory: log every inbound turn before routing
+    // so downstream AI prompts see it as context. Outbound turns are logged
+    // inside safeSendWhatsAppMessage.
+    appendUserMessage(sender, incomingText);
 
  // Mark interaction for afternoon reminder
     markInteractionToday(sender);
@@ -1643,7 +1655,7 @@ await safeSendWhatsAppMessage(
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
 
-          const draft = await createContentDraft(originalInput);
+          const draft = await createContentDraft(originalInput, sender);
           const draftSummary = { ...draft, originalUserInput: originalInput };
           storePendingConfirmation(sender, draftSummary);
 
@@ -1680,7 +1692,7 @@ await safeSendWhatsAppMessage(
             await safeSendWhatsAppMessage(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
-          const draft = await createContentDraft(originalInput);
+          const draft = await createContentDraft(originalInput, sender);
           const draftSummary = { ...draft, originalUserInput: originalInput };
           storePendingConfirmation(sender, draftSummary);
           const replyText = buildDraftPreviewMessage(draft);
@@ -1730,7 +1742,7 @@ await safeSendWhatsAppMessage(
         return res.status(200).json({ status: "new_idea_command_missing_text", sender });
       }
 
-      const draft = await createContentDraft(newIdeaText);
+      const draft = await createContentDraft(newIdeaText, sender);
       const draftSummary = {
         ...draft,
         contentType: requestedContentType || draft.contentType,
@@ -1971,7 +1983,7 @@ if (
     // AI fallback: hardcoded parser could not interpret this edit. Ask Claude
     // to apply the requested change onto the draft. Null result → fall through
     // to today's clarification prompt below (no crash).
-    const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText);
+    const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText, sender);
 
     if (aiEditedDraft) {
       storePendingConfirmation(sender, aiEditedDraft);
@@ -2827,7 +2839,7 @@ if (isArchiveCommand(incomingText)) {
             // Fast Track — תוכן לא קיים בהפקה, קרן צילמה ספונטנית
             const isReadyUpdate = statusUpdate.statusTypes.includes("filmed") || statusUpdate.statusTypes.includes("edited");
             if (isReadyUpdate) {
-              const draft = await createContentDraft(statusUpdate.contentName);
+              const draft = await createContentDraft(statusUpdate.contentName, sender);
               const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
               storePendingConfirmation(sender, draftSummary);
               const replyText = buildDraftPreviewMessage(draft, {
@@ -3021,7 +3033,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     // ("עזרה", "מה אפשר לעשות") don't match isPureGreeting, so they still
     // fall through to buildGeneralHelpResponse below.
     if (isPureGreeting(incomingText)) {
-      const replyText = await generateConversationalReply(incomingText);
+      const replyText = await generateConversationalReply(incomingText, sender);
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "conversational_reply", sender, intent: "greeting" });
     }
@@ -3119,7 +3131,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     {
       const pendingDraft = getPendingConfirmation(sender);
       if (pendingDraft) {
-        const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText);
+        const aiEditedDraft = await askClaudeForEdit(pendingDraft, incomingText, sender);
         if (aiEditedDraft) {
           storePendingConfirmation(sender, aiEditedDraft);
           const aiReplyText = buildDraftPreviewMessage(aiEditedDraft, {
@@ -3139,9 +3151,9 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     // full drafts. Only fires here — after every specific handler upstream
     // has passed on the message.
     {
-      const conversationIntent = await classifyMessageIntent(incomingText);
+      const conversationIntent = await classifyMessageIntent(incomingText, sender);
       if (conversationIntent === "greeting" || conversationIntent === "small_talk") {
-        const replyText = await generateConversationalReply(incomingText);
+        const replyText = await generateConversationalReply(incomingText, sender);
         await safeSendWhatsAppMessage(sender, replyText);
         return res.status(200).json({ status: "conversational_reply", sender, intent: conversationIntent });
       }
@@ -3175,7 +3187,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     }
 
     // No duplicate - create draft normally
-    const draft = await createContentDraft(cleanedUserInput);
+    const draft = await createContentDraft(cleanedUserInput, sender);
     const draftSummary = {
       ...draft,
       originalUserInput: cleanedUserInput,

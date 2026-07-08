@@ -1,16 +1,19 @@
 import { askClaude } from "./claude.service";
 import { ContentIdeaDraft, DraftSummary } from "../types/content.types";
 import { cleanIdeaPrefix } from "../utils/conversation-utils";
+import { formatHistoryForPrompt } from "./conversation-memory.service";
 
 const VALID_TONES = ["הסברתי", "מצחיק", "אותנטי", "השראתי", "טרנדי", "רגשי"];
 const VALID_PRIORITIES = ["גבוה", "בינוני", "נמוך"];
 const VALID_CONTENT_TYPES = ["ריל", "פוסט", "סטורי"];
 
-export const createContentDraft = async (userInput: string): Promise<ContentIdeaDraft> => {
+export const createContentDraft = async (userInput: string, sender?: string): Promise<ContentIdeaDraft> => {
   // Fix 1: Clean conversational prefixes from the beginning
   const cleanedInput = cleanIdeaPrefix(userInput);
 
-  const draftPrompt = `את עוזרת התוכן האישית של קרן בוואטסאפ.
+  const historyContext = sender ? formatHistoryForPrompt(sender, userInput) : "";
+
+  const draftPrompt = `${historyContext}את עוזרת התוכן האישית של קרן בוואטסאפ.
 
 קרן שלחה רעיון גולמי:
 "${cleanedInput}"
@@ -133,14 +136,17 @@ const NEW_IDEA_INDICATORS = [
 
 export const askClaudeForEdit = async (
   currentDraft: DraftSummary,
-  userEditMessage: string
+  userEditMessage: string,
+  sender?: string
 ): Promise<DraftSummary | null> => {
   const normalized = userEditMessage.trim();
   for (const indicator of NEW_IDEA_INDICATORS) {
     if (normalized.includes(indicator)) return null;
   }
 
-  const editPrompt = `קרן שולחת בקשת עריכה על טיוטת התוכן הבאה:
+  const historyContext = sender ? formatHistoryForPrompt(sender, userEditMessage) : "";
+
+  const editPrompt = `${historyContext}קרן שולחת בקשת עריכה על טיוטת התוכן הבאה:
 
 טיוטה נוכחית:
 Short Name: ${currentDraft.shortName}

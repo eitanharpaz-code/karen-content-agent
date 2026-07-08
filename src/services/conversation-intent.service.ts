@@ -1,4 +1,5 @@
 import { askClaude } from "./claude.service";
+import { formatHistoryForPrompt } from "./conversation-memory.service";
 
 // Level-2 conversational intelligence: classify a message that fell through
 // every specific handler (edit, visibility, status update, gantt, etc.) so
@@ -38,11 +39,14 @@ export const isPureGreeting = (message: string): boolean =>
   GREETING_PATTERNS.some((p) => p.test(message));
 
 export const classifyMessageIntent = async (
-  message: string
+  message: string,
+  sender?: string
 ): Promise<ConversationIntent> => {
   if (isPureGreeting(message)) return "greeting";
 
-  const prompt = `קרן שלחה הודעה בוואטסאפ. הקוד שלה כבר בדק שהיא לא בקשת עריכה, לא שאלת סטטוס/גאנט/דחיפות, ולא פקודה מוכרת. עכשיו צריך להבין מה זה בכלל: האם קרן שולחת רעיון תוכן חדש, או משהו אחר.
+  const historyContext = sender ? formatHistoryForPrompt(sender, message) : "";
+
+  const prompt = `${historyContext}קרן שלחה הודעה בוואטסאפ. הקוד שלה כבר בדק שהיא לא בקשת עריכה, לא שאלת סטטוס/גאנט/דחיפות, ולא פקודה מוכרת. עכשיו צריך להבין מה זה בכלל: האם קרן שולחת רעיון תוכן חדש, או משהו אחר.
 
 הודעה של קרן:
 "${message}"
@@ -82,9 +86,12 @@ export const classifyMessageIntent = async (
 // Generate a short conversational reply in Karen's persona.
 // askClaude already loads system-prompt.md, so persona is preserved.
 export const generateConversationalReply = async (
-  message: string
+  message: string,
+  sender?: string
 ): Promise<string> => {
-  const prompt = `קרן שלחה הודעה בוואטסאפ שהיא לא רעיון תוכן — זו ברכה, שיחת חולין, או אמירה קצרה.
+  const historyContext = sender ? formatHistoryForPrompt(sender, message) : "";
+
+  const prompt = `${historyContext}קרן שלחה הודעה בוואטסאפ שהיא לא רעיון תוכן — זו ברכה, שיחת חולין, או אמירה קצרה.
 
 הודעה של קרן:
 "${message}"
