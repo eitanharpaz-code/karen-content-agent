@@ -24,6 +24,7 @@
     "test:response-humanizer": "ts-node src/test/response-humanizer-qa.ts",
     "test:brief-humanizer": "ts-node src/test/brief-humanizer-qa.ts",
     "test:archive-command": "ts-node src/test/archive-command-qa.ts",
+    "test:bulk-archive": "ts-node src/test/bulk-archive-qa.ts",
     "export:code-context": "node scripts/export-code-context.cjs"
   },
   "repository": {

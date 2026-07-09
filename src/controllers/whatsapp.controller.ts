@@ -26,6 +26,8 @@ import {
   getNewIdeaContentType,
   isTrendCommand,
  isArchiveCommand,
+  isBulkArchiveCommand,
+  extractBulkArchiveItems,
   extractArchiveTarget,
   isViewArchiveCommand,
   isRestoreCommand,
@@ -401,6 +403,71 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // Check for pending question response (priority: before draft checks)
     const pendingQuestion = getPendingQuestion(sender);
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
+
+    // Bulk archive: awaiting confirmation of a list of matched ideas.
+    // "כן" archives them all in sequence; anything else (except explicit
+    // yes-adjacent phrases handled by isConfirmationMessage) cancels.
+    if (pendingQuestion?.questionType === "bulk_archive_confirm") {
+      const context = pendingQuestion.context as { items?: string[] } | undefined;
+      const items = Array.isArray(context?.items) ? (context!.items as string[]) : [];
+
+      if (isConfirmationMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const archived: string[] = [];
+        const failed: string[] = [];
+
+        for (const item of items) {
+          try {
+            const result = await archiveContentIdea(spreadsheetId, item);
+            if (result) archived.push(result.archivedName);
+            else failed.push(item);
+          } catch (err) {
+            console.error(`[bulk_archive_confirm] archive failed for "${item}": ${err}`);
+            failed.push(item);
+          }
+        }
+
+        const lines: string[] = [];
+        if (archived.length > 0) {
+          lines.push(
+            archived.length === 1
+              ? `אין בעיה. שמרתי את "${archived[0]}" בצד.`
+              : `אין בעיה. שמרתי בצד ${archived.length} רעיונות:`
+          );
+          if (archived.length > 1) {
+            archived.forEach((name) => lines.push(`- ${name}`));
+          }
+        }
+        if (failed.length > 0) {
+          lines.push("");
+          lines.push("לא הצלחתי להעביר את:");
+          failed.forEach((name) => lines.push(`- ${name}`));
+        }
+
+        await safeSendWhatsAppMessage(sender, lines.join("\n"));
+        return res.status(200).json({
+          status: "bulk_archive_done",
+          sender,
+          archived,
+          failed,
+        });
+      }
+
+      if (isRejectionMessage(incomingText) || /^\s*(לא|בטל|ביטול)\s*[,.!?]?\s*$/i.test(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "בסדר, לא מעבירה כלום.");
+        return res.status(200).json({ status: "bulk_archive_cancelled", sender });
+      }
+
+      // Anything else — repeat the confirmation prompt, don't lose state.
+      const promptLines = [
+        `מחכה לאישור על ${items.length === 1 ? "הרעיון" : `${items.length} הרעיונות`} להעברה לארכיון.`,
+        "לענות: כן / לא",
+      ];
+      await safeSendWhatsAppMessage(sender, promptLines.join("\n"));
+      return res.status(200).json({ status: "bulk_archive_awaiting_confirmation", sender });
+    }
 
       if (pendingQuestion?.questionType === "edit_or_new_clarification") {
         const isExplicitCommandWhileClarifying =
@@ -2796,6 +2863,77 @@ const replyText = [
 
       return res.status(200).json({ status: "approved_for_production", sender });
     }
+
+    // Bulk archive — Karen sends "תעבירי לארכיון:" followed by a numbered
+    // or bulleted list of ideas. Fires BEFORE the single-archive path so
+    // the list-shape check wins for multi-item requests.
+    if (isBulkArchiveCommand(incomingText)) {
+      const items = extractBulkArchiveItems(incomingText);
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      // Match each item to a sheet row in parallel — one Haiku call per
+      // item via the unified matching path. Result: { requested, matched }.
+      const matchResults = await Promise.all(
+        items.map(async (requested) => {
+          try {
+            const summary = await getContentIdeaSummary(spreadsheetId, requested);
+            return { requested, matched: summary?.idea || null };
+          } catch (err) {
+            console.error(`[bulk_archive] match failed for "${requested}": ${err}`);
+            return { requested, matched: null };
+          }
+        })
+      );
+
+      const matched = matchResults.filter((r) => r.matched);
+      const unmatched = matchResults.filter((r) => !r.matched);
+
+      if (matched.length === 0) {
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            "לא הצלחתי לזהות אף אחד מהרעיונות ברשימה.",
+            "",
+            "אפשר לנסות עם שמות קצת יותר מדויקים, או לשלוח אותם אחד-אחד:",
+            "תעבירי את [שם הרעיון] לארכיון",
+          ].join("\n")
+        );
+        return res.status(200).json({ status: "bulk_archive_no_matches", sender });
+      }
+
+      // Store the matched list so the follow-up "כן" archives all of them.
+      storePendingQuestion(sender, {
+        questionType: "bulk_archive_confirm",
+        context: { items: matched.map((m) => m.matched!) },
+      });
+
+      const lines: string[] = ["מצאתי את הרעיונות הבאים:"];
+      matched.forEach((m, i) => {
+        lines.push(`${i + 1}. ${m.matched}`);
+      });
+      if (unmatched.length > 0) {
+        lines.push("");
+        lines.push("לא הצלחתי לזהות:");
+        unmatched.forEach((m) => {
+          lines.push(`- ${m.requested}`);
+        });
+      }
+      lines.push("");
+      lines.push(
+        matched.length === 1
+          ? "להעביר אותו לארכיון? (כן / לא)"
+          : `להעביר את כל ה-${matched.length} לארכיון? (כן / לא)`
+      );
+
+      await safeSendWhatsAppMessage(sender, lines.join("\n"));
+      return res.status(200).json({
+        status: "bulk_archive_confirm",
+        sender,
+        matched: matched.map((m) => m.matched),
+        unmatched: unmatched.map((m) => m.requested),
+      });
+    }
+
 if (isArchiveCommand(incomingText)) {
       const target = extractArchiveTarget(incomingText);
       if (!target) {

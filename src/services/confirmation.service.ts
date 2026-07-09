@@ -530,6 +530,51 @@ export const extractArchiveTarget = (message: string): string | null => {
 
   return null;
 };
+
+// Bulk archive: Karen sends "תעבירי לארכיון:" followed by a numbered or
+// bulleted list of ideas. Detected only when the message contains an
+// archive verb AND at least two list-shaped lines after the first line.
+// Anything with 0 or 1 list items is left to the single-archive path
+// (extractArchiveTarget) — bulk is only meaningful for multi-item requests.
+export const isBulkArchiveCommand = (message: string): boolean => {
+  const raw = message.trim();
+  if (!isArchiveCommand(raw)) return false;
+  const items = extractBulkArchiveItems(raw);
+  return items.length >= 2;
+};
+
+// Parse a numbered or bulleted list from the message body.
+// Recognised prefixes: "1. ", "1) ", "* ", "- ", "• ", "· ".
+// Skips the first line (which is Karen's intro like "תעבירי לארכיון:").
+// Whitespace and item numbering are stripped from each returned line.
+export const extractBulkArchiveItems = (message: string): string[] => {
+  const lines = message.split(/\r?\n/);
+  const items: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // Numbered: "1. text" / "1) text" / "1- text"
+    const numberedMatch = line.match(/^(\d+)[.)\-]\s*(.+)$/);
+    if (numberedMatch) {
+      const item = numberedMatch[2].trim().replace(/[?.!]+$/, "").trim();
+      if (item.length >= 2) items.push(item);
+      continue;
+    }
+
+    // Bulleted: "* text" / "- text" / "• text" / "· text"
+    const bulletMatch = line.match(/^[*\-•·]\s*(.+)$/);
+    if (bulletMatch) {
+      const item = bulletMatch[1].trim().replace(/[?.!]+$/, "").trim();
+      if (item.length >= 2) items.push(item);
+      continue;
+    }
+  }
+
+  return items;
+};
+
 export const isViewArchiveCommand = (message: string): boolean => {
   const raw = message.trim().toLowerCase();
   const archiveWords = ["ארכיון", "רעיונות בצד", "בצד"];
