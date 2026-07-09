@@ -1301,18 +1301,71 @@ export const findSimilarContentIdea = async (
   }
   return null;
 };
-// Archive content idea - move from בנק רעיונות to רעיונות בצד and delete from source
+// Archive content idea — moves the row from either בנק רעיונות or תכנים
+// שאושרו into רעיונות בצד and deletes it from the source sheet.
+//
+// Prior behavior only searched בנק רעיונות. Karen noted she needs to
+// archive items that already moved into production (approved-content) too,
+// so we now try בנק רעיונות first, then fall back to תכנים שאושרו before
+// giving up. Cascade cleanups run in both cases:
+//   - delete matching row from משימות הפקה (production tasks) by contentId
+//   - mark matching row in גאנט תוכן as "בוטל" via updateGanttStatus
 export const archiveContentIdea = async (
   spreadsheetId: string,
   contentName: string
+): Promise<{ success: boolean; archivedName: string; source: "library" | "approved" } | null> => {
+  const libResult = await _archiveRowByFuzzyName(
+    spreadsheetId,
+    contentName,
+    SHEET_NAMES.contentLibrary
+  );
+  if (libResult) {
+    await _cascadeCleanup(spreadsheetId, libResult.contentId);
+    return { success: true, archivedName: libResult.archivedName, source: "library" };
+  }
+
+  const approvedResult = await _archiveRowByFuzzyName(
+    spreadsheetId,
+    contentName,
+    SHEET_NAMES.approvedContent
+  );
+  if (approvedResult) {
+    await _cascadeCleanup(spreadsheetId, approvedResult.contentId);
+    return { success: true, archivedName: approvedResult.archivedName, source: "approved" };
+  }
+
+  return null;
+};
+
+// Archive by exact contentId + known source sheet. Used by bulk archive
+// after local fuzzy matching has already resolved the source — avoids a
+// redundant name-search step.
+export const archiveContentByContentId = async (
+  spreadsheetId: string,
+  contentId: string,
+  source: "library" | "approved"
 ): Promise<{ success: boolean; archivedName: string } | null> => {
+  const sourceSheet =
+    source === "library" ? SHEET_NAMES.contentLibrary : SHEET_NAMES.approvedContent;
+  const result = await _archiveRowByContentId(spreadsheetId, contentId, sourceSheet);
+  if (!result) return null;
+  await _cascadeCleanup(spreadsheetId, result.contentId);
+  return { success: true, archivedName: result.archivedName };
+};
+
+// --- Internal helpers ------------------------------------------------------
+
+const _archiveRowByFuzzyName = async (
+  spreadsheetId: string,
+  contentName: string,
+  sourceSheetName: string
+): Promise<{ archivedName: string; contentId: string } | null> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });
 
-  // Find the row in בנק רעיונות
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.contentLibrary}!A:K`,
+    range: `${sourceSheetName}!A:K`,
   });
 
   const values = response.data.values || [];
@@ -1325,7 +1378,7 @@ export const archiveContentIdea = async (
     const idea = (values[i][1] || "").toString();
     const score = getTokenOverlapScore(normalized, normalizeHebrewText(idea).toLowerCase());
     if (score >= 1) {
-      matchIndex = i + 1; // 1-indexed sheet row
+      matchIndex = i + 1;
       matchRow = values[i];
       break;
     }
@@ -1333,9 +1386,50 @@ export const archiveContentIdea = async (
 
   if (matchIndex === -1) return null;
 
-  // Add to רעיונות בצד with archive timestamp
+  return await _moveRowToArchiveAndDelete(spreadsheetId, sourceSheetName, matchIndex, matchRow);
+};
+
+const _archiveRowByContentId = async (
+  spreadsheetId: string,
+  contentId: string,
+  sourceSheetName: string
+): Promise<{ archivedName: string; contentId: string } | null> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sourceSheetName}!A:K`,
+  });
+
+  const values = response.data.values || [];
+
+  let matchIndex = -1;
+  let matchRow: string[] = [];
+
+  for (let i = 1; i < values.length; i++) {
+    if ((values[i][0] || "").toString().trim() === contentId.trim()) {
+      matchIndex = i + 1;
+      matchRow = values[i];
+      break;
+    }
+  }
+
+  if (matchIndex === -1) return null;
+
+  return await _moveRowToArchiveAndDelete(spreadsheetId, sourceSheetName, matchIndex, matchRow);
+};
+
+const _moveRowToArchiveAndDelete = async (
+  spreadsheetId: string,
+  sourceSheetName: string,
+  matchIndex: number,
+  matchRow: string[]
+): Promise<{ archivedName: string; contentId: string }> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
   const israelTime = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
- // Pad matchRow to exactly 11 columns before adding timestamp to column L
   const paddedRow = Array.from({ length: 11 }, (_, i) => matchRow[i] || "");
   const archiveRow = [...paddedRow, israelTime];
 
@@ -1346,10 +1440,11 @@ export const archiveContentIdea = async (
     requestBody: { values: [archiveRow] },
   });
 
-  // Delete from בנק רעיונות
   const sheetMeta = await getSpreadsheetMetadata(spreadsheetId);
-  const sourceSheet = sheetMeta.sheets?.find((s) => s.title === SHEET_NAMES.contentLibrary);
-  if (!sourceSheet?.sheetId) throw new Error("Could not find בנק רעיונות sheet ID");
+  const sourceSheet = sheetMeta.sheets?.find((s) => s.title === sourceSheetName);
+  if (!sourceSheet?.sheetId) {
+    throw new Error(`Could not find sheet ID for ${sourceSheetName}`);
+  }
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
@@ -1368,9 +1463,24 @@ export const archiveContentIdea = async (
       ],
     },
   });
-// Delete from משימות הפקה by content_id
-  const contentId = (matchRow[0] || "").toString();
-  if (contentId) {
+
+  return {
+    archivedName: (matchRow[1] || "").toString(),
+    contentId: (matchRow[0] || "").toString(),
+  };
+};
+
+const _cascadeCleanup = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<void> => {
+  if (!contentId) return;
+
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // 1) Delete matching row from משימות הפקה
+  try {
     const tasksResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${SHEET_NAMES.productionTasks}!A:A`,
@@ -1379,7 +1489,9 @@ export const archiveContentIdea = async (
     const taskRowIndex = taskRows.findIndex((row, i) => i > 0 && row[0] === contentId);
     if (taskRowIndex > 0) {
       const taskSheetMeta = await getSpreadsheetMetadata(spreadsheetId);
-      const taskSheet = taskSheetMeta.sheets?.find((s) => s.title === SHEET_NAMES.productionTasks);
+      const taskSheet = taskSheetMeta.sheets?.find(
+        (s) => s.title === SHEET_NAMES.productionTasks
+      );
       if (taskSheet?.sheetId !== undefined) {
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
@@ -1400,9 +1512,17 @@ export const archiveContentIdea = async (
         });
       }
     }
+  } catch (err) {
+    console.error(`[_cascadeCleanup] productionTasks cleanup failed for ${contentId}: ${err}`);
   }
 
-  return { success: true, archivedName: (matchRow[1] || contentName).toString() };
+  // 2) Mark matching row in גאנט as בוטל. updateGanttStatus is a no-op
+  // when no gantt row exists for the content — safe to call unconditionally.
+  try {
+    await updateGanttStatus(spreadsheetId, contentId, "בוטל");
+  } catch (err) {
+    console.error(`[_cascadeCleanup] gantt cancel failed for ${contentId}: ${err}`);
+  }
 };
 // Get list of archived content ideas
 export const getArchiveList = async (spreadsheetId: string): Promise<{ contentId: string; idea: string }[]> => {

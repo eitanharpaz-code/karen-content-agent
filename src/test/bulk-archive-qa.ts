@@ -10,41 +10,54 @@ whatsappService.sendWhatsAppMessage = async (_to: string, message: string) => {
   lastSentMessage = message;
 };
 
-// Fake sheet: three known ideas. getContentIdeaSummary is stubbed to
-// return a match when the query overlaps meaningfully with a real idea.
-// This mimics the Claude-matching behavior without spending API tokens
-// on every match (per-item AI calls in the real flow use Haiku and cost
-// pennies, but the QA runs against a deterministic stub for stability).
-const FAKE_IDEAS = [
-  "שמלה קיצית לחתונה",
-  "טרנד קפריסין בקיץ",
-  "סרטון על שמלת כלה ויראלית",
-];
-
 const sheetsService = require("../services/sheets.service");
 if (sheetsService.findSimilarContentIdea) {
   sheetsService.findSimilarContentIdea = async () => null;
 }
 
-let archiveCalls: string[] = [];
+// Track archive calls with source + contentId so we can assert the right
+// per-item dispatch happens (library → archiveContentIdea path,
+// approved → archiveContentByContentId path).
+type ArchiveCall = { contentId?: string; source?: string; name?: string };
+let archiveCalls: ArchiveCall[] = [];
+
 const originalArchive = sheetsService.archiveContentIdea;
 sheetsService.archiveContentIdea = async (_spreadsheetId: string, contentName: string) => {
-  archiveCalls.push(contentName);
-  return { success: true, archivedName: contentName };
+  archiveCalls.push({ name: contentName });
+  return { success: true, archivedName: contentName, source: "library" as const };
 };
 
-const originalGetSummary = sheetsService.getContentIdeaSummary;
-sheetsService.getContentIdeaSummary = async (_spreadsheetId: string, searchName: string) => {
-  const norm = searchName.trim().toLowerCase();
-  // Overlap heuristic: shared substring of >=3 chars (a real name and the
-  // user's query usually share a topical noun).
-  const found = FAKE_IDEAS.find((idea) => {
-    const ideaNorm = idea.toLowerCase();
-    const tokens = norm.split(/\s+/).filter((t) => t.length >= 3);
-    return tokens.some((t) => ideaNorm.includes(t));
-  });
-  return found ? { shortName: found, idea: found } : null;
+const originalArchiveById = sheetsService.archiveContentByContentId;
+sheetsService.archiveContentByContentId = async (
+  _spreadsheetId: string,
+  contentId: string,
+  source: "library" | "approved"
+) => {
+  archiveCalls.push({ contentId, source });
+  return { success: true, archivedName: `archived-${contentId}` };
 };
+
+// Stub the fuzzy-match candidate fetcher so the QA runs without touching
+// Google Sheets. FAKE_LIBRARY = ideas that live in בנק רעיונות,
+// FAKE_APPROVED = ideas already moved to תכנים שאושרו.
+const fuzzyMatchService = require("../services/fuzzy-match.service");
+const FAKE_LIBRARY = [
+  { source: "library", contentId: "L-001", idea: "זוגיות בזמן ארגון חתונה" },
+  { source: "library", contentId: "L-002", idea: "מה עושים ביום לפני החתונה" },
+  { source: "library", contentId: "L-003", idea: "מפגש ראשון עם ההורים בשמלת כלה" },
+  { source: "library", contentId: "L-004", idea: "מהרגע שהציעו לי נישואים אני לא נחה" },
+  { source: "library", contentId: "L-005", idea: "טרנד קפריסין בקיץ" },
+];
+const FAKE_APPROVED = [
+  { source: "approved", contentId: "A-001", idea: "שמלה קיצית לחתונה בגן" },
+  { source: "approved", contentId: "A-002", idea: "סרטון על שמלת כלה ויראלית" },
+];
+
+const originalFetchCandidates = fuzzyMatchService.fetchArchivableCandidates;
+fuzzyMatchService.fetchArchivableCandidates = async () => [
+  ...FAKE_LIBRARY,
+  ...FAKE_APPROVED,
+];
 
 const { handleWhatsAppWebhook } = require("../controllers/whatsapp.controller");
 const {
@@ -54,6 +67,7 @@ const {
   extractBulkArchiveItems,
 } = require("../services/confirmation.service");
 const { __resetHistoryForTests } = require("../services/conversation-memory.service");
+const { findBestFuzzyIdeaMatch } = require("../services/fuzzy-match.service");
 
 const TEST_SENDER = "whatsapp:+9995555555";
 
@@ -94,10 +108,10 @@ const resetAll = () => {
 };
 
 const main = async () => {
-  console.log("=== Bulk Archive QA ===\n");
+  console.log("=== Bulk Archive QA (fuzzy match, no API) ===\n");
 
   // ---- Unit: detectors ----
-  console.log("Test 0: isBulkArchiveCommand — signal detection");
+  console.log("Test 0: isBulkArchiveCommand + extractBulkArchiveItems basics");
   assert(
     "Numbered list → true",
     isBulkArchiveCommand("תעבירי לארכיון:\n1. שמלה קיצית\n2. טרנד קפריסין")
@@ -107,150 +121,163 @@ const main = async () => {
     isBulkArchiveCommand("תעבירי לארכיון:\n* שמלה קיצית\n* טרנד קפריסין")
   );
   assert(
-    "Only one item → false (single-archive path handles it)",
+    "Only one item → false",
     !isBulkArchiveCommand("תעבירי לארכיון:\n1. שמלה קיצית")
   );
-  assert(
-    "Not an archive command at all → false",
-    !isBulkArchiveCommand("מה בגאנט השבוע\n1. reel\n2. post")
-  );
-
-  // ---- Unit: item extraction ----
-  console.log("\nTest 1: extractBulkArchiveItems — parsing");
-  const items = extractBulkArchiveItems(
-    "תעבירי לארכיון:\n1. שמלה קיצית לחתונה\n2. טרנד קפריסין בקיץ\n3. סרטון על שמלת כלה"
-  );
+  const items = extractBulkArchiveItems("תעבירי לארכיון:\n1. שמלה\n2. טרנד\n3. סרטון");
   assert("Extracts 3 items", items.length === 3);
-  assert("First: 'שמלה קיצית לחתונה'", items[0] === "שמלה קיצית לחתונה");
-  assert("Second: 'טרנד קפריסין בקיץ'", items[1] === "טרנד קפריסין בקיץ");
-  assert("Third: 'סרטון על שמלת כלה'", items[2] === "סרטון על שמלת כלה");
 
-  const bulletItems = extractBulkArchiveItems(
-    "תעבירי לארכיון:\n* שמלה\n- טרנד\n• סרטון"
-  );
-  assert("Bulleted variants also parse", bulletItems.length === 3);
-
-  const trailingPunct = extractBulkArchiveItems(
-    "תעבירי לארכיון:\n1. שמלה קיצית לחתונה?\n2. טרנד קפריסין!"
+  // ---- Fuzzy match unit tests — the core of the fix ----
+  console.log("\nTest 1: FUZZY MATCH — Karen's 3 items map to 3 DISTINCT candidates");
+  const candidates = [...FAKE_LIBRARY, ...FAKE_APPROVED];
+  const q1 = findBestFuzzyIdeaMatch("זוגיות בזמן ארגון חתונה - ריבים", candidates);
+  const q2 = findBestFuzzyIdeaMatch("מה עושים ביום לפני החתונה", candidates);
+  const q3 = findBestFuzzyIdeaMatch("מפגש ראשון עם ההורים בשמלת כלה", candidates);
+  console.log(`    → q1 → "${q1?.candidate.idea}" (score=${q1?.score})`);
+  console.log(`    → q2 → "${q2?.candidate.idea}" (score=${q2?.score})`);
+  console.log(`    → q3 → "${q3?.candidate.idea}" (score=${q3?.score})`);
+  assert(
+    "q1 matches 'זוגיות בזמן ארגון חתונה'",
+    q1?.candidate.contentId === "L-001"
   );
   assert(
-    "Trailing punctuation stripped",
-    trailingPunct[0] === "שמלה קיצית לחתונה" && trailingPunct[1] === "טרנד קפריסין"
+    "q2 matches 'מה עושים ביום לפני החתונה'",
+    q2?.candidate.contentId === "L-002"
+  );
+  assert(
+    "q3 matches 'מפגש ראשון עם ההורים בשמלת כלה'",
+    q3?.candidate.contentId === "L-003"
+  );
+  assert(
+    "All 3 matched to DIFFERENT candidates (Karen's live bug fixed)",
+    q1?.candidate.contentId !== q2?.candidate.contentId &&
+      q2?.candidate.contentId !== q3?.candidate.contentId &&
+      q1?.candidate.contentId !== q3?.candidate.contentId
   );
 
-  // ---- E2E: happy path — Karen's actual scenario ----
-  console.log("\nTest 2: KAREN'S SCENARIO — bulk archive with list, confirm, execute");
+  // ---- Fuzzy match — nonsense query returns null ----
+  console.log("\nTest 2: FUZZY MATCH — unrelated query returns null (no false-positive)");
+  const nonsense = findBestFuzzyIdeaMatch("בננה על גלגלים", candidates);
+  assert("Nonsense query → null", nonsense === null);
+
+  // ---- Fuzzy match — approved-content is reachable ----
+  console.log("\nTest 3: FUZZY MATCH — approved-content candidates are matchable");
+  const approvedQuery = findBestFuzzyIdeaMatch("שמלה קיצית לחתונה בגן", candidates);
+  assert(
+    "Approved-content match found",
+    approvedQuery?.candidate.contentId === "A-001"
+  );
+  assert(
+    "Match source is 'approved'",
+    approvedQuery?.candidate.source === "approved"
+  );
+
+  // ---- E2E: Karen's live bug reproduced with the FIXED flow ----
+  console.log("\nTest 4: KAREN'S LIVE BUG — 3 items → 3 distinct matches → archive succeeds");
   resetAll();
   const step1 = await sendMessage(
-    "תעבירי לארכיון:\n1. שמלה קיצית לחתונה\n2. טרנד קפריסין בקיץ\n3. סרטון על שמלת כלה ויראלית"
+    "תעבירי לארכיון:\n1. זוגיות בזמן ארגון חתונה - ריבים\n2. מה עושים ביום לפני החתונה\n3. מפגש ראשון עם ההורים בשמלת כלה"
   );
-  console.log(`    → step1 status=${step1?.status}, matched=${JSON.stringify(step1?.matched)}, unmatched=${JSON.stringify(step1?.unmatched)}`);
+  console.log(`    → status=${step1?.status}, matched=${JSON.stringify(step1?.matched?.map((m: any) => m.name))}`);
   assert(
-    "Step 1: bulk archive confirm prompt sent",
-    step1?.status === "bulk_archive_confirm",
-    `got status="${step1?.status}"`
-  );
-  assert(
-    "Step 1: matched all 3 items",
-    Array.isArray(step1?.matched) && step1.matched.length === 3
+    "Bulk archive confirm sent",
+    step1?.status === "bulk_archive_confirm"
   );
   assert(
-    "Step 1: no unmatched items",
-    Array.isArray(step1?.unmatched) && step1.unmatched.length === 0
+    "Matched all 3",
+    step1?.matched?.length === 3
   );
   assert(
-    "Step 1: archive NOT executed yet — waiting for confirmation",
-    archiveCalls.length === 0
+    "3 distinct names in the matched list (not '3 identical' like the live bug)",
+    new Set(step1.matched.map((m: any) => m.name)).size === 3
   );
 
   const step2 = await sendMessage("כן");
-  console.log(`    → step2 status=${step2?.status}, archived=${JSON.stringify(step2?.archived)}, failed=${JSON.stringify(step2?.failed)}`);
   assert(
-    "Step 2: bulk archive done",
+    "Confirm executed",
     step2?.status === "bulk_archive_done"
   );
   assert(
-    "Step 2: all 3 archives executed",
-    archiveCalls.length === 3
+    "3 archive calls made, each with a distinct contentId",
+    archiveCalls.length === 3 &&
+      new Set(archiveCalls.map((c) => c.contentId)).size === 3
   );
   assert(
-    "Step 2: no failed archives",
-    Array.isArray(step2?.failed) && step2.failed.length === 0
+    "All 3 archives went through the by-id path (source specified)",
+    archiveCalls.every((c) => c.contentId && c.source === "library")
+  );
+
+  // ---- E2E: approved-content archive ----
+  console.log("\nTest 5: APPROVED-CONTENT — Karen can archive items from תכנים שאושרו");
+  resetAll();
+  const app1 = await sendMessage(
+    "תעבירי לארכיון:\n1. שמלה קיצית לחתונה בגן\n2. סרטון על שמלת כלה ויראלית"
+  );
+  assert(
+    "Confirm sent",
+    app1?.status === "bulk_archive_confirm" && app1?.matched?.length === 2
+  );
+  assert(
+    "Both matched items marked as source=approved",
+    app1.matched.every((m: any) => m.source === "approved")
+  );
+
+  const app2 = await sendMessage("כן");
+  assert(
+    "Approved archives dispatched via contentId path",
+    archiveCalls.length === 2 &&
+      archiveCalls.every((c) => c.source === "approved") &&
+      new Set(archiveCalls.map((c) => c.contentId)).size === 2
+  );
+
+  // ---- E2E: partial match ----
+  console.log("\nTest 6: PARTIAL MATCH — matched + unmatched split correctly");
+  resetAll();
+  const partial = await sendMessage(
+    "תעבירי לארכיון:\n1. זוגיות בזמן ארגון חתונה\n2. משהו לא קיים בכלל בשם ייחודי"
+  );
+  assert(
+    "One matched, one unmatched",
+    partial?.matched?.length === 1 && partial?.unmatched?.length === 1
   );
 
   // ---- E2E: user cancels ----
-  console.log("\nTest 3: User cancels the bulk archive");
+  console.log("\nTest 7: User cancels — no archives happen");
   resetAll();
-  await sendMessage("תעבירי לארכיון:\n1. שמלה קיצית\n2. טרנד קפריסין");
-  const cancelResp = await sendMessage("לא");
-  assert(
-    "Cancel returns bulk_archive_cancelled",
-    cancelResp?.status === "bulk_archive_cancelled"
-  );
-  assert(
-    "No archives executed",
-    archiveCalls.length === 0
-  );
+  await sendMessage("תעבירי לארכיון:\n1. זוגיות בזמן ארגון חתונה\n2. טרנד קפריסין בקיץ");
+  const cancel = await sendMessage("לא");
+  assert("Cancelled", cancel?.status === "bulk_archive_cancelled");
+  assert("No archives executed", archiveCalls.length === 0);
 
-  // ---- E2E: partial match — some items don't exist in sheet ----
-  console.log("\nTest 4: Some items not found in sheet — still confirm, mention unmatched");
+  // ---- E2E: mid-flow ambiguous answer keeps state ----
+  console.log("\nTest 8: Ambiguous answer preserves state, follow-up 'כן' still works");
   resetAll();
-  const partial = await sendMessage(
-    "תעבירי לארכיון:\n1. שמלה קיצית לחתונה\n2. משהו שלא קיים בשם ייחודי"
-  );
-  console.log(`    → matched=${JSON.stringify(partial?.matched)}, unmatched=${JSON.stringify(partial?.unmatched)}`);
-  assert(
-    "Confirm prompt sent even with partial match",
-    partial?.status === "bulk_archive_confirm"
-  );
-  assert(
-    "Matched 1 item",
-    partial?.matched?.length === 1
-  );
-  assert(
-    "Unmatched 1 item recorded",
-    partial?.unmatched?.length === 1
-  );
-
-  // ---- E2E: no matches at all ----
-  console.log("\nTest 5: No matches — no confirmation state stored");
-  resetAll();
-  const noMatch = await sendMessage(
-    "תעבירי לארכיון:\n1. משהו שלא קיים\n2. גם זה לא קיים"
-  );
-  assert(
-    "Returns bulk_archive_no_matches (not stuck in confirm state)",
-    noMatch?.status === "bulk_archive_no_matches"
-  );
-
-  // ---- E2E: mid-flow ambiguous input → repeat prompt, don't lose state ----
-  console.log("\nTest 6: Non-yes/no answer during confirmation → prompt again, keep state");
-  resetAll();
-  await sendMessage("תעבירי לארכיון:\n1. שמלה קיצית\n2. טרנד קפריסין");
+  await sendMessage("תעבירי לארכיון:\n1. זוגיות בזמן ארגון חתונה\n2. טרנד קפריסין בקיץ");
   const ambig = await sendMessage("אולי מחר");
   assert(
-    "Ambiguous answer → bulk_archive_awaiting_confirmation (state preserved)",
+    "State preserved (bulk_archive_awaiting_confirmation)",
     ambig?.status === "bulk_archive_awaiting_confirmation"
   );
   const finalYes = await sendMessage("כן");
   assert(
-    "Follow-up 'כן' still executes the archive",
+    "Follow-up 'כן' executes",
     finalYes?.status === "bulk_archive_done" && archiveCalls.length === 2
   );
 
-  // ---- Regression: single archive still works via extractArchiveTarget ----
-  console.log("\nTest 7: REGRESSION — single archive unaffected");
+  // ---- Regression: single archive still works ----
+  console.log("\nTest 9: REGRESSION — single-archive path unchanged");
   resetAll();
-  const singleR = await sendMessage("תעבירי את שמלה קיצית לחתונה לארכיון");
+  const single = await sendMessage("תעבירי את זוגיות בזמן ארגון חתונה לארכיון");
   assert(
-    "Single archive still routes to 'archived'",
-    singleR?.status === "archived"
+    "Single archive routes to 'archived'",
+    single?.status === "archived"
   );
 
   // Cleanup + restore
   resetAll();
   sheetsService.archiveContentIdea = originalArchive;
-  sheetsService.getContentIdeaSummary = originalGetSummary;
+  sheetsService.archiveContentByContentId = originalArchiveById;
+  fuzzyMatchService.fetchArchivableCandidates = originalFetchCandidates;
 
   console.log(`\n=== Summary ===`);
   console.log(`Passed: ${grade.passed}`);

@@ -3,6 +3,7 @@ import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
+import { fetchArchivableCandidates, findBestFuzzyIdeaMatch } from "../services/fuzzy-match.service";
 import { humanizeDraftPreview } from "../services/response-humanizer.service";
 import {
   isConfirmationMessage,
@@ -45,6 +46,7 @@ import {
   updateDeadline,
   findSimilarContentIdea,
  archiveContentIdea,
+  archiveContentByContentId,
   getArchiveList,
   restoreFromArchive,
   getProductionStatusColumnIndex,
@@ -408,8 +410,19 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // "כן" archives them all in sequence; anything else (except explicit
     // yes-adjacent phrases handled by isConfirmationMessage) cancels.
     if (pendingQuestion?.questionType === "bulk_archive_confirm") {
-      const context = pendingQuestion.context as { items?: string[] } | undefined;
-      const items = Array.isArray(context?.items) ? (context!.items as string[]) : [];
+      type BulkItem = { contentId: string; source: "library" | "approved"; name: string };
+      const context = pendingQuestion.context as
+        | { items?: Array<BulkItem | string> }
+        | undefined;
+      // Defensive: earlier bulk-archive builds stored items as bare strings.
+      // Any leftover state from that version is coerced here so we can
+      // still finish the confirmation gracefully.
+      const rawItems = Array.isArray(context?.items) ? (context!.items as any[]) : [];
+      const items: BulkItem[] = rawItems.map((it) =>
+        typeof it === "string"
+          ? { contentId: "", source: "library" as const, name: it }
+          : (it as BulkItem)
+      );
 
       if (isConfirmationMessage(incomingText)) {
         clearPendingQuestion(sender);
@@ -419,12 +432,17 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
         for (const item of items) {
           try {
-            const result = await archiveContentIdea(spreadsheetId, item);
+            // Prefer exact-ID archive when we have contentId + source from
+            // the fuzzy match. Falls back to name-based archive for stale
+            // items from an older state format (which don't carry an id).
+            const result = item.contentId
+              ? await archiveContentByContentId(spreadsheetId, item.contentId, item.source)
+              : await archiveContentIdea(spreadsheetId, item.name);
             if (result) archived.push(result.archivedName);
-            else failed.push(item);
+            else failed.push(item.name);
           } catch (err) {
-            console.error(`[bulk_archive_confirm] archive failed for "${item}": ${err}`);
-            failed.push(item);
+            console.error(`[bulk_archive_confirm] archive failed for "${item.name}": ${err}`);
+            failed.push(item.name);
           }
         }
 
@@ -2871,21 +2889,25 @@ const replyText = [
       const items = extractBulkArchiveItems(incomingText);
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
-      // Match each item to a sheet row in parallel — one Haiku call per
-      // item via the unified matching path. Result: { requested, matched }.
-      const matchResults = await Promise.all(
-        items.map(async (requested) => {
-          try {
-            const summary = await getContentIdeaSummary(spreadsheetId, requested);
-            return { requested, matched: summary?.idea || null };
-          } catch (err) {
-            console.error(`[bulk_archive] match failed for "${requested}": ${err}`);
-            return { requested, matched: null };
-          }
-        })
-      );
+      // Local fuzzy match — zero Claude calls. One combined sheet read
+      // pulls candidates from both בנק רעיונות and תכנים שאושרו, then
+      // token-overlap scoring identifies each item. Fixes the earlier
+      // live-test bug where Haiku defaulted to "1" and matched all list
+      // items to the same first candidate. Also widens scope: approved
+      // content is now archivable, not just fresh ideas.
+      const candidates = await fetchArchivableCandidates(spreadsheetId);
 
-      const matched = matchResults.filter((r) => r.matched);
+      const matchResults = items.map((requested) => {
+        const match = findBestFuzzyIdeaMatch(requested, candidates);
+        return {
+          requested,
+          matched: match?.candidate.idea || null,
+          contentId: match?.candidate.contentId || null,
+          source: match?.candidate.source || null,
+        };
+      });
+
+      const matched = matchResults.filter((r) => r.matched && r.contentId && r.source);
       const unmatched = matchResults.filter((r) => !r.matched);
 
       if (matched.length === 0) {
@@ -2901,15 +2923,23 @@ const replyText = [
         return res.status(200).json({ status: "bulk_archive_no_matches", sender });
       }
 
-      // Store the matched list so the follow-up "כן" archives all of them.
+      // Store contentId + source per match so the follow-up "כן" archives
+      // by exact contentId (avoids re-running fuzzy match on execute).
       storePendingQuestion(sender, {
         questionType: "bulk_archive_confirm",
-        context: { items: matched.map((m) => m.matched!) },
+        context: {
+          items: matched.map((m) => ({
+            contentId: m.contentId,
+            source: m.source,
+            name: m.matched,
+          })),
+        },
       });
 
       const lines: string[] = ["מצאתי את הרעיונות הבאים:"];
       matched.forEach((m, i) => {
-        lines.push(`${i + 1}. ${m.matched}`);
+        const sourceHint = m.source === "approved" ? " (בהפקה)" : "";
+        lines.push(`${i + 1}. ${m.matched}${sourceHint}`);
       });
       if (unmatched.length > 0) {
         lines.push("");
@@ -2929,7 +2959,7 @@ const replyText = [
       return res.status(200).json({
         status: "bulk_archive_confirm",
         sender,
-        matched: matched.map((m) => m.matched),
+        matched: matched.map((m) => ({ name: m.matched, source: m.source })),
         unmatched: unmatched.map((m) => m.requested),
       });
     }
