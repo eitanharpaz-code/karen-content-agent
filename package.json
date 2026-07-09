@@ -23,6 +23,7 @@
     "test:conversation-memory": "ts-node src/test/conversation-memory-qa.ts",
     "test:response-humanizer": "ts-node src/test/response-humanizer-qa.ts",
     "test:brief-humanizer": "ts-node src/test/brief-humanizer-qa.ts",
+    "test:archive-command": "ts-node src/test/archive-command-qa.ts",
     "export:code-context": "node scripts/export-code-context.cjs"
   },
   "repository": {

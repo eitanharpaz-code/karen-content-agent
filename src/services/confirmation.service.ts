@@ -499,18 +499,32 @@ export const extractApproveTarget = (message: string): string | null => {
   return null;
 };
 export const extractArchiveTarget = (message: string): string | null => {
+  // Patterns ordered from most specific to least. The "with את" patterns
+  // are tried first so a message like "תעבירי את X לארכיון" doesn't
+  // accidentally grab "את X" as the target from a looser fallback pattern.
   const patterns = [
-    /תעבירי את (.+?) לארכיון/i,
-    /תעבירי את (.+?) בארכיון/i,
-    /שימי את (.+?) בארכיון/i,
-    /תשמרי את (.+?) בצד/i,
-    /העבירי את (.+?) לארכיון/i,
+    // With explicit את
+    /תעבירי\s+את\s+(.+?)\s+לארכיון/i,
+    /תעבירי\s+את\s+(.+?)\s+בארכיון/i,
+    /שימי\s+את\s+(.+?)\s+בארכיון/i,
+    /תשמרי\s+את\s+(.+?)\s+בצד/i,
+    /העבירי\s+את\s+(.+?)\s+לארכיון/i,
+    // Fallback: same intent without "את". Karen often drops it in natural
+    // speech ("תעבירי זוגיות בזמן ארגון חתונה לארכיון").
+    /תעבירי\s+(.+?)\s+לארכיון/i,
+    /תעבירי\s+(.+?)\s+בארכיון/i,
+    /העבירי\s+(.+?)\s+לארכיון/i,
+    /שימי\s+(.+?)\s+בארכיון/i,
+    /תשמרי\s+(.+?)\s+בצד/i,
   ];
 
   for (const pattern of patterns) {
     const match = message.match(pattern);
     if (match) {
-      return match[1].trim();
+      const target = match[1].trim();
+      // Guard against a zero-length or too-short accidental match.
+      // Real content names are >= 2 non-space chars.
+      if (target.length >= 2) return target;
     }
   }
 

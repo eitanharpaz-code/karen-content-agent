@@ -1955,10 +1955,18 @@ await safeSendWhatsAppMessage(sender, replyText);
     }
 
    // Check if this is an edit request
+   // Exclusions: isEditRequest fires on very loose indicators (e.g. "צריך",
+   // "יהיה", "אני רוצה") so a message like "תעבירי לארכיון: 1. X — צריך
+   // החלטה" was being mis-routed as an edit request and hijacked before the
+   // archive handler could see it. Explicit other-command detectors take
+   // precedence over the edit fallback.
 if (
   isEditRequest(incomingText) &&
   !isDeadlineUpdate(incomingText) &&
-  !isProductionStatusUpdate(incomingText)
+  !isProductionStatusUpdate(incomingText) &&
+  !isArchiveCommand(incomingText) &&
+  !isApproveForProductionCommand(incomingText) &&
+  !isRestoreCommand(incomingText)
 ) {
   const pendingDraft = getPendingConfirmation(sender);
 
@@ -2511,7 +2519,17 @@ const replyText = [
 // Archive - view list
 // View archive list
     // Archive - move to archive
-      const overdueDecisionIntent = detectOverdueDecisionIntent(incomingText);
+      // detectOverdueDecisionIntent's regex catches ANY message starting
+      // with "תעבירי" as a potential reschedule intent, even when Karen is
+      // actually trying to archive or approve for production. Explicit
+      // command detectors take precedence — they can't misinterpret the
+      // intent the way the loose reschedule regex can.
+      const overdueDecisionIntent =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText)
+          ? null
+          : detectOverdueDecisionIntent(incomingText);
 
       if (overdueDecisionIntent) {
         const overdueItems = await fetchOverdueDecisionItems();
