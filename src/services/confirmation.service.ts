@@ -660,9 +660,14 @@ export const isViewArchiveCommand = (message: string): boolean => {
 
 export const isRestoreCommand = (message: string): boolean => {
   const raw = message.trim().toLowerCase();
+  // Audit F1: "את" was previously accepted as a second keyword, but it
+  // appears in almost every Hebrew sentence with a direct object — so any
+  // "תחזירי את X" (e.g. reverting a draft edit: "תחזירי את הטון הקודם") was
+  // hijacked as an archive-restore command, including through the modal
+  // escape hatches. Restore now requires an explicit archive-context word.
   return (
     (raw.includes("תחזרי") || raw.includes("תחזיר") || raw.includes("תחזירי") || raw.includes("תוציאי") || raw.includes("תוציא")) &&
-    (raw.includes("ארכיון") || raw.includes("רעיונות") || raw.includes("בצד") || raw.includes("את"))
+    (raw.includes("ארכיון") || raw.includes("רעיונות") || raw.includes("בצד"))
   );
 };
 
