@@ -1,5 +1,5 @@
 import { DraftSummary } from "../types/content.types";
-import { getValue, setValue, deleteValue } from "./persistence.service";
+import { getValue, setValue, deleteValue, StateSection } from "./persistence.service";
 
 // Stage G: pending state moved from in-memory Maps to persistence.service
 // (data/agent-state.json) so it survives restarts. Public function
@@ -11,11 +11,80 @@ type PendingQuestion = {
   context?: Record<string, unknown>;  // optional extra data
 };
 
+// ---------------------------------------------------------------------------
+// Stage H — pending-state TTL (routing audit finding F0).
+//
+// Pending drafts and pending questions are MODAL state: their mere presence
+// changes how every subsequent message is routed (edit branch, continuation
+// detection, escape hatches). Without an expiry, a draft from last night
+// still hijacks this morning's messages — and since Stage G the state also
+// survives restarts via agent-state.json. A stale modal state is worse than
+// no state.
+//
+// Design: lazy expiry on read, no timers. Values are stored inside a
+// timestamped envelope; a read older than PENDING_STATE_TTL_MS deletes the
+// entry on the spot and reports "no pending state", so the message routes
+// fresh. Legacy entries written before this change (bare values, no
+// envelope) are grandfathered in as-is so a deploy can never kill a flow
+// that is active at that moment — they gain an envelope on their next store.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PENDING_STATE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+export const PENDING_STATE_TTL_MS: number = (() => {
+  const fromEnv = process.env.PENDING_STATE_TTL_MS;
+  if (!fromEnv) return DEFAULT_PENDING_STATE_TTL_MS;
+  const parsed = parseInt(fromEnv, 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? DEFAULT_PENDING_STATE_TTL_MS : parsed;
+})();
+
+type TimedEnvelope<T> = { __envelope: true; storedAt: string; value: T };
+
+const wrapTimed = <T>(value: T): TimedEnvelope<T> => ({
+  __envelope: true,
+  storedAt: new Date().toISOString(),
+  value,
+});
+
+const unwrapTimed = <T>(
+  raw: unknown,
+  section: StateSection,
+  userId: string
+): T | undefined => {
+  if (raw === undefined || raw === null) return undefined;
+
+  const looksLikeEnvelope =
+    typeof raw === "object" && raw !== null && (raw as any).__envelope === true;
+
+  // Legacy shape (pre-TTL): the bare value was stored directly.
+  if (!looksLikeEnvelope) return raw as T;
+
+  const envelope = raw as TimedEnvelope<T>;
+  const ageMs = Date.now() - new Date(envelope.storedAt).getTime();
+
+  // Unparseable timestamp is treated as expired — a broken envelope must
+  // never become immortal modal state.
+  if (Number.isNaN(ageMs) || ageMs > PENDING_STATE_TTL_MS) {
+    deleteValue(section, userId);
+    const ageLabel = Number.isNaN(ageMs) ? "unknown" : `${Math.round(ageMs / 60000)} min`;
+    console.log(
+      `[pending-state TTL] Expired ${section} entry for ${userId} (age: ${ageLabel}). Treating as absent.`
+    );
+    return undefined;
+  }
+
+  return envelope.value;
+};
+
 export const storePendingQuestion = (userId: string, question: PendingQuestion): void => {
-  setValue("pendingQuestions", userId, question);
+  setValue("pendingQuestions", userId, wrapTimed(question));
 };
 export const getPendingQuestion = (userId: string): PendingQuestion | undefined => {
-  return getValue<PendingQuestion>("pendingQuestions", userId);
+  return unwrapTimed<PendingQuestion>(
+    getValue<unknown>("pendingQuestions", userId),
+    "pendingQuestions",
+    userId
+  );
 };
 export const clearPendingQuestion = (userId: string): void => {
   deleteValue("pendingQuestions", userId);
@@ -454,11 +523,16 @@ export const applyEditToDraft = (draft: DraftSummary, edit: { field: string; val
 };
 
 export const storePendingConfirmation = (userId: string, draft: DraftSummary): void => {
-  setValue("pendingConfirmations", userId, draft);
+  // Stage H: stored inside a timestamped envelope — see unwrapTimed above.
+  setValue("pendingConfirmations", userId, wrapTimed(draft));
 };
 
 export const getPendingConfirmation = (userId: string): DraftSummary | undefined => {
-  return getValue<DraftSummary>("pendingConfirmations", userId);
+  return unwrapTimed<DraftSummary>(
+    getValue<unknown>("pendingConfirmations", userId),
+    "pendingConfirmations",
+    userId
+  );
 };
 
 export const clearPendingConfirmation = (userId: string): void => {
