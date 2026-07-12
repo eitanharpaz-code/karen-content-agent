@@ -130,7 +130,9 @@ const STATUS_MAPPINGS: ProductionStatusMapping[] = [
   {
     statusType: "filmed",
     columnName: "צולם",
-detectionPatterns: ["צילמתי", "צילמנו", "סיימתי לצלם", "סיימנו לצלם", "הצילום מוכן", "קלטתי", "הסרטון צולם", "גמרתי לצלם"],  },
+// Audit F4: standalone "קלטתי" removed — in everyday slang it means "got
+// it/understood" ("קלטתי, אז מה עושים מחר?") and was marking content as filmed.
+detectionPatterns: ["צילמתי", "צילמנו", "סיימתי לצלם", "סיימנו לצלם", "הצילום מוכן", "הסרטון צולם", "גמרתי לצלם"],  },
   {
     statusType: "edited",
     columnName: "נערך",
@@ -149,13 +151,18 @@ detectionPatterns: ["ערכתי", "ערכנו", "סיימתי לערוך", "סי
   "הכנתי קאבר",
   "קאבר סיים",
   "טייטל מוכן",
-  "הקאבר",
 ],
+// Audit F4: standalone "הקאבר" removed above — it fired on any sentence that
+// merely mentions the cover, including ones saying it is NOT ready
+// ("הקאבר של קפריסין עדיין אצל המעצבת"). Only "ready"-shaped phrasings remain.
   },
   {
     statusType: "uploaded",
     columnName: "פורסם",
-    detectionPatterns: ["העליתי", "העלנו", "הסרטון עלה", "הסרטון הועלה", "סרטון עלה", "עלה לאוויר", "יצא לאוויר", "יצא", "פורסם", "פרסמתי", "פרסמנו", "הסרטון פורסם", "העלתי"],
+    // Audit F4: standalone "יצא" removed — it's an everyday word ("יצא לי
+// רעיון", "יצא מעולה") and was marking random messages as published. The
+// unambiguous forms "יצא לאוויר" / "עלה לאוויר" remain.
+detectionPatterns: ["העליתי", "העלנו", "הסרטון עלה", "הסרטון הועלה", "סרטון עלה", "עלה לאוויר", "יצא לאוויר", "פורסם", "פרסמתי", "פרסמנו", "הסרטון פורסם", "העלתי"],
   },
 ];
 
