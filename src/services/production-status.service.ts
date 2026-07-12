@@ -354,12 +354,58 @@ export const isProductionStatusUpdate = (message: string): boolean => {
 };
 // Detect deadline update command
 // e.g. "תשני את הדדליין של X לתאריך Y"
+//
+// Audit F2 rewrite. The old check was a loose substring test —
+// (דדליין OR תאריך) + (תשני/שני/עדכני/שנה/עדכן) — which hijacked innocent
+// messages: "שני" matched inside "שניה" and "יום שני", "שנה" matched a plain
+// year, and "תאריך" appears in ordinary questions. Because this function
+// also sits in the explicit-command escape hatch of every pendingQuestion
+// handler, a mid-flow answer like "בעצם תשני לתאריך אחר" wiped the modal
+// state and broke the flow.
+//
+// The tightened rules mirror what extractDeadlineUpdate can actually parse:
+// 1) An unambiguous change verb as a WHOLE TOKEN + "דדליין" anywhere.
+// 2) The ambiguous short verbs שני/שנה only in the explicit form
+//    "שני/שנה את הדדליין".
+// 3) An unambiguous change verb + the explicit phrase "את התאריך"
+//    (preserves today's routing for "תשני את התאריך של X ל-Y").
+// 4) The declarative form "הדדליין של X הוא Y".
+// "תאריך" alone is no longer a trigger.
+const UNAMBIGUOUS_DEADLINE_CHANGE_VERBS = [
+  "תשני",
+  "תשנה",
+  "עדכני",
+  "תעדכני",
+  "עדכן",
+  "תעדכן",
+];
+
 export const isDeadlineUpdate = (message: string): boolean => {
   const raw = message.trim().toLowerCase();
-  return (
-    (raw.includes("דדליין") || raw.includes("תאריך")) &&
-    (raw.includes("תשני") || raw.includes("שני") || raw.includes("עדכני") || raw.includes("שנה") || raw.includes("עדכן"))
+
+  // Whole-token verb match: strip leading/trailing punctuation from each
+  // whitespace-separated token so "תשני," still counts, but "שניה" or
+  // "השנה" never do.
+  const tokens = raw
+    .split(/\s+/)
+    .map((t) => t.replace(/^[^\u0590-\u05FFa-z0-9]+|[^\u0590-\u05FFa-z0-9]+$/g, ""));
+  const hasChangeVerb = tokens.some((t) =>
+    UNAMBIGUOUS_DEADLINE_CHANGE_VERBS.includes(t)
   );
+
+  // "דדליין" is unambiguous — safe as a substring (covers הדדליין, לדדליין).
+  if (hasChangeVerb && raw.includes("דדליין")) return true;
+
+  // Ambiguous short verbs, explicit form only.
+  if (/(?:^|\s)(?:שני|שנה)\s+את\s+הדדליין/.test(raw)) return true;
+
+  // Explicit date-change phrasing with a clear verb.
+  if (hasChangeVerb && raw.includes("את התאריך")) return true;
+
+  // Declarative form, matches the extractor's last pattern.
+  if (/הדדליין של\s+.+\s+הוא\s+/.test(raw)) return true;
+
+  return false;
 };
 
 export const extractDeadlineUpdate = (message: string): { contentName: string; deadline: string } | null => {
