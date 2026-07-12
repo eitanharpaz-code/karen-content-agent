@@ -1,7 +1,29 @@
 import { askClaude } from "./claude.service";
-import { ContentIdeaDraft, DraftSummary } from "../types/content.types";
+import { ContentIdeaDraft, DraftSummary, DraftPreviewCopy } from "../types/content.types";
 import { cleanIdeaPrefix } from "../utils/conversation-utils";
 import { formatHistoryForPrompt } from "./conversation-memory.service";
+import {
+  DEFAULT_NEW_DRAFT_COPY,
+  DEFAULT_EDIT_COPY,
+} from "./response-humanizer.service";
+
+// Humanizer consolidation: parse the three preview-copy lines out of a
+// draft/edit response. Any missing line falls back to the matching default
+// so a partial parse can never break the preview flow. Exported for QA.
+export const parsePreviewCopy = (
+  text: string,
+  mode: "new" | "edit"
+): DraftPreviewCopy => {
+  const fallback = mode === "edit" ? DEFAULT_EDIT_COPY : DEFAULT_NEW_DRAFT_COPY;
+  const intro = text.match(/Intro[:\s]*([^\n]+)/i)?.[1]?.trim();
+  const closing = text.match(/ClosingQuestion[:\s]*([^\n]+)/i)?.[1]?.trim();
+  const change = text.match(/ChangeLine[:\s]*([^\n]+)/i)?.[1]?.trim();
+  return {
+    intro: intro || fallback.intro,
+    closingQuestion: closing || fallback.closingQuestion,
+    changeLine: change || fallback.changeLine,
+  };
+};
 
 const VALID_TONES = ["הסברתי", "מצחיק", "אותנטי", "השראתי", "טרנדי", "רגשי"];
 const VALID_PRIORITIES = ["גבוה", "בינוני", "נמוך"];
@@ -35,7 +57,12 @@ Category: [אחת בלבד: קפריסין, חתונה, שמלות, כללי, ר
 Tone: [אחד בלבד: הסברתי, מצחיק, אותנטי, השראתי, טרנדי, רגשי]
 Priority: [אחד בלבד: גבוה, בינוני, נמוך]
 Content Type: [אחד בלבד: ריל, פוסט, סטורי]
-Summary: [תיאור קצר וטבעי של הכיוון, במשפט אחד או שניים]`;
+Summary: [תיאור קצר וטבעי של הכיוון, במשפט אחד או שניים]
+Intro: [משפט פתיחה חם וקצר שמקבל את הכיוון, 3-8 מילים, בלי לחזור על השם או הסיכום. גווני בין הודעות, למשל: "אוקיי, זה נשמע כיוון טוב" / "אני אוהבת את הזווית" / "יש פה משהו"]
+ClosingQuestion: [שאלת אישור קצרה, 2-4 מילים, למשל: "לשמור?" / "להתקדם עם זה?" / "לשים בבנק?"]
+ChangeLine: [הזמנה קצרה לשינויים נוספים, 4-8 מילים, למשל: "אפשר להגיד לי מה לשנות" / "פתוחה לשינויים"]
+
+שלוש השורות האחרונות (Intro, ClosingQuestion, ChangeLine) הן טקסט עוטף שיוצג לקרן סביב הטיוטה: עברית טבעית וחמה, בלי CRM, בלי אימוג'י, ואל תחזרי על אותו נוסח בכל פעם.`;
 
   const response = await askClaude(draftPrompt);
 
@@ -112,6 +139,8 @@ Summary: [תיאור קצר וטבעי של הכיוון, במשפט אחד או
       priority: priority as any,
       contentType: contentType as any,
       summary: (summaryMatch?.[1] || cleanedInput).trim(),
+      // Humanizer consolidation: wrapping copy from the same call.
+      previewCopy: parsePreviewCopy(text, "new"),
     };
   };
 
@@ -200,7 +229,12 @@ Category: [...]
 Tone: [...]
 Priority: [...]
 Content Type: [...]
-Summary: [...]`;
+Summary: [...]
+Intro: [משפט פתיחה קצר שמאשר את השינוי, 3-8 מילים, למשל: "עברתי לטון קליל יותר" / "עדכנתי את הכיוון" / "החלפתי, בואי נראה"]
+ClosingQuestion: [שאלת אישור קצרה, 2-4 מילים, למשל: "לשמור?" / "להתקדם עם זה?" / "לקבע?"]
+ChangeLine: [הזמנה קצרה לשינויים נוספים, 4-8 מילים, למשל: "אפשר להגיד לי מה עוד לשנות" / "פתוחה לשינויים"]
+
+שלוש השורות האחרונות (Intro, ClosingQuestion, ChangeLine) הן טקסט עוטף שיוצג לקרן סביב הטיוטה המעודכנת: עברית טבעית וחמה, בלי CRM, בלי אימוג'י, ואל תחזרי על אותו נוסח בכל פעם.`;
 
   try {
     const response = await askClaude(editPrompt);
@@ -236,6 +270,8 @@ Summary: [...]`;
       priority: priority as any,
       contentType: contentType as any,
       summary: summaryMatch[1].trim(),
+      // Humanizer consolidation: wrapping copy from the same call.
+      previewCopy: parsePreviewCopy(response, "edit"),
     };
   } catch (error) {
     console.error(`[askClaudeForEdit] Error: ${error}. Returning null (fallback to clarification).`);
