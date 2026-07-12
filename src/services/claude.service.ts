@@ -101,16 +101,25 @@ export const askClaude = async (
 // Returns the matched candidate's `index` (as given in the input
 // candidates array), or null if there is no match or the call fails.
 // Prompt builder for matching calls. Two wordings, selected by purpose:
-// - similar_idea_match: duplicate detection ("is there a VERY similar
-//   existing idea?"). Wording copied verbatim from the original
-//   findSimilarContentIdea prompt so wiring is not a behavior change.
+// - similar_idea_match: duplicate detection ("is this the SAME specific
+//   idea?"). Originally copied verbatim from findSimilarContentIdea;
+//   tightened on 12/07/2026 after a live false positive — see comment
+//   inside the branch.
 // - all other purposes: best-match selection among candidates.
 const buildMatchingPrompt = (
   context: MatchingClaudeContext,
   candidateList: string
 ): string => {
   if (context.purpose === "similar_idea_match") {
-    return `רעיון חדש: "${context.query}"\nהנה רעיונות קיימים:\n${candidateList}\n\nהאם יש רעיון קיים שדומה מאוד לרעיון החדש (אותו נושא, אותו קונספט)? החזר רק את המספר של הרעיון הדומה, או "0" אם אין רעיון דומה. רק מספר, בלי הסבר.`;
+    // Duplicate-detection prompt, tightened after a live false positive
+    // (12/07/2026): the original wording asked for "אותו נושא" — but ALL of
+    // Karen's content shares the same topic (weddings), so Haiku matched
+    // thematically and flagged genuinely new ideas as duplicates. A
+    // duplicate now means the SAME specific idea/angle (would produce
+    // essentially the same content), shared theme alone is explicitly not
+    // enough, and doubt resolves to 0. Output contract unchanged: a number
+    // or "0", nothing else.
+    return `רעיון חדש: "${context.query}"\nהנה רעיונות קיימים:\n${candidateList}\n\nהאם אחד הרעיונות הקיימים הוא כפילות של הרעיון החדש?\n\nכפילות = שני הרעיונות יובילו בפועל לאותו תוכן: אותה זווית ספציפית, אותו רעיון מרכזי.\n\nחשוב: כל הרעיונות כאן עוסקים באותו עולם תוכן (חתונות, זוגיות, אירוסין) — נושא משותף או אווירה דומה לבדם הם לא כפילות. רק אם זה בעצם אותו רעיון בניסוח אחר.\n\nאם יש ספק — החזר "0".\n\nהחזר רק את המספר של הרעיון הכפול, או "0" אם אין כפילות. רק מספר, בלי הסבר.`;
   }
 
   return `המשתמש חיפש: "${context.query}"\nהנה רשימת המועמדים:\n${candidateList}\n\nהחזר רק את המספר של המועמד שהכי מתאים לחיפוש, או "0" אם אין התאמה סבירה. רק מספר, בלי הסבר.`;

@@ -226,8 +226,14 @@ const main = async (): Promise<void> => {
 
     const sentPrompt = sentBody?.messages?.[0]?.content ?? "";
     check(
-      "similar_idea_match prompt uses duplicate-detection wording (דומה מאוד)",
-      sentPrompt.includes("דומה מאוד") && sentPrompt.includes("רעיון חדש:")
+      "similar_idea_match prompt uses tightened duplicate-detection wording (כפילות + same-angle definition)",
+      sentPrompt.includes("כפילות") &&
+        sentPrompt.includes("אותה זווית ספציפית") &&
+        sentPrompt.includes("רעיון חדש:")
+    );
+    check(
+      "similar_idea_match prompt guards against shared-theme false positives (נושא משותף is not a duplicate)",
+      sentPrompt.includes("נושא משותף") && sentPrompt.includes('אם יש ספק — החזר "0"')
     );
     check(
       "similar_idea_match prompt does NOT use best-match selection wording (הכי מתאים)",
