@@ -2045,8 +2045,17 @@ await safeSendWhatsAppMessage(sender, replyText);
    // החלטה" was being mis-routed as an edit request and hijacked before the
    // archive handler could see it. Explicit other-command detectors take
    // precedence over the edit fallback.
+// Audit F3: question-shaped messages are excluded too. With a pending
+// draft open, "מה הסטטוס של הריל על קפריסין?" contains "ריל" and was
+// swallowed here — triggering askClaudeForEdit on an unrelated draft
+// instead of reaching the visibility handlers below. A question falls
+// through to visibility routing; a genuine edit phrased as a question
+// ("אפשר לשנות את הטון?") still gets edited later in the chain via the
+// pending-draft askClaudeForEdit fallback (station 22), so nothing is
+// lost — only mis-routing is prevented.
 if (
   isEditRequest(incomingText) &&
+  !isQuestionLikeMessage(incomingText) &&
   !isDeadlineUpdate(incomingText) &&
   !isProductionStatusUpdate(incomingText) &&
   !isArchiveCommand(incomingText) &&
