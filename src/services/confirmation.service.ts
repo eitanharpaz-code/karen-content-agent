@@ -541,13 +541,17 @@ export const clearPendingConfirmation = (userId: string): void => {
 // Archive intent detection
 export const isArchiveCommand = (message: string): boolean => {
   const raw = message.trim().toLowerCase();
-  return (
-    raw.includes("ארכיון") ||
-    raw.includes("לארכיון") ||
-    raw.includes("בצד") ||
-    (raw.includes("תעבירי") && raw.includes("ארכיון")) ||
-    (raw.includes("תשמרי") && raw.includes("בצד"))
-  );
+  // Audit F7: bare "בצד" removed as a trigger — it appears inside ordinary
+  // idea messages ("לשים דגש בצד של ההורים", "רעיון על הצד הכלכלי... בצד
+  // המשפטי") and hijacked them into the archive flow, including through the
+  // modal escape hatches. "בצד" now requires a put-aside verb, and the
+  // positional form "בצד של X" is explicitly excluded.
+  const ASIDE_VERBS = ["תשמרי", "שימי", "תשימי", "נשים", "לשים", "שים את", "שמרי", "תעבירי"];
+  const hasAsideIntent =
+    raw.includes("בצד") &&
+    !raw.includes("בצד של") &&
+    ASIDE_VERBS.some((verb) => raw.includes(verb));
+  return raw.includes("ארכיון") || hasAsideIntent;
 };
 export const isApproveForProductionCommand = (message: string): boolean => {
   const raw = message.trim();

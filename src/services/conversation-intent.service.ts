@@ -66,7 +66,8 @@ export const classifyMessageIntent = async (
 
   try {
     // Classifier task (one of 4 enum values) — route to Haiku for ~1/3 cost.
-    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL });
+    // Classifier call: one-word answer, persona-free (see AskClaudeOptions).
+    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL, withPersona: false });
     const cleaned = response
       .trim()
       .toLowerCase()

@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import Anthropic from "@anthropic-ai/sdk";
+import { recordClaudeCall } from "./routing-trace.service";
 import type { MatchingClaudeContext } from "../types/claude-context.types";
 
 const SYSTEM_PROMPT_PATH = path.resolve(process.cwd(), "prompts", "system-prompt.md");
@@ -29,6 +30,12 @@ const loadSystemPrompt = async (): Promise<string> => {
 
 export interface AskClaudeOptions {
   model?: string;
+  // When false, the call is sent WITHOUT the Karen persona system prompt.
+  // For classifier-style calls (intent detection, visibility intent) the
+  // persona contributes nothing to a one-word answer and only costs input
+  // tokens on every message. Mirrors the Drafting vs Matching contract in
+  // claude-context.types.ts. Default: true (creative calls keep the persona).
+  withPersona?: boolean;
 }
 
 export const askClaude = async (
@@ -55,15 +62,24 @@ export const askClaude = async (
   //    reach the model's minimum cache size for this to take effect;
   //    if it's under threshold the response is unchanged and pricing
   //    stays as normal input tokens (no downside).
+  const withPersona = options.withPersona !== false;
+
+  // Routing trace: count this call against the message currently being routed.
+  recordClaudeCall(model, withPersona);
+
   const response = await client.messages.create({
     model,
-    system: [
-      {
-        type: "text",
-        text: systemPrompt,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
+    ...(withPersona
+      ? {
+          system: [
+            {
+              type: "text" as const,
+              text: systemPrompt,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ],
+        }
+      : {}),
     messages: [{ role: "user", content: message }],
     max_tokens: 1024,
   });
@@ -153,6 +169,9 @@ export const askClaudeForMatching = async (
   // Using the selection wording for duplicate detection would produce false
   // "similar idea found" answers for genuinely new ideas.
   const prompt = buildMatchingPrompt(context, candidateList);
+
+  // Routing trace: matching calls are always persona-free.
+  recordClaudeCall(model, false);
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {

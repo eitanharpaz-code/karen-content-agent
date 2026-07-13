@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
+import { startRoutingTrace, finishRoutingTrace } from "../services/routing-trace.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
 import { fetchArchivableCandidates, findBestFuzzyIdeaMatch } from "../services/fuzzy-match.service";
@@ -380,6 +381,17 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     // ===== ROUTE DEBUG LOGS =====
     console.log(`\n[Route Debug] incomingText: "${incomingText}"`);
 
+    // Routing trace (audit Stage 2): every controller exit goes through
+    // res.json({ status: ... }) — the status field IS the handler name. One
+    // wrap here covers all exits with a uniform trace line (handler + Claude
+    // call count + duration), no per-handler instrumentation needed.
+    startRoutingTrace(sender, incomingText);
+    const originalResJson = res.json.bind(res);
+    res.json = ((body: any) => {
+      finishRoutingTrace(body?.status ?? body?.error);
+      return originalResJson(body);
+    }) as Response["json"];
+
     // Phase A — conversation memory: log every inbound turn before routing
     // so downstream AI prompts see it as context. Outbound turns are logged
     // inside safeSendWhatsAppMessage.
@@ -506,7 +518,11 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const wantsEdit = ["לערוך", "לערוך את הנוכחי", "את הנוכחי", "הנוכחי", "עריכה"].some(
           (phrase) => rawAnswer.includes(phrase)
         );
-        const wantsNew = ["לפתוח חדש", "חדש", "רעיון חדש"].some((phrase) => rawAnswer.includes(phrase));
+        // Audit F6: the bare word "חדש" was removed as a trigger — it matched
+        // as a substring inside answers that actually ask to KEEP the draft
+        // ("תשאירי את הרעיון אבל תני זווית חדשה"), silently discarding it.
+        // Only explicit open-a-new-idea phrasings count.
+        const wantsNew = ["לפתוח חדש", "רעיון חדש", "משהו חדש", "נתחיל חדש", "להתחיל חדש", "תתחילי חדש"].some((phrase) => rawAnswer.includes(phrase));
 
         // Natural confirmation phrases should also exit the clarification.
         // If Karen answers with something like "בעצם כן, בואי נשמור" she
@@ -2210,7 +2226,21 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
 
     // ===== VISIBILITY INTENT DETECTION =====
     console.log(`[Route Debug] About to detect visibility intent...`);
-    const visibilityIntent = await detectVisibilityIntentWithAI(incomingText);
+    // Audit F8: skip the AI visibility classifier when a deterministic
+    // command handler later in this chain will catch the message anyway
+    // (e.g. "תזכירי לי מה יש בארכיון" is a view-archive command, not a
+    // pipeline question). Sync visibility detection still runs.
+    const matchesDeterministicCommand =
+      isViewArchiveCommand(incomingText) ||
+      isRestoreCommand(incomingText) ||
+      isApproveForProductionCommand(incomingText) ||
+      isBulkArchiveCommand(incomingText) ||
+      isArchiveCommand(incomingText) ||
+      isDeadlineUpdate(incomingText) ||
+      isProductionStatusUpdate(incomingText);
+    const visibilityIntent = await detectVisibilityIntentWithAI(incomingText, {
+      skipAI: matchesDeterministicCommand,
+    });
     console.log(`[Route Debug] visibilityIntent: ${visibilityIntent || "null"}`);
     console.log(`[Route Debug] detectVisibilityIntent result: ${visibilityIntent || "null"}`);
     const questionLikeMessage = isQuestionLikeMessage(incomingText);

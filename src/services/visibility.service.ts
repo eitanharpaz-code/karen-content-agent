@@ -1321,7 +1321,8 @@ export const askClaudeForVisibilityIntent = async (
     // Classifier task (one of ~10 intent names or NONE) — route to Haiku
     // for ~1/3 cost. This can fire on any question-shaped message that
     // hardcoded detection missed, so cost matters.
-    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL });
+    // Classifier call: one-word answer, persona-free (see AskClaudeOptions).
+    const response = await askClaude(prompt, { model: CLASSIFIER_MODEL, withPersona: false });
     const cleaned = response
       .trim()
       .replace(/[.,;:!?"׳״'`]/g, "")
@@ -1342,10 +1343,18 @@ export const askClaudeForVisibilityIntent = async (
 // (cheap sync heuristic), only then ask Claude. This bounds the AI cost to
 // question-shaped fallback traffic.
 export const detectVisibilityIntentWithAI = async (
-  text: string
+  text: string,
+  options: { skipAI?: boolean } = {}
 ): Promise<VisibilityIntent> => {
   const syncIntent = detectVisibilityIntent(text);
   if (syncIntent) return syncIntent;
+
+  // Audit F8: when the caller already knows a deterministic command handler
+  // further down the chain will catch this message (archive, restore,
+  // approve, deadline, status), the AI classifier call is pure waste — a
+  // Haiku round-trip that returns NONE and adds latency. Sync detection
+  // above still runs unconditionally (it is free).
+  if (options.skipAI) return null;
 
   if (!isLikelyVisibilityQuery(text) && !isQuestionLikeMessage(text)) {
     return null;
