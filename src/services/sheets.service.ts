@@ -424,7 +424,13 @@ export const saveContentIdea = async (
     ? "לא"
     : "כן";
 
-  const collab = /(?:שת["״׳]?פ|שיתוף פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח)/.test(detectionText)
+  // Vocabulary pass (12.7.2026): added קולאב/collab (appears in Karen's own
+  // sheet notes) and שיתופי פעולה. Also fixed a false positive: "שתפ" now
+  // requires no Hebrew letter after it, so creator-speak like "משתפת אתכם"
+  // no longer flags organic content as sponsored, while "בשת\"פ עם" still
+  // matches. A spaced "שת פ" variant was considered and rejected — it
+  // matches inside "רשת פ..." / "לגשת פ...".
+  const collab = /(?:שת["״׳]?פ(?![\u0590-\u05FF])|שיתוף פעולה|שיתופי פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח|קולאב|collab)/i.test(detectionText)
     ? "כן"
     : "לא";
 

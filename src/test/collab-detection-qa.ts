@@ -1,7 +1,8 @@
-// Live-test bug fix QA (12.7.2026): sponsored/shoot detection must scan the
-// summary too, since the save path passes Claude's short name (not Karen's
-// original message) as `idea`. Verified at source level: the regexes test
-// detectionText = idea + summary.
+// Sponsored/organic detection QA (12.7.2026).
+// Covers two fixes: (1) detection scans name + summary, since the save path
+// passes Claude's short name as `idea`; (2) extended vocabulary (קולאב,
+// collab, שיתופי פעולה) plus a lookahead so "שתפ" requires no Hebrew letter
+// after it — creator-speak like "משתפת אתכם" is organic, not sponsored.
 // Run: npx ts-node --transpile-only src/test/collab-detection-qa.ts
 
 import { readFileSync } from "fs";
@@ -17,63 +18,33 @@ const check = (name: string, ok: boolean): void => {
 
 const src = readFileSync(path.resolve(__dirname, "../services/sheets.service.ts"), "utf-8");
 
+// --- Source-level: both fixes actually live in the service ---
 check("detectionText combines idea + summary", src.includes("const detectionText = `${idea} ${summary}`;"));
-check("collab regex tests detectionText, not bare idea", /const collab = \/[^\n]+\/\.test\(detectionText\)/.test(src));
+check("collab regex tests detectionText, not bare idea", /const collab = \/[^\n]+\/i\.test\(detectionText\)/.test(src));
 check("requiresShoot regex tests detectionText, not bare idea", /const requiresShoot = \/[^\n]+\/\.test\(detectionText\)/.test(src));
-check("sponsored keywords intact (שת\"פ, ממומן, מותג)", src.includes("ממומן") && src.includes("מותג"));
+check("extended vocabulary present in service (קולאב + collab)", src.includes("קולאב") && src.includes("collab"));
+check("mishtatefet lookahead present in service", src.includes("(?![\\u0590-\\u05FF])"));
 
-// Behavioral sanity on the regex itself, replicated from source:
-const collabRegex = /(?:שת["״׳]?פ|שיתוף פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח)/;
-check("regex matches inside a summary", collabRegex.test("בוקר עם קפה " + "שיתוף פעולה עם מותג קפה על שגרת הבוקר"));
-check("regex does not match an organic summary", !collabRegex.test("סרטון על ניסיון לבשל ארוחה רומנטית שנגמר בפיצה"));
+// --- Behavioral: the exact regex from the service ---
+const collabRegex = /(?:שת["״׳]?פ(?![\u0590-\u05FF])|שיתוף פעולה|שיתופי פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח|קולאב|collab)/i;
+
+const vocabCases: Array<[string, boolean]> = [
+  ["שתפ עם חברת תכשיטים", true],
+  ['בשת"פ עם מותג קפה', true],
+  ["שת״פ חדש ומרגש", true],
+  ["קולאב עם עיריית תל אביב", true],
+  ["Collab עם ברנד בגדים", true],
+  ["יש לנו שיתופי פעולה החודש", true],
+  ["תוכן ממומן על שגרת בוקר", true],
+  ["אני משתפת אתכם ברגע מרגש", false],
+  ["משתפים אתכם בהכנות", false],
+  ["סרטון על רשת פיצריות שאני אוהבת", false],
+  ["רוצה לגשת פנימה ולצלם", false],
+  ["סרטון על ניסיון לבשל ארוחה רומנטית שנגמר בפיצה", false],
+];
+for (const [text, expected] of vocabCases) {
+  check(`vocab: "${text}" → ${expected ? "שת\"פ" : "אורגני"}`, collabRegex.test(text) === expected);
+}
 
 console.log(`\nCollab detection QA: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
-
-// --- Vocabulary pass additions (12.7.2026) ---
-const extendedRegex = /(?:שת["״׳]?פ(?![\u0590-\u05FF])|שיתוף פעולה|שיתופי פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח|קולאב|collab)/i;
-const vocabCases: Array<[string, boolean]> = [
-  ["שתפ עם חברת תכשיטים", true],
-  ['בשת"פ עם מותג קפה', true],
-  ["שת״פ חדש ומרגש", true],
-  ["קולאב עם עיריית תל אביב", true],
-  ["Collab עם ברנד בגדים", true],
-  ["יש לנו שיתופי פעולה החודש", true],
-  ["אני משתפת אתכם ברגע מרגש", false],
-  ["משתפים אתכם בהכנות", false],
-  ["סרטון על רשת פיצריות שאני אוהבת", false],
-  ["רוצה לגשת פנימה ולצלם", false],
-];
-let vocabFail = 0;
-for (const [text, expected] of vocabCases) {
-  const got = extendedRegex.test(text);
-  const ok = got === expected;
-  if (!ok) vocabFail++;
-  console.log(`${ok ? "✅" : "❌"} vocab: "${text}" → ${got}`);
-}
-if (vocabFail > 0) process.exitCode = 1;
-console.log(`Vocabulary cases: ${vocabCases.length - vocabFail}/${vocabCases.length} passed`);
-
-// --- Vocabulary pass additions (12.7.2026) ---
-const extendedRegex = /(?:שת["״׳]?פ(?![\u0590-\u05FF])|שיתוף פעולה|שיתופי פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח|קולאב|collab)/i;
-const vocabCases: Array<[string, boolean]> = [
-  ["שתפ עם חברת תכשיטים", true],
-  ['בשת"פ עם מותג קפה', true],
-  ["שת״פ חדש ומרגש", true],
-  ["קולאב עם עיריית תל אביב", true],
-  ["Collab עם ברנד בגדים", true],
-  ["יש לנו שיתופי פעולה החודש", true],
-  ["אני משתפת אתכם ברגע מרגש", false],
-  ["משתפים אתכם בהכנות", false],
-  ["סרטון על רשת פיצריות שאני אוהבת", false],
-  ["רוצה לגשת פנימה ולצלם", false],
-];
-let vocabFail = 0;
-for (const [text, expected] of vocabCases) {
-  const got = extendedRegex.test(text);
-  const ok = got === expected;
-  if (!ok) vocabFail++;
-  console.log(`${ok ? "✅" : "❌"} vocab: "${text}" → ${got}`);
-}
-if (vocabFail > 0) process.exitCode = 1;
-console.log(`Vocabulary cases: ${vocabCases.length - vocabFail}/${vocabCases.length} passed`);
