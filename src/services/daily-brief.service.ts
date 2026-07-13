@@ -16,9 +16,11 @@ import type {
 import { humanizeBrief } from "./brief-humanizer.service";
 import {
   computePlanningHealthSignals,
+  computeWeeklyProgress,
 } from "./planning-health.service";
 import type {
   PlanningHealthSignal,
+  WeeklyProgress,
 } from "./planning-health.service";
 
 const getSpreadsheetId = (): string => {
@@ -91,6 +93,9 @@ const fetchBriefData = async () => {
   const planningSignals = computePlanningHealthSignals(ganttItems, {
     anchorDate: today,
   });
+  // Weekly progress (12.7.2026): what already went live this week, from the
+  // same gantt dataset (range is all-time, so earlier-this-week rows exist).
+  const weeklyProgress = computeWeeklyProgress(ganttItems, { anchorDate: today });
 
   const futureHoles = availableDates.filter((date) => {
     const parts = date.split("/");
@@ -98,7 +103,7 @@ const fetchBriefData = async () => {
     return d >= today;
   });
 
-  return { priorityItems, futureHoles, planningSignals };
+  return { priorityItems, futureHoles, planningSignals, weeklyProgress };
 };
 
 // ===== Morning Brief =====
@@ -107,6 +112,28 @@ export type MorningBriefData = {
   futureHoles: string[];
   monthName: string;
   planningSignals?: PlanningHealthSignal[];
+  weeklyProgress?: WeeklyProgress;
+};
+
+// Weekly progress (12.7.2026): one context line at the top of the morning
+// brief. Motivation layer only — selection/prioritization logic untouched.
+// Reel-focused on purpose: 2 reels/week is the north-star metric.
+export const formatWeeklyStatusLine = (
+  progress?: WeeklyProgress
+): string | null => {
+  if (!progress) return null;
+  const { publishedReels, reelTarget } = progress;
+
+  if (publishedReels === 0) {
+    return `סטטוס שבועי: עוד לא עלה ריל השבוע (היעד: ${reelTarget}).`;
+  }
+  if (publishedReels < reelTarget) {
+    const missing = reelTarget - publishedReels;
+    const publishedPart = publishedReels === 1 ? "עלה ריל אחד" : `עלו ${publishedReels} רילסים`;
+    const missingPart = missing === 1 ? "עוד אחד וסגרנו את היעד" : `עוד ${missing} ליעד`;
+    return `סטטוס שבועי: ${publishedPart} מתוך ${reelTarget} — ${missingPart}.`;
+  }
+  return `סטטוס שבועי: יעד הרילסים הושג — ${publishedReels} כבר באוויר. מכאן הכל בונוס.`;
 };
 
 const isActionable = (item: ContentPriorityItem): boolean =>
@@ -211,8 +238,12 @@ export const buildMorningBriefFromData = ({
   futureHoles,
   monthName,
   planningSignals = [],
+  weeklyProgress,
 }: MorningBriefData): string | null => {
   const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
+
+  const weeklyStatusLine = formatWeeklyStatusLine(weeklyProgress);
+  if (weeklyStatusLine) lines.push(weeklyStatusLine);
 
   const p0Items = priorityItems.filter(
     (i) => i.priorityLevel === "P0" && !i.isOverdueAwaitingDecision
@@ -253,6 +284,7 @@ export const buildMorningBriefFromData = ({
       return [
         "בוקר טוב קרן :)",
         "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
+        ...(weeklyStatusLine ? [weeklyStatusLine] : []),
         "",
         "היום נראה יחסית רגוע.",
         "לא מצאתי משהו דחוף שצריך טיפול מיידי." + backgroundLine,
@@ -314,7 +346,7 @@ export const buildMorningBriefFromData = ({
 };
 
 export const buildMorningBrief = async (): Promise<string | null> => {
-  const { priorityItems, futureHoles, planningSignals } = await fetchBriefData();
+  const { priorityItems, futureHoles, planningSignals, weeklyProgress } = await fetchBriefData();
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
   const deterministic = buildMorningBriefFromData({
@@ -322,6 +354,7 @@ export const buildMorningBrief = async (): Promise<string | null> => {
     futureHoles,
     monthName,
     planningSignals,
+    weeklyProgress,
   });
 
   if (!deterministic) return null;
@@ -350,6 +383,7 @@ export type AfternoonReminderData = {
   priorityItems: ContentPriorityItem[];
   ganttIsLight: boolean;
   monthName: string;
+  weeklyProgress?: WeeklyProgress;
 };
 
 export const selectAfternoonFocus = (
@@ -412,9 +446,18 @@ export const buildAfternoonReminderFromData = ({
   priorityItems,
   ganttIsLight,
   monthName,
+  weeklyProgress,
 }: AfternoonReminderData): string | null => {
   const focus = selectAfternoonFocus(priorityItems, ganttIsLight);
   const lines: string[] = ["היי קרן, תזכורת קטנה :)", ""];
+
+  // Weekly progress (12.7.2026): recognition only, and only once the weekly
+  // reel target is met. Never changes which focus item is chosen, and never
+  // creates a message on its own (if all branches fall through to null,
+  // nothing is sent).
+  if (weeklyProgress?.reelTargetMet) {
+    lines.push("רק שתדעי — יעד הרילסים השבועי כבר הושג. מכאן הכל בונוס.", "");
+  }
 
   if (
     focus?.priorityLevel === "P0" &&
@@ -479,7 +522,7 @@ export type AfternoonReminderResult = {
 };
 
 export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderResult> => {
-  const { priorityItems } = await fetchBriefData();
+  const { priorityItems, weeklyProgress } = await fetchBriefData();
 
   // בדוק גאנט 14 ימים קדימה לצורך סף "ריק"
   const today = new Date();
@@ -498,6 +541,7 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
     priorityItems,
     ganttIsLight,
     monthName,
+    weeklyProgress,
   });
 
   // Phase B extension — humanize the afternoon reminder in Karen's

@@ -161,3 +161,53 @@ export const computePlanningHealthSignals = (
 
   return signals;
 };
+
+// ===== Weekly progress (12.7.2026) =====
+// Counts what already WENT LIVE this week, as a motivational complement to
+// the forward-looking signals above. Built entirely from this module's
+// existing primitives (week math, organic filter, reel/post classifiers)
+// and the same weekly targets — no new planning logic.
+export type WeeklyProgress = {
+  publishedReels: number;
+  publishedPosts: number;
+  reelTarget: number;
+  postTarget: number;
+  reelTargetMet: boolean;
+};
+
+export const computeWeeklyProgress = (
+  ganttItems: PlanningGanttItem[],
+  options: PlanningHealthOptions = {}
+): WeeklyProgress => {
+  const anchor = options.anchorDate ? new Date(options.anchorDate) : new Date();
+  anchor.setHours(0, 0, 0, 0);
+
+  const reelTarget = options.weeklyReelTarget ?? DEFAULT_WEEKLY_REEL_TARGET;
+  const postTarget = options.weeklyPostTarget ?? DEFAULT_WEEKLY_POST_TARGET;
+
+  const weekStart = startOfWeek(anchor);
+  const weekEnd = addDays(weekStart, 6);
+
+  // Published + organic only: collaborations don't count toward Karen's own
+  // cadence target, mirroring computePlanningHealthSignals.
+  const publishedThisWeek = ganttItems
+    .map((item) => ({ item, date: parseSheetDate(item.date) }))
+    .filter((entry): entry is { item: PlanningGanttItem; date: Date } =>
+      Boolean(entry.date) &&
+      isUsableContentId(entry.item.contentId) &&
+      !isCollaboration(entry.item) &&
+      (entry.item.status || "").trim() === "פורסם" &&
+      isInRange(entry.date!, weekStart, weekEnd)
+    );
+
+  const publishedReels = publishedThisWeek.filter((e) => isReel(e.item)).length;
+  const publishedPosts = publishedThisWeek.filter((e) => isPost(e.item)).length;
+
+  return {
+    publishedReels,
+    publishedPosts,
+    reelTarget,
+    postTarget,
+    reelTargetMet: publishedReels >= reelTarget,
+  };
+};
