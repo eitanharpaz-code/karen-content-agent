@@ -413,11 +413,18 @@ export const saveContentIdea = async (
   console.log(`[Sprint 6] Step 1: Saving content idea to בנק רעיונות`);
   console.log(`[Sprint 6] Content_ID: ${contentId}`);
 
-  const requiresShoot = /(?:בלי צילום|ללא צילום|לא דורש צילום|לא דורשת צילום|טקסט בלבד|סטורי בלבד|רק סטורי|רק טקסט)/.test(idea)
+  // Bug fix (12.7.2026, found in live relaunch test): these detectors ran on
+  // `idea` alone — but on the draft-approval path `idea` is Claude's SHORT
+  // NAME (max 5 words), which rarely preserves words like "שת\"פ" from
+  // Karen's original message. The summary almost always does, so both
+  // detectors now scan name + summary together.
+  const detectionText = `${idea} ${summary}`;
+
+  const requiresShoot = /(?:בלי צילום|ללא צילום|לא דורש צילום|לא דורשת צילום|טקסט בלבד|סטורי בלבד|רק סטורי|רק טקסט)/.test(detectionText)
     ? "לא"
     : "כן";
 
-  const collab = /(?:שת["״׳]?פ|שיתוף פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח)/.test(idea)
+  const collab = /(?:שת["״׳]?פ|שיתוף פעולה|חסות|חסת|ממומן|ממומנת|ברנד|מותג|לקוח)/.test(detectionText)
     ? "כן"
     : "לא";
 
