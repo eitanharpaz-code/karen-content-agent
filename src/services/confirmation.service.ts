@@ -697,3 +697,27 @@ export const extractRestoreTarget = (message: string): string | null => {
 
   return null;
 };
+
+// ===== Bridge (bank→gantt) — step 1, 12.7.2026 =====
+// Classifies Karen's answer to the post-save scheduling offer
+// ("לשבץ אותו כבר, או להשאיר בבנק בינתיים?").
+// Exported so QA can exercise it behaviorally.
+// Order matters: rejection/keep phrasings are checked BEFORE schedule
+// phrasings, so "לא לשבץ" and "כן אבל לא עכשיו" resolve to "keep".
+export type BridgeOfferAnswer = "schedule" | "keep" | "unclear";
+
+const BRIDGE_KEEP_PHRASES = [
+  "להשאיר", "בבנק", "בינתיים", "לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "עוד לא", "עזבי",
+];
+const BRIDGE_SCHEDULE_PHRASES = ["לשבץ", "שבצי", "תשבצי", "נשבץ", "קדימה", "יאללה", "בטח", "סבבה"];
+
+export const classifyBridgeOfferAnswer = (message: string): BridgeOfferAnswer => {
+  const raw = message.trim().toLowerCase();
+
+  if (raw.startsWith("לא") || isRejectionMessage(message)) return "keep";
+  if (BRIDGE_KEEP_PHRASES.some((phrase) => raw.includes(phrase))) return "keep";
+  if (isConfirmationMessage(message) || BRIDGE_SCHEDULE_PHRASES.some((phrase) => raw.includes(phrase))) {
+    return "schedule";
+  }
+  return "unclear";
+};

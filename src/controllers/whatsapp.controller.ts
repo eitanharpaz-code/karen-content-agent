@@ -40,6 +40,7 @@ import {
   extractRestoreTarget,
   isApproveForProductionCommand,
   extractApproveTarget,
+  classifyBridgeOfferAnswer,
   getTrendText,
 } from "../services/confirmation.service";
 import {
@@ -1558,6 +1559,116 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       );
       }
     }
+    // Bridge (bank→gantt, step 1 — 12.7.2026): Karen just saved an idea and
+    // was offered a nearby free gantt date. "Schedule" chains the two
+    // EXISTING flows (approve-for-production + gantt write) with the agreed
+    // date — no question is asked twice, and the existing upload-time and
+    // collision flows take over from there. "Keep" leaves the idea in the
+    // bank, full stop. See docs/feature-bank-to-gantt-bridge.md.
+    if (pendingQuestion?.questionType === "bridge_offer") {
+      const { contentName, date, dayName } = pendingQuestion.context as any;
+      const isExplicitCommandDuringBridgeOffer =
+        isArchiveCommand(incomingText) ||
+        isApproveForProductionCommand(incomingText) ||
+        isRestoreCommand(incomingText) ||
+        isDeadlineUpdate(incomingText);
+
+      if (isExplicitCommandDuringBridgeOffer) {
+        clearPendingQuestion(sender);
+        console.log(`[Route Debug] bridge_offer: explicit command detected, falling through`);
+      } else {
+        const bridgeAnswer = classifyBridgeOfferAnswer(incomingText);
+
+        if (bridgeAnswer === "keep") {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "בסדר גמור, הוא נשאר בבנק. אפשר לקדם אותו מתי שבא לך.");
+          return res.status(200).json({ status: "bridge_offer_kept", sender });
+        }
+
+        if (bridgeAnswer === "schedule") {
+          clearPendingQuestion(sender);
+          const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+          let approveResult;
+          try {
+            approveResult = await approveContentForProduction(spreadsheetId, contentName);
+          } catch (approveError) {
+            await safeSendWhatsAppMessage(
+              sender,
+              `משהו השתבש בהעברה להפקה. הרעיון נשאר בבנק — אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`
+            );
+            return res.status(200).json({ status: "bridge_offer_approve_failed", sender });
+          }
+
+          // Same chain as the confirm_gantt_write "yes" branch: collision
+          // check → addRowToGantt → sort → existing upload-time question.
+          const collision = await isGanttDateTaken(spreadsheetId, date);
+          if (collision.taken) {
+            const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+            const shortNew = contentName.split(/\s+/).slice(0, 6).join(" ");
+            storePendingQuestion(sender, {
+              questionType: "gantt_collision",
+              context: {
+                newContentId: approveResult.contentId,
+                newContentName: contentName,
+                newDate: date,
+                newDayName: dayName,
+                existingContentId: collision.existingContentId,
+                existingName: collision.existingName,
+                ganttStatus: "בתכנון",
+              },
+            });
+            await safeSendWhatsAppMessage(
+              sender,
+              `העברתי את "${shortNew}" להפקה, אבל בינתיים ב-${date} כבר נתפס "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`
+            );
+            return res.status(200).json({ status: "bridge_offer_collision", sender });
+          }
+
+          const productionDeadline = await addRowToGantt(
+            spreadsheetId,
+            approveResult.contentId,
+            contentName,
+            date,
+            dayName,
+            "",
+            "בתכנון"
+          );
+
+          await sortGanttByDate(spreadsheetId);
+
+          storePendingQuestion(sender, {
+            questionType: "gantt_upload_time",
+            context: { contentId: approveResult.contentId, contentName, date },
+          });
+
+          const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              `מעולה — העברתי את "${shortConfirmName}" להפקה ושיבצתי לגאנט ב-${date} (יום ${dayName}), כבתכנון.`,
+              productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
+              "",
+              "באיזו שעה לתכנן את ההעלאה?",
+            ].filter(Boolean).join("\n")
+          );
+          return res.status(200).json({ status: "bridge_offer_scheduled", sender });
+        }
+
+        // Unclear: re-ask once (refreshes the modal state and its TTL).
+        storePendingQuestion(sender, { questionType: "bridge_offer", context: pendingQuestion.context });
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            `לא בטוחה אם לשבץ את "${contentName.split(/\s+/).slice(0, 6).join(" ")}" ל-${date}.`,
+            "",
+            "אפשר לענות: לשבץ, או להשאיר בבנק.",
+          ].join("\n")
+        );
+        return res.status(200).json({ status: "bridge_offer_unclear", sender });
+      }
+    }
+
     if (pendingQuestion?.questionType === "confirm_gantt_write") {
       const { contentId, contentName, date, dayName, ganttStatus, monthlyPlanning } = pendingQuestion.context as any;
       const isExplicitCommandWhileConfirmingGanttWrite =
@@ -2013,17 +2124,59 @@ await safeSendWhatsAppMessage(
           // STEP 2: Production task created manually when content is approved for production
           const taskCreationFailed = false;
 
-         // STEP 3: Send WhatsApp confirmation
+         // STEP 3: Send WhatsApp confirmation.
+          // Bridge (bank→gantt, step 1 — 12.7.2026): if a nearby gantt date
+          // is free this month, the passive "here's the command" tail is
+          // replaced with an active scheduling offer, managed as a
+          // bridge_offer pendingQuestion. Same date-finding as the
+          // approve-for-production flow (v1 scope: current month). If
+          // nothing is free or the lookup fails — message unchanged, zero
+          // noise.
+          let bridgeOfferLine: string | null = null;
+          try {
+            const bridgeNow = new Date();
+            const bridgeFirstOfMonth = `01/${String(bridgeNow.getMonth() + 1).padStart(2, "0")}/${bridgeNow.getFullYear()}`;
+            const bridgeAvailable = await findAvailableDatesInMonth(spreadsheetId, bridgeFirstOfMonth);
+            const bridgeEarliest = new Date();
+            bridgeEarliest.setDate(bridgeEarliest.getDate() + 1);
+            bridgeEarliest.setHours(0, 0, 0, 0);
+            const bridgeFuture = bridgeAvailable.filter((candidateDate) => {
+              const parts = candidateDate.split("/");
+              const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+              return parsed >= bridgeEarliest;
+            });
+            if (bridgeFuture.length > 0) {
+              const bridgeDate = bridgeFuture[0];
+              const bridgeDayName = getHebrewDayName(bridgeDate);
+              storePendingQuestion(sender, {
+                questionType: "bridge_offer",
+                context: {
+                  contentId,
+                  contentName: pendingDraft.shortName,
+                  date: bridgeDate,
+                  dayName: bridgeDayName,
+                },
+              });
+              bridgeOfferLine = `ודרך אגב — יש יום ${bridgeDayName} (${bridgeDate}) פנוי בגאנט. לשבץ אותו כבר, או להשאיר בבנק בינתיים?`;
+            }
+          } catch (bridgeError) {
+            console.error(`[Bridge] free-date lookup failed, keeping passive tail: ${bridgeError}`);
+          }
+
           const replyText = [
             "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
             "",
             `שם: ${pendingDraft.shortName}`,
             `מספר פנימי: ${contentId}`,
             "",
-            "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
-            "",
-            "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
-            `תוסיפי את ${pendingDraft.shortName} להפקה`,
+            ...(bridgeOfferLine
+              ? [bridgeOfferLine]
+              : [
+                  "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
+                  "",
+                  "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
+                  `תוסיפי את ${pendingDraft.shortName} להפקה`,
+                ]),
           ].join("\n");
 
 await safeSendWhatsAppMessage(sender, replyText);
