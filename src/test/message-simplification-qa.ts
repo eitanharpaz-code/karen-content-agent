@@ -45,9 +45,10 @@ const ideasOutput = formatOpenIdeasResponse([
 check("bank display omits the content ID", !ideasOutput.includes("GEN-001") && !ideasOutput.includes("MKB-001"));
 check("bank display omits category", !ideasOutput.includes("שמלות") && !ideasOutput.includes("היריון"));
 check("bank display omits priority label", !ideasOutput.includes("עדיפות נמוך"));
-check("bank display keeps the idea name", ideasOutput.includes("ביזנס די לעוני"));
-check("bank display keeps the summary", ideasOutput.includes("קשה לחזור לאקונומי"));
-check("bank display has no leftover empty parentheses", !ideasOutput.includes("()") && !ideasOutput.includes("( )"));
+check("bank display shows the idea name in bold", ideasOutput.includes("*ביזנס די לעוני*"));
+check("bank display omits the summary (scannable list)", !ideasOutput.includes("קשה לחזור לאקונומי"));
+check("bank display has no leftover parentheses", !ideasOutput.includes("()") && !ideasOutput.includes("( )"));
+check("bank display separates ideas with a blank line", ideasOutput.includes("*ביזנס די לעוני*\n\n"));
 
 // --- 3. Flexible upload-time parsing (behavioral, mirrors the controller regex) ---
 const timeRegex = /(?:^|[^\d])([01]?\d|2[0-3])(?::([0-5]\d))?(?![\d:])/;

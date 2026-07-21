@@ -928,17 +928,14 @@ export const formatOpenIdeasResponse = (ideas: Array<{
     return "אין כרגע רעיונות פתוחים בבנק.";
   }
 
-  // Bank display cleanup (21.7.2026): drop the "(GEN-001 / כללי / עדיפות
-  // נמוך)" parenthetical — Karen doesn't recognize IDs, categories were
-  // retired, and priority is internal. Show just the name and its direction,
-  // which is what she actually reads.
-  const lines = ideas.slice(0, 10).map((idea) => {
-    const summary = idea.summary ? `\n  ${idea.summary}` : "";
-    return `- ${idea.idea}${summary}`;
-  });
+  // Bank display (21.7.2026): scannable list. Name in bold, one blank line
+  // between ideas for readability, no summary/ID/category/priority — Karen
+  // scans names and asks "תזכירי לי על מה X" when she wants detail. Bold uses
+  // WhatsApp's single-asterisk syntax, same as the brief.
+  const lines = ideas.slice(0, 10).map((idea) => `*${idea.idea}*`);
 
-  const suffix = ideas.length > 10 ? `\n...ו${ideas.length - 10} עוד` : "";
-  return `יש לך ${ideas.length} רעיונות פתוחים:\n${lines.join("\n")}${suffix}`;
+  const suffix = ideas.length > 10 ? `\n\n...ו${ideas.length - 10} עוד` : "";
+  return `יש לך ${ideas.length} רעיונות פתוחים:\n\n${lines.join("\n\n")}${suffix}`;
 };
 
 export const formatVisibilityResponse = (tasks: ProductionTaskRow[], intent: VisibilityIntent): string => {
