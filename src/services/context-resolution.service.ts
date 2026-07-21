@@ -19,8 +19,19 @@ import { getRecentHistory } from "./conversation-memory.service";
 // like this, so this gate keeps us from second-guessing good matches.
 const PRONOUN_ONLY = /^(?:את\s+)?(?:אותו|אותה|אותם|אותן|זה|זו|הוא|היא|ההוא|ההיא)(?:\s+(?:גם|הזה|הזאת|ההוא|ההיא))?$/;
 
+// The status detector normalizes final-form Hebrew letters (ם→מ, ן→נ, ...),
+// so by the time contentName reaches us "אותו גם" has become "אותו גמ".
+// Re-apply final forms before matching so both spellings pass the gate.
+const restoreFinalForms = (s: string): string =>
+  s
+    .replace(/מ(?=\s|$)/g, "ם")
+    .replace(/נ(?=\s|$)/g, "ן")
+    .replace(/צ(?=\s|$)/g, "ץ")
+    .replace(/פ(?=\s|$)/g, "ף")
+    .replace(/כ(?=\s|$)/g, "ך");
+
 export const looksLikePronounReference = (contentName: string): boolean => {
-  return PRONOUN_ONLY.test((contentName || "").trim());
+  return PRONOUN_ONLY.test(restoreFinalForms((contentName || "").trim()));
 };
 
 // Returns the resolved content name, or null if it can't be determined

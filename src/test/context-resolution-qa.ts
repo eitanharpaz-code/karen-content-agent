@@ -13,7 +13,9 @@ import { looksLikePronounReference } from "../services/context-resolution.servic
 let pass = 0, fail = 0;
 const check = (n: string, ok: boolean) => { ok ? pass++ : fail++; console.log(`${ok?"✅":"❌"} ${n}`); };
 
-const pronouns = ["אותו גם", "אותו", "אותה", "את אותו", "זה", "אותם", "ההוא"];
+// Includes normalized final-form spellings ("אותו גמ") — the detector strips
+// final letters before this gate sees the text.
+const pronouns = ["אותו גם", "אותו גמ", "אותו", "אותה", "את אותו", "זה", "אותם", "אותמ", "ההוא"];
 for (const p of pronouns) check(`pronoun detected: "${p}"`, looksLikePronounReference(p) === true);
 
 const names = ["סקויה", "בת זוג של אוהד", "שתפ עם יקב בזלת הגולן", "ביזנס די לעוני", "אותו סרטון על סקויה"];
