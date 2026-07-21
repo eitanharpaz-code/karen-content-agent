@@ -721,3 +721,48 @@ export const classifyBridgeOfferAnswer = (message: string): BridgeOfferAnswer =>
   }
   return "unclear";
 };
+
+// ===== Gantt date change (priority 1 from live logs, 21.7.2026) =====
+// Karen tried five times to move a scheduled gantt item to another date
+// ("שנה תאריך של X ל-29/7", "X שנה ל-29/07/2026") and every attempt fell
+// through to no_pending_for_edit — the detector simply didn't exist.
+// Note: evaluated only under a clean state (no draft/question pending) — the
+// caller guarantees this. Under a clean state a move verb + target date
+// unambiguously means "move a scheduled gantt item", because field edits
+// ("שנה טון") only happen while a draft is open. That state separation is
+// what lets us accept Karen's natural phrasing without keyword requirements.
+const GANTT_MOVE_VERBS = ["שנה", "תשנה", "שני", "תשני", "תזיז", "תזיזי", "הזז", "הזיזי", "העבר", "העברי", "תעביר", "תעבירי"];
+const GANTT_DATE_PATTERN = /(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/;
+
+export const isGanttDateChange = (message: string): boolean => {
+  const raw = message.trim();
+  const hasVerb = GANTT_MOVE_VERBS.some((v) => raw.includes(v));
+  const hasTargetDate = GANTT_DATE_PATTERN.test(raw);
+  return hasVerb && hasTargetDate;
+};
+
+export const extractGanttDateChange = (
+  message: string
+): { contentName: string; targetDate: string } | null => {
+  const raw = message.trim();
+  const dateMatch = raw.match(GANTT_DATE_PATTERN);
+  if (!dateMatch) return null;
+  const targetDate = dateMatch[0];
+
+  let name = raw;
+  name = name.replace(new RegExp(`ל[-\\s]?${targetDate.replace(/[.]/g, "\\.")}`), " ");
+  name = name.replace(targetDate, " ");
+  for (const verb of GANTT_MOVE_VERBS) name = name.replace(new RegExp(`(^|\\s)${verb}(\\s|$)`, "g"), " ");
+  name = name
+    .replace(/תאריך/g, " ")
+    .replace(/בגאנט/g, " ")
+    .replace(/גאנט/g, " ")
+    .replace(/(^|\s)של(\s|$)/g, " ")
+    .replace(/(^|\s)את(\s|$)/g, " ")
+    .replace(/(^|\s)ל(\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!name) return null;
+  return { contentName: name, targetDate };
+};

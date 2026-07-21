@@ -39,6 +39,8 @@ import {
   isRestoreCommand,
   extractRestoreTarget,
   isApproveForProductionCommand,
+  isGanttDateChange,
+  extractGanttDateChange,
   extractApproveTarget,
   classifyBridgeOfferAnswer,
   getTrendText,
@@ -1571,6 +1573,67 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // date — no question is asked twice, and the existing upload-time and
     // collision flows take over from there. "Keep" leaves the idea in the
     // bank, full stop. See docs/feature-bank-to-gantt-bridge.md.
+    // Gantt date-change collision follow-up (21.7.2026): Karen was told her
+    // target date is taken and asked whether to find another. "כן" → nearest
+    // free date in the month (step A: simple; the 2-per-week + 2-day-gap
+    // smart logic is step B). A date in her reply → try that date directly.
+    if (pendingQuestion?.questionType === "gantt_date_change_collision") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      const explicitDate = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+      if (explicitDate) {
+        const normalized = normalizeUserDateInput(explicitDate[0]);
+        if (!normalized) {
+          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב אותו כמו 29/07/2026.`);
+          return res.status(200).json({ status: "gantt_date_change_retry_bad_date", sender });
+        }
+        const clash = await isGanttDateTaken(spreadsheetId, normalized);
+        if (clash.taken && clash.existingContentId !== ctx.contentId) {
+          const shortExisting = clash.existingName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(sender, `גם ה-${normalized} תפוס (${shortExisting}). אפשר לתת לי תאריך אחר, או לכתוב כן ואמצא פנוי.`);
+          return res.status(200).json({ status: "gantt_date_change_still_taken", sender });
+        }
+        const dn = getHebrewDayName(normalized);
+        await updateGanttRowDate(spreadsheetId, ctx.contentId, normalized, dn);
+        await sortGanttByDate(spreadsheetId);
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `הזזתי את "${ctx.contentName}" ל-${normalized} (יום ${dn}).`);
+        return res.status(200).json({ status: "gantt_date_changed", sender });
+      }
+
+      if (isConfirmationMessage(incomingText)) {
+        const now = new Date();
+        const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
+        const earliest = new Date(); earliest.setDate(earliest.getDate() + 1); earliest.setHours(0,0,0,0);
+        const future = available.filter((d) => {
+          const p = d.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= earliest;
+        });
+        if (future.length === 0) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי החודש. אפשר לתת לי תאריך ספציפי ואבדוק אותו.`);
+          return res.status(200).json({ status: "gantt_date_change_no_free", sender });
+        }
+        const chosen = future[0];
+        const dn = getHebrewDayName(chosen);
+        await updateGanttRowDate(spreadsheetId, ctx.contentId, chosen, dn);
+        await sortGanttByDate(spreadsheetId);
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `מצאתי — הזזתי את "${ctx.contentName}" ל-${chosen} (יום ${dn}).`);
+        return res.status(200).json({ status: "gantt_date_changed", sender });
+      }
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `בסדר, השארתי את "${ctx.contentName}" בתאריך הנוכחי.`);
+        return res.status(200).json({ status: "gantt_date_change_cancelled", sender });
+      }
+
+      await safeSendWhatsAppMessage(sender, `אפשר לענות כן (ואמצא תאריך פנוי), לתת לי תאריך אחר, או לכתוב ביטול.`);
+      return res.status(200).json({ status: "gantt_date_change_collision_unclear", sender });
+    }
+
     if (pendingQuestion?.questionType === "bridge_offer") {
       const { contentName, date, dayName } = pendingQuestion.context as any;
       const isExplicitCommandDuringBridgeOffer =
@@ -3241,6 +3304,65 @@ if (isArchiveCommand(incomingText)) {
       const replyText = `עדכנתי. הדדליין של "${exactMatch.row[1]}" הוא עכשיו ${deadlineUpdate.deadline}.`;
       await safeSendWhatsAppMessage(sender, replyText);
       return res.status(200).json({ status: "deadline_updated", sender });
+    }
+
+    // ===== GANTT DATE CHANGE (priority 1 from live logs, 21.7.2026) =====
+    // Clean state here (all pending handled above), so a move verb + target
+    // date means "move a scheduled item". Reuses findProductionTaskByName,
+    // isGanttDateTaken, updateGanttRowDate + sortGanttByDate. On a taken
+    // target it STOPS and asks — never auto-displaces (that's step B).
+    if (isGanttDateChange(incomingText)) {
+      const change = extractGanttDateChange(incomingText);
+      if (change) {
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const normalizedTarget = normalizeUserDateInput(change.targetDate);
+        if (!normalizedTarget) {
+          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך "${change.targetDate}". אפשר לכתוב אותו כמו 29/07/2026.`);
+          return res.status(200).json({ status: "gantt_date_change_bad_date", sender });
+        }
+
+        const matchResult = await findProductionTaskByName(spreadsheetId, change.contentName);
+        if (!matchResult) {
+          await safeSendWhatsAppMessage(sender, `לא מצאתי בגאנט תוכן בשם "${change.contentName}". אפשר לבדוק מה יש עם: מה בגאנט`);
+          return res.status(200).json({ status: "gantt_date_change_not_found", sender });
+        }
+        if ("ambiguous" in matchResult && matchResult.ambiguous) {
+          await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
+          return res.status(200).json({ status: "gantt_date_change_ambiguous", sender });
+        }
+        const exactMatch = matchResult as ProductionTaskMatch;
+        const targetContentId = (exactMatch.row[0] || "").toString().trim();
+
+        const ganttEntry = await findGanttEntryByContentId(spreadsheetId, targetContentId);
+        if (!ganttEntry) {
+          await safeSendWhatsAppMessage(sender, `"${change.contentName}" עדיין לא משובץ בגאנט, אז אין תאריך להזיז. אפשר לשבץ אותו קודם.`);
+          return res.status(200).json({ status: "gantt_date_change_not_scheduled", sender });
+        }
+
+        const collision = await isGanttDateTaken(spreadsheetId, normalizedTarget);
+        if (collision.taken && collision.existingContentId !== targetContentId) {
+          // Safe stop — never auto-displace. Offer to find another date.
+          storePendingQuestion(sender, {
+            questionType: "gantt_date_change_collision",
+            context: { contentId: targetContentId, contentName: ganttEntry.name, targetDate: normalizedTarget },
+          });
+          const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(
+            sender,
+            `ה-${normalizedTarget} כבר תפוס על ידי "${shortExisting}".\nרוצה שאמצא תאריך פנוי אחר קרוב? אפשר לענות כן, או לתת לי תאריך אחר.`
+          );
+          return res.status(200).json({ status: "gantt_date_change_collision", sender });
+        }
+
+        const targetDayName = getHebrewDayName(normalizedTarget);
+        await updateGanttRowDate(spreadsheetId, targetContentId, normalizedTarget, targetDayName);
+        await sortGanttByDate(spreadsheetId);
+        await safeSendWhatsAppMessage(
+          sender,
+          `הזזתי את "${ganttEntry.name}" ל-${normalizedTarget} (יום ${targetDayName}).`
+        );
+        return res.status(200).json({ status: "gantt_date_changed", sender });
+      }
     }
 
     // ===== PRODUCTION STATUS UPDATE CHECK =====
