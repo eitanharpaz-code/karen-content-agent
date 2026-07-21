@@ -2299,6 +2299,76 @@ export const findAvailableDatesInMonth = async (
   return available;
 };
 
+// ===== Smart gantt date suggestion (step B, 21.7.2026) =====
+// Karen's cadence rules apply to ORGANIC REELS ONLY. Stories, posts, and any
+// collaboration are free — they neither count toward the cap nor block days,
+// and multiple content types may share a day.
+//   Rule 1: at most 2 organic reels per week (Sun-Sat). A week already
+//           holding 2 is skipped.
+//   Rule 2: at least a 2-day gap between organic reels — no organic reel the
+//           day before/after another. (Two reels the same day fail this too.)
+// "Organic reel" = column E (content type) is ריל AND column J (collab) is
+// "" or "לא". Returns rule-satisfying free dates sorted by proximity; falls
+// back to the plain free-date list if all are filtered, so the agent is
+// never stuck with no offer.
+const startOfGanttWeek = (d: Date): Date => {
+  const s = new Date(d);
+  s.setDate(s.getDate() - s.getDay());
+  s.setHours(0, 0, 0, 0);
+  return s;
+};
+
+export const findSmartGanttDate = async (
+  spreadsheetId: string,
+  requestedDate: string,
+  options: { forNewItemType?: string; forNewItemIsOrganic?: boolean } = {}
+): Promise<string[]> => {
+  const plainAvailable = await findAvailableDatesInMonth(spreadsheetId, requestedDate);
+
+  const typeRaw = (options.forNewItemType || "").trim();
+  const newIsReel = typeRaw === "" || typeRaw === "ריל";
+  const newIsOrganic = options.forNewItemIsOrganic !== false;
+  if (!newIsReel || !newIsOrganic) return plainAvailable;
+
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:J`,
+  });
+  const rows = (response.data.values || []).slice(1);
+
+  const organicReelDates: Date[] = [];
+  for (const row of rows) {
+    const date = parseDateFromSheet((row[1] || "").toString().trim());
+    if (!date) continue;
+    const contentType = (row[4] || "").toString().trim();
+    const collab = (row[9] || "").toString().trim();
+    const isOrganicReel = contentType === "ריל" && (collab === "" || collab === "לא");
+    if (isOrganicReel) organicReelDates.push(date);
+  }
+
+  const reelsPerWeek = new Map<number, number>();
+  for (const d of organicReelDates) {
+    const key = startOfGanttWeek(d).getTime();
+    reelsPerWeek.set(key, (reelsPerWeek.get(key) || 0) + 1);
+  }
+
+  const passesRules = (candidate: string): boolean => {
+    const d = parseDateFromSheet(candidate);
+    if (!d) return false;
+    if ((reelsPerWeek.get(startOfGanttWeek(d).getTime()) || 0) >= 2) return false;
+    for (const rd of organicReelDates) {
+      const diffDays = Math.abs((d.getTime() - rd.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays < 2) return false;
+    }
+    return true;
+  };
+
+  const smart = plainAvailable.filter(passesRules);
+  return smart.length > 0 ? smart : plainAvailable;
+};
+
 // Update a gantt row's date and day
 export const updateGanttRowDate = async (
   spreadsheetId: string,

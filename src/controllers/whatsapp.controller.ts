@@ -82,6 +82,7 @@ approveContentForProduction,
   updateGanttUploadTime,
   isGanttDateTaken,
   findAvailableDatesInMonth,
+  findSmartGanttDate,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
   saveFastTrackContent,
@@ -2205,7 +2206,13 @@ await safeSendWhatsAppMessage(
           try {
             const bridgeNow = new Date();
             const bridgeFirstOfMonth = `01/${String(bridgeNow.getMonth() + 1).padStart(2, "0")}/${bridgeNow.getFullYear()}`;
-            const bridgeAvailable = await findAvailableDatesInMonth(spreadsheetId, bridgeFirstOfMonth);
+            // Step B (21.7.2026): smart date suggestion. Cadence rules
+            // (2 organic reels/week, 2-day gap) bind only organic reels;
+            // findSmartGanttDate filters by the draft's content type and
+            // falls back to the plain list if nothing qualifies.
+            const bridgeAvailable = await findSmartGanttDate(spreadsheetId, bridgeFirstOfMonth, {
+              forNewItemType: pendingDraft.contentType,
+            });
             const bridgeEarliest = new Date();
             bridgeEarliest.setDate(bridgeEarliest.getDate() + 1);
             bridgeEarliest.setHours(0, 0, 0, 0);
