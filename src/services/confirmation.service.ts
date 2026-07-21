@@ -570,17 +570,26 @@ export const isApproveForProductionCommand = (message: string): boolean => {
 };
 
 export const extractApproveTarget = (message: string): string | null => {
-  const patterns = [
-    /תוסיפי את (.+?) להפקה/i,
-    /תוסיף את (.+?) להפקה/i,
-    /להעביר את (.+?) להפקה/i,
-    /תעבירי את (.+?) להפקה/i,
-  ];
-  for (const pattern of patterns) {
-    const match = message.match(pattern);
-    if (match) return match[1].trim();
+  // Expanded 21.7.2026: mirror the wider verb list in
+  // isApproveForProductionCommand so "תעביר את בת זוג של אוהד להפקה" (and
+  // other inflections) yield the content name instead of null -> parse error.
+  const raw = message.trim();
+  const VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העברי", "העבר", "מעבירה", "מעבירי", "מעביר", "לאשר", "אשרי", "אשר"];
+
+  let name = raw;
+  name = name.replace(/מאושר(ת)?/g, " ").replace(/להפקה/g, " ").replace(/הפקה/g, " ");
+  for (const v of VERBS) {
+    const re = new RegExp(`(^|\\s)${v}(\\s|$)`);
+    if (re.test(name)) { name = name.replace(re, " "); break; }
   }
-  return null;
+  name = name
+    .replace(/(^|\s)את(\s|$)/g, " ")
+    .replace(/(^|\s)הרעיון(\s|$)/g, " ")
+    .replace(/(^|\s)רעיון(\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return name.length > 0 ? name : null;
 };
 export const extractArchiveTarget = (message: string): string | null => {
   // Patterns ordered from most specific to least. The "with את" patterns
