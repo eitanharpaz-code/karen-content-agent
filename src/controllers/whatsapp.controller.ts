@@ -2302,7 +2302,8 @@ if (
   !isProductionStatusUpdate(incomingText) &&
   !isArchiveCommand(incomingText) &&
   !isApproveForProductionCommand(incomingText) &&
-  !isRestoreCommand(incomingText)
+  !isRestoreCommand(incomingText) &&
+  !isGanttDateChange(incomingText)
 ) {
   const pendingDraft = getPendingConfirmation(sender);
 
