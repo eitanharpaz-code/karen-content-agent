@@ -3137,6 +3137,37 @@ const replyText = [
       }
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
+      // Ambiguous-name check (name-recognition round B, 21.7.2026): before
+      // approving, see how many bank ideas match Karen's (often shortened)
+      // name. "מכבי" matches both "בת זוג של אוהד מכבי" and "בייבי מכבי" —
+      // approveContentForProduction would silently pick the first. Instead,
+      // if 2+ match, show ONLY those and ask which, reusing approve_pick_idea.
+      // Exact-name matches are treated as unambiguous (she named it fully).
+      try {
+        const bankIdeas = await getOpenContentIdeas(spreadsheetId);
+        const normalizedTarget = target.trim();
+        const exactHit = bankIdeas.find((i: any) => (i.idea || "").trim() === normalizedTarget);
+        if (!exactHit) {
+          const partialMatches = bankIdeas.filter((i: any) =>
+            (i.idea || "").includes(normalizedTarget) || normalizedTarget.includes((i.idea || "").trim())
+          );
+          if (partialMatches.length > 1) {
+            storePendingQuestion(sender, {
+              questionType: "approve_pick_idea",
+              context: { attemptedName: target },
+            });
+            const lines = partialMatches.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
+            await safeSendWhatsAppMessage(
+              sender,
+              [`מצאתי כמה רעיונות שמתאימים ל"${target}". לאיזה מהם התכוונת?`, "", lines].join("\n")
+            );
+            return res.status(200).json({ status: "approve_ambiguous_pick", sender });
+          }
+        }
+      } catch (ambiguityError) {
+        console.error(`[Approve] ambiguity pre-check failed, proceeding normally: ${ambiguityError}`);
+      }
+
       let result;
       try {
         result = await approveContentForProduction(spreadsheetId, target);
