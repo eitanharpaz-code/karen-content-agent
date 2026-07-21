@@ -1578,6 +1578,43 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // target date is taken and asked whether to find another. "כן" → nearest
     // free date in the month (step A: simple; the 2-per-week + 2-day-gap
     // smart logic is step B). A date in her reply → try that date directly.
+    // Bank->production pick follow-up (21.7.2026): Karen was shown the open
+    // ideas and replies with a name. Re-run approve on her pick. If it still
+    // isn't found, re-offer once rather than looping silently.
+    if (pendingQuestion?.questionType === "approve_pick_idea") {
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "בסדר, לא העברתי כלום. אפשר לחזור לזה מתי שבא לך.");
+        return res.status(200).json({ status: "approve_pick_cancelled", sender });
+      }
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      try {
+        const picked = await approveContentForProduction(spreadsheetId, incomingText.trim());
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${picked.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
+        const now = new Date();
+        const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const available = await findSmartGanttDate(spreadsheetId, firstOfMonth, {});
+        const earliest = new Date(); earliest.setDate(earliest.getDate() + 1); earliest.setHours(0,0,0,0);
+        const future = available.filter((d) => { const p = d.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= earliest; });
+        if (future.length > 0) {
+          const suggested = future[0];
+          const dn = getHebrewDayName(suggested);
+          storePendingQuestion(sender, {
+            questionType: "confirm_gantt_write",
+            context: { contentId: picked.contentId, contentName: picked.name, date: suggested, dayName: dn, ganttStatus: "בתכנון" },
+          });
+          await safeSendWhatsAppMessage(sender, [`מצאתי לו חור פנוי בגאנט: ${suggested}, יום ${dn}.`, "", `לשבץ את "${picked.name}" לתאריך הזה?`].join("\n"));
+        }
+        return res.status(200).json({ status: "approve_pick_done", sender });
+      } catch (pickError) {
+        const openIdeas = await getOpenContentIdeas(spreadsheetId);
+        const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
+        await safeSendWhatsAppMessage(sender, [`עדיין לא מצאתי. אפשר לנסות שוב עם אחד מאלה:`, "", ideaLines].join("\n"));
+        return res.status(200).json({ status: "approve_pick_retry", sender });
+      }
+    }
+
     if (pendingQuestion?.questionType === "gantt_date_change_collision") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -3100,8 +3137,26 @@ const replyText = [
       try {
         result = await approveContentForProduction(spreadsheetId, target);
       } catch (approveError) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
-        return res.status(200).json({ status: "approve_not_found", sender });
+        // Bank->production pick flow (priority 3 from live logs, 21.7.2026):
+        // Karen refers to a bank idea by a shortened/approximate name and it
+        // isn't found. Instead of "try a more exact name" (which made her
+        // guess), show the open ideas and let her pick — she just replies
+        // with a name and we approve that one. No duplicate is ever created.
+        const openIdeas = await getOpenContentIdeas(spreadsheetId);
+        if (openIdeas.length === 0) {
+          await safeSendWhatsAppMessage(sender, `לא מצאתי את "${target}" בבנק, ואין כרגע רעיונות פתוחים להעביר.`);
+          return res.status(200).json({ status: "approve_not_found_empty", sender });
+        }
+        storePendingQuestion(sender, {
+          questionType: "approve_pick_idea",
+          context: { attemptedName: target },
+        });
+        const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
+        await safeSendWhatsAppMessage(
+          sender,
+          [`לא מצאתי את "${target}" בבנק. לאיזה מהרעיונות התכוונת?`, "", ideaLines].join("\n")
+        );
+        return res.status(200).json({ status: "approve_pick_idea_offered", sender });
       }
 
       await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${result.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);

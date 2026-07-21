@@ -555,12 +555,18 @@ export const isArchiveCommand = (message: string): boolean => {
 };
 export const isApproveForProductionCommand = (message: string): boolean => {
   const raw = message.trim();
-  return (
-    (raw.includes("תוסיפי") && raw.includes("להפקה")) ||
-    (raw.includes("תוסיף") && raw.includes("להפקה")) ||
-    (raw.includes("להעביר") && raw.includes("להפקה")) ||
-    (raw.includes("תעבירי") && raw.includes("להפקה"))
-  );
+  // Expanded 21.7.2026 from the live logs: Karen used male/other inflections
+  // ("תעביר", "העבר", "מעביר") and the "מאושר להפקה" phrasing, none of which
+  // the original four-form list caught — so every attempt fell through to
+  // draft creation and made a duplicate. A move verb + production mention, OR
+  // an approval word + production mention, now all route here.
+  const MOVE_VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העבר", "העברי", "מעביר", "מעבירה", "מעבירי"];
+  const APPROVE_WORDS = ["מאושר", "מאושרת", "אשר", "אשרי", "לאשר"];
+  const mentionsProduction = raw.includes("להפקה") || raw.includes("הפקה");
+  if (!mentionsProduction) return false;
+  const hasMoveVerb = MOVE_VERBS.some((v) => raw.includes(v));
+  const hasApproveWord = APPROVE_WORDS.some((w) => raw.includes(w));
+  return hasMoveVerb || hasApproveWord;
 };
 
 export const extractApproveTarget = (message: string): string | null => {
