@@ -4,6 +4,10 @@ import { createContentDraft, askClaudeForEdit } from "../services/content.servic
 import { startRoutingTrace, finishRoutingTrace } from "../services/routing-trace.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
+import {
+  resolvePronounToRecentContent,
+  looksLikePronounReference,
+} from "../services/context-resolution.service";
 import { fetchArchivableCandidates, findBestFuzzyIdeaMatch } from "../services/fuzzy-match.service";
 import {
   humanizeDraftPreview,
@@ -3453,9 +3457,27 @@ if (isArchiveCommand(incomingText)) {
             console.log(`[Fast Track] Explicit new content detected, skipping production matching for: "${statusUpdate.contentName}"`);
           }
 
-          const matchResult = explicitFastTrack
+          let matchResult = explicitFastTrack
             ? null
             : await findProductionTaskByName(spreadsheetId, statusUpdate.contentName);
+
+          // Context resolution (name-recognition round, step A — 21.7.2026):
+          // "ערכתי אותו גם" after "צילמתי את סקויה". If the extracted name is
+          // just a pronoun and nothing matched, resolve it against the
+          // conversation history (via Claude) and retry the lookup once. If
+          // resolution fails, fall through to the normal ask-again path — we
+          // never guess a wrong item.
+          if (!matchResult && !explicitFastTrack && looksLikePronounReference(statusUpdate.contentName)) {
+            const resolvedName = await resolvePronounToRecentContent(sender, statusUpdate.contentName);
+            if (resolvedName) {
+              console.log(`[Context] Resolved pronoun "${statusUpdate.contentName}" -> "${resolvedName}"`);
+              const retry = await findProductionTaskByName(spreadsheetId, resolvedName);
+              if (retry) {
+                matchResult = retry;
+                statusUpdate.contentName = resolvedName;
+              }
+            }
+          }
 
           if (!matchResult) {
             // Fast Track — תוכן לא קיים בהפקה, קרן צילמה ספונטנית
