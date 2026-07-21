@@ -255,13 +255,17 @@ const buildDraftPreviewMessage = (
     ? options.intro
     : [options.intro || "יש פה כיוון טוב."];
 
+  // Draft preview simplification (21.7.2026): from the real conversation
+  // logs, category/tone/priority are internal noise Karen never acts on —
+  // and after retiring topical categories, "קטגוריה: כללי" on every draft is
+  // pure clutter. Keep only what she cares about: name, content type, and the
+  // direction. Category/tone/priority still live in the sheet, just not shown.
   const lines = [
     ...introLines,
     "",
     options.previewLine || "ככה הייתי שומרת את זה כרגע:",
     "",
     `שם: ${draft.shortName}`,
-    `קטגוריה: ${displayCategory(draft.category)}`,
   ];
 
   const shouldIncludeContentType = options.includeContentType ?? true;
@@ -271,8 +275,6 @@ const buildDraftPreviewMessage = (
   }
 
   lines.push(
-    `טון: ${displayTone(draft.tone)}`,
-    `עדיפות: ${getDraftPriorityText(draft.priority)}`,
     "",
     "הכיוון בקצרה:",
     draft.summary
@@ -1536,12 +1538,16 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         return await continueMonthlyPlanning("בסדר, אפשר לעדכן שעה אחר כך ישירות בגיליון.");
       }
 
-      const timeMatch = rawTimeInput.match(/^([01]?\d|2[0-3])(?::([0-5]\d))?$/);
+      // Flexible time extraction (21.7.2026): Karen writes "ב-11:00",
+      // "בשעה 11:00", "ב11 ביום שישי" — all previously rejected because the
+      // old regex required the whole message to be ONLY the number. Now we
+      // extract the first HH or HH:MM occurrence from anywhere in the text.
+      const timeMatch = rawTimeInput.match(/(?:^|[^\d])([01]?\d|2[0-3])(?::([0-5]\d))?(?![\d:])/);
 
       if (!timeMatch) {
         await safeSendWhatsAppMessage(
           sender,
-          "לא קלטתי שעה תקינה. כתבי למשל 18:00 או 8:30. אם לא רוצה לקבוע שעה עכשיו, כתבי דלגי."
+          "לא קלטתי שעה תקינה. אפשר לכתוב פשוט את השעה — למשל 18:00, 8:30, או 11. אם לא רוצה לקבוע שעה עכשיו, כתבי דלגי."
         );
         return res.status(200).json({ status: "gantt_upload_time_invalid", sender });
       }

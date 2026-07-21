@@ -928,11 +928,13 @@ export const formatOpenIdeasResponse = (ideas: Array<{
     return "אין כרגע רעיונות פתוחים בבנק.";
   }
 
+  // Bank display cleanup (21.7.2026): drop the "(GEN-001 / כללי / עדיפות
+  // נמוך)" parenthetical — Karen doesn't recognize IDs, categories were
+  // retired, and priority is internal. Show just the name and its direction,
+  // which is what she actually reads.
   const lines = ideas.slice(0, 10).map((idea) => {
-    const category = idea.category ? ` / ${idea.category}` : "";
-    const priority = idea.priority ? ` / עדיפות ${idea.priority}` : "";
     const summary = idea.summary ? `\n  ${idea.summary}` : "";
-    return `- ${idea.idea} (${idea.contentId}${category}${priority})${summary}`;
+    return `- ${idea.idea}${summary}`;
   });
 
   const suffix = ideas.length > 10 ? `\n...ו${ideas.length - 10} עוד` : "";
