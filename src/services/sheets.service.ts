@@ -2369,6 +2369,53 @@ export const findSmartGanttDate = async (
   return smart.length > 0 ? smart : plainAvailable;
 };
 
+// Fast Lane step 2 helper (21.7.2026): list the organic reels scheduled in the
+// same week as a given date — the candidates Karen can push to make room for
+// an urgent trend. Stories/posts/collabs are excluded. Sorted by date.
+export const getOrganicReelsInWeek = async (
+  spreadsheetId: string,
+  referenceDate: string
+): Promise<Array<{ contentId: string; name: string; date: string; dayName: string }>> => {
+  const ref = parseDateFromSheet(referenceDate);
+  if (!ref) return [];
+  const weekStart = startOfGanttWeek(ref);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:J`,
+  });
+  const rows = (response.data.values || []).slice(1);
+
+  const result: Array<{ contentId: string; name: string; date: string; dayName: string }> = [];
+  for (const row of rows) {
+    const rawDate = (row[1] || "").toString().trim();
+    const d = parseDateFromSheet(rawDate);
+    if (!d) continue;
+    if (d < weekStart || d > weekEnd) continue;
+    const contentType = (row[4] || "").toString().trim();
+    const collab = (row[9] || "").toString().trim();
+    const isOrganicReel = contentType === "ריל" && (collab === "" || collab === "לא");
+    if (!isOrganicReel) continue;
+    result.push({
+      contentId: (row[0] || "").toString().trim(),
+      name: (row[5] || "").toString().trim(),
+      date: rawDate,
+      dayName: (row[2] || "").toString().trim(),
+    });
+  }
+  result.sort((a, b) => {
+    const da = parseDateFromSheet(a.date);
+    const db = parseDateFromSheet(b.date);
+    return (da?.getTime() || 0) - (db?.getTime() || 0);
+  });
+  return result;
+};
+
 // Update a gantt row's date and day
 export const updateGanttRowDate = async (
   spreadsheetId: string,

@@ -87,6 +87,7 @@ approveContentForProduction,
   isGanttDateTaken,
   findAvailableDatesInMonth,
   findSmartGanttDate,
+  getOrganicReelsInWeek,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
   saveFastTrackContent,
@@ -1590,6 +1591,64 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // first/second option; explicit date → use it; rejection → keep in bank.
     // Reuses approveContentForProduction + addRowToGantt + sort. A taken
     // reel-date is not overwritten (step 2 adds displacement).
+    // Fast Lane make-room follow-up (step 2 — 21.7.2026): Karen picks which
+    // organic reel to push. We move it to the nearest smart date and slot the
+    // trend into the day the reel vacated (soonest slot). Single choice.
+    if (pendingQuestion?.questionType === "trend_make_room") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. טרנדים מתקצרים מהר — אם בא לך לתפוס אותו, כתבי לי.`);
+        return res.status(200).json({ status: "trend_make_room_kept", sender });
+      }
+
+      const pick = incomingText.trim();
+      const chosenReel = ctx.reels.find((r: any) =>
+        r.name === pick || r.name.includes(pick) || pick.includes(r.name)
+      );
+      if (!chosenReel) {
+        const reelLines = ctx.reels.map((r: any) => `*${r.name}* (${r.date})`).join("\n");
+        await safeSendWhatsAppMessage(sender, [`לא זיהיתי איזה ריל. אפשר לכתוב את השם של אחד מאלה:`, "", reelLines].join("\n"));
+        return res.status(200).json({ status: "trend_make_room_unclear", sender });
+      }
+
+      const now = new Date();
+      const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+      const smartDates = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+      const freedDate = chosenReel.date;
+      const newReelDate = smartDates.find((d: string) => d !== freedDate) || smartDates[0];
+      if (!newReelDate) {
+        await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי להזיז אליו את "${chosenReel.name}". אפשר לנסות מאוחר יותר.`);
+        return res.status(200).json({ status: "trend_make_room_no_date", sender });
+      }
+
+      const newDayName = getHebrewDayName(newReelDate);
+      await updateGanttRowDate(spreadsheetId, chosenReel.contentId, newReelDate, newDayName);
+      try {
+        await approveContentForProduction(spreadsheetId, ctx.contentName);
+      } catch (e) {
+        await safeSendWhatsAppMessage(sender, `הזזתי את "${chosenReel.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+        return res.status(200).json({ status: "trend_make_room_approve_failed", sender });
+      }
+      const freedDayName = getHebrewDayName(freedDate);
+      await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, freedDate, freedDayName, "", "בתכנון");
+      await sortGanttByDate(spreadsheetId);
+      clearPendingQuestion(sender);
+      await safeSendWhatsAppMessage(
+        sender,
+        [
+          `🔥 סידרתי:`,
+          `• "${chosenReel.name}" עבר ל-${newReelDate} (יום ${newDayName}).`,
+          `• הטרנד "${ctx.contentName}" נכנס ל-${freedDate} (יום ${freedDayName}).`,
+          "",
+          "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף.",
+        ].join("\n")
+      );
+      return res.status(200).json({ status: "trend_made_room", sender });
+    }
+
     if (pendingQuestion?.questionType === "trend_schedule") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -2335,6 +2394,27 @@ await safeSendWhatsAppMessage(
                   .map((d) => { const lbl = labelFor(d); return lbl ? `${lbl} (${d})` : d; })
                   .join(" או ");
                 bridgeOfferLine = `🔥 טרנד — כדאי לתפוס אותו מהר לפני שיברח. לשבץ ${optLines}? (או תני לי תאריך אחר)`;
+              } else {
+                // Fast Lane step 2 (21.7.2026): trend reel, today AND tomorrow
+                // taken (week full). Offer to push an organic reel to make
+                // room. Karen picks which; we auto-move it to the nearest smart
+                // date and slot the trend into the freed day (single choice).
+                const weekReels = await getOrganicReelsInWeek(spreadsheetId, todayDate);
+                if (weekReels.length > 0) {
+                  storePendingQuestion(sender, {
+                    questionType: "trend_make_room",
+                    context: { contentId, contentName: pendingDraft.shortName, reels: weekReels },
+                  });
+                  const reelLines = weekReels
+                    .map((r: { name: string; date: string }) => `*${r.name}* (${r.date})`)
+                    .join("\n");
+                  bridgeOfferLine = [
+                    `🔥 טרנד — אבל השבוע כבר מלא בשני רילים.`,
+                    `איזה מהם לדחוף לתאריך אחר כדי לפנות מקום לטרנד?`,
+                    "",
+                    reelLines,
+                  ].join("\n");
+                }
               }
             } catch (trendErr) {
               console.error(`[Fast Lane] aggressive schedule failed, falling back: ${trendErr}`);
