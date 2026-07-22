@@ -2321,7 +2321,7 @@ await safeSendWhatsAppMessage(
               return d >= today;
             });
 
-            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.\nמספר פנימי: ${contentId}`;
+            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.`;
             await safeSendWhatsAppMessage(sender, replyText);
 
             if (futureAvailable.length > 0) {
@@ -2482,7 +2482,6 @@ await safeSendWhatsAppMessage(
             "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
             "",
             `שם: ${pendingDraft.shortName}`,
-            `מספר פנימי: ${contentId}`,
             "",
             ...(bridgeOfferLine
               ? [bridgeOfferLine]
