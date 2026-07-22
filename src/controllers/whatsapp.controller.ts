@@ -2478,20 +2478,26 @@ await safeSendWhatsAppMessage(
             console.error(`[Bridge] free-date lookup failed, keeping passive tail: ${bridgeError}`);
           }
 
-          const replyText = [
-            "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
-            "",
-            `שם: ${pendingDraft.shortName}`,
-            "",
-            ...(bridgeOfferLine
-              ? [bridgeOfferLine]
-              : [
-                  "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
-                  "",
-                  "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
-                  `תוסיפי את ${pendingDraft.shortName} להפקה`,
-                ]),
-          ].join("\n");
+          // A trend runs forward — it shouldn't read as "saved to the bank".
+          // Show the aggressive scheduling offer directly (the trend is still
+          // saved to the bank silently, for tracking). Non-trend ideas keep
+          // the normal "saved to bank" message.
+          const replyText = (pendingDraft.category === "טרנד" && bridgeOfferLine)
+            ? bridgeOfferLine
+            : [
+                "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
+                "",
+                `שם: ${pendingDraft.shortName}`,
+                "",
+                ...(bridgeOfferLine
+                  ? [bridgeOfferLine]
+                  : [
+                      "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
+                      "",
+                      "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
+                      `תוסיפי את ${pendingDraft.shortName} להפקה`,
+                    ]),
+              ].join("\n");
 
 await safeSendWhatsAppMessage(sender, replyText);
           console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
