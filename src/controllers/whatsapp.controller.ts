@@ -2516,8 +2516,11 @@ await safeSendWhatsAppMessage(
                         ? `את "${collabBlockers[0].name}" עדיף להשאיר בתאריך שסגרנו מול המותג, `
                         : "";
                       bridgeOfferLine = [
-                        `ראיתי את הטרנד ששלחת.`,
-                        `${dayWord} עם ${occNames}. ${collabNote}אז אני מציעה להעביר את "${org.name}" ל-${suggestedDate}, ולהכניס את הטרנד במקומו.`,
+                        `אין בעיה, אבל שנייה לפני זה,`,
+                        `${dayWord} עם ${occNames}.`,
+                        "",
+                        `${collabNote}אז אני מציעה להעביר את "${org.name}" ל-${suggestedDate}, ולהכניס את הטרנד במקומו.`,
+                        "",
                         `מתאים לך שאעשה את השינוי? (כן / לא)`,
                       ].join("\n");
                     }
@@ -2532,8 +2535,10 @@ await safeSendWhatsAppMessage(
                     });
                     const reelLines = organicBlockers.map((r) => `"${r.name}"`).join("\n");
                     bridgeOfferLine = [
-                      `ראיתי את הטרנד ששלחת.`,
-                      `${dayWord} עם ${occNames}. כדי לפנות מקום לטרנד, איזה מהם תרצי שאעביר?`,
+                      `אין בעיה, אבל שנייה לפני זה,`,
+                      `${dayWord} עם ${occNames}.`,
+                      "",
+                      `כדי לפנות מקום לטרנד, איזה מהם תרצי שאעביר?`,
                       "",
                       reelLines,
                     ].join("\n");
@@ -2556,8 +2561,9 @@ await safeSendWhatsAppMessage(
                         },
                       });
                       bridgeOfferLine = [
-                        `ראיתי את הטרנד ששלחת.`,
+                        `אין בעיה, אבל שנייה לפני זה,`,
                         `${dayWord} עם ${occNames}, ואלה שיתופי פעולה שסגורים מול מותגים אז עדיף לא להזיז אותם.`,
+                        "",
                         `רוצה שאשבץ את הטרנד ל-${altDate}? (כן / לא)`,
                       ].join("\n");
                     }
