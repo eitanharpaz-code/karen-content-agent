@@ -2381,6 +2381,42 @@ export const findSmartGanttDate = async (
 // Fast Lane step 2 helper (21.7.2026): list the organic reels scheduled in the
 // same week as a given date — the candidates Karen can push to make room for
 // an urgent trend. Stories/posts/collabs are excluded. Sorted by date.
+export const getReelsBlockingDates = async (
+  spreadsheetId: string,
+  dates: string[]
+): Promise<Array<{ contentId: string; name: string; date: string; dayName: string; isCollab: boolean }>> => {
+  const wanted = new Set(dates.map((d) => d.trim()));
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:J`,
+  });
+  const rows = (response.data.values || []).slice(1);
+  const result: Array<{ contentId: string; name: string; date: string; dayName: string; isCollab: boolean }> = [];
+  for (const row of rows) {
+    const rawDate = (row[1] || "").toString().trim();
+    if (!wanted.has(rawDate)) continue;
+    const contentType = (row[4] || "").toString().trim();
+    if (contentType !== "ריל") continue;
+    const collab = (row[9] || "").toString().trim();
+    const isCollab = !(collab === "" || collab === "לא");
+    result.push({
+      contentId: (row[0] || "").toString().trim(),
+      name: (row[5] || "").toString().trim(),
+      date: rawDate,
+      dayName: (row[2] || "").toString().trim(),
+      isCollab,
+    });
+  }
+  result.sort((a, b) => {
+    const da = parseDateFromSheet(a.date);
+    const db = parseDateFromSheet(b.date);
+    return (da?.getTime() || 0) - (db?.getTime() || 0);
+  });
+  return result;
+};
+
 export const getOrganicReelsInWeek = async (
   spreadsheetId: string,
   referenceDate: string

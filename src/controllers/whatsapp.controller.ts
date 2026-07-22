@@ -88,6 +88,7 @@ approveContentForProduction,
   findAvailableDatesInMonth,
   findSmartGanttDate,
   getOrganicReelsInWeek,
+  getReelsBlockingDates,
   removePunctuationForMatching,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
@@ -1595,77 +1596,138 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // Fast Lane make-room follow-up (step 2 — 21.7.2026): Karen picks which
     // organic reel to push. We move it to the nearest smart date and slot the
     // trend into the day the reel vacated (soonest slot). Single choice.
+    // Fast Lane make-room follow-up (step 2, rebuilt 22.7.2026). Three modes:
+    //  recommend  — one organic to move; "כן" executes, "לא" offers 3 dates.
+    //  choose     — several organics; Karen names which to move.
+    //  otherday   — all collab; "כן" schedules the trend on another day.
     if (pendingQuestion?.questionType === "trend_make_room") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
+      const scheduleTrendAt = async (freedDate: string) => {
+        try {
+          await approveContentForProduction(spreadsheetId, ctx.contentName);
+        } catch (e) {
+          return false;
+        }
+        const dn = getHebrewDayName(freedDate);
+        await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, freedDate, dn, "", "בתכנון");
+        await sortGanttByDate(spreadsheetId);
+        return true;
+      };
+
+      // ---- MODE: otherday (all blockers are collab) ----
+      if (ctx.mode === "otherday") {
+        if (isRejectionMessage(incomingText)) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. אם בא לך לתפוס אותו מאוחר יותר, כתבי לי.`);
+          return res.status(200).json({ status: "trend_otherday_kept", sender });
+        }
+        const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+        const target = explicit ? normalizeUserDateInput(explicit[0]) : ctx.suggestedDate;
+        if (!target) {
+          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב תאריך כמו 29/07/2026.`);
+          return res.status(200).json({ status: "trend_otherday_bad_date", sender });
+        }
+        const ok = await scheduleTrendAt(target);
+        clearPendingQuestion(sender);
+        const dn = getHebrewDayName(target);
+        await safeSendWhatsAppMessage(sender, ok
+          ? [`סידרתי. הטרנד "${ctx.contentName}" נכנס ל-${target} (יום ${dn}).`, "", "כדאי לצלם ולערוך אותו מהר. אני אזכיר לך בבריף."].join("\n")
+          : `משהו השתבש בשיבוץ. "${ctx.contentName}" נשאר בבנק — אפשר לנסות שוב.`);
+        return res.status(200).json({ status: ok ? "trend_scheduled_otherday" : "trend_otherday_failed", sender });
+      }
+
+      // ---- MODE: recommend (one organic to move) ----
+      if (ctx.mode === "recommend") {
+        // "לא" → offer up to 3 alternative dates for the organic.
+        if (isRejectionMessage(incomingText)) {
+          const alts = (ctx.altDates || []).filter((d: string) => d !== ctx.suggestedDate).slice(0, 3);
+          if (alts.length === 0) {
+            clearPendingQuestion(sender);
+            await safeSendWhatsAppMessage(sender, `אין לי כרגע תאריך חלופי פנוי. "${ctx.contentName}" נשאר בבנק בינתיים.`);
+            return res.status(200).json({ status: "trend_recommend_no_alt", sender });
+          }
+          storePendingQuestion(sender, { questionType: "trend_make_room", context: { ...ctx, mode: "recommend_alt" } });
+          await safeSendWhatsAppMessage(sender, [
+            `הכול טוב. אפשר להעביר את "${ctx.organic.name}" לאחד מהתאריכים האלה:`,
+            "",
+            ...alts,
+            "",
+            `איזה מהם הכי מתאים לך?`,
+          ].join("\n"));
+          return res.status(200).json({ status: "trend_recommend_alts_offered", sender });
+        }
+        // "כן" / affirmative → execute the recommendation.
+        const newDayName = getHebrewDayName(ctx.suggestedDate);
+        await updateGanttRowDate(spreadsheetId, ctx.organic.contentId, ctx.suggestedDate, newDayName);
+        const ok = await scheduleTrendAt(ctx.freedDate);
+        clearPendingQuestion(sender);
+        const freedDay = getHebrewDayName(ctx.freedDate);
+        await safeSendWhatsAppMessage(sender, ok
+          ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${ctx.suggestedDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
+          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+        return res.status(200).json({ status: ok ? "trend_recommended_done" : "trend_recommend_failed", sender });
+      }
+
+      // ---- MODE: recommend_alt (Karen chose an alternative date) ----
+      if (ctx.mode === "recommend_alt") {
+        const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+        const chosen = explicit ? normalizeUserDateInput(explicit[0]) : (ctx.altDates || []).find((d: string) => incomingText.includes(d));
+        if (!chosen) {
+          await safeSendWhatsAppMessage(sender, `לא זיהיתי תאריך. אפשר לכתוב אחד מהתאריכים שהצעתי, או תאריך משלך.`);
+          return res.status(200).json({ status: "trend_recommend_alt_unclear", sender });
+        }
+        const dn = getHebrewDayName(chosen);
+        await updateGanttRowDate(spreadsheetId, ctx.organic.contentId, chosen, dn);
+        const ok = await scheduleTrendAt(ctx.freedDate);
+        clearPendingQuestion(sender);
+        const freedDay = getHebrewDayName(ctx.freedDate);
+        await safeSendWhatsAppMessage(sender, ok
+          ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${chosen} (יום ${dn}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
+          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+        return res.status(200).json({ status: ok ? "trend_recommended_alt_done" : "trend_recommend_alt_failed", sender });
+      }
+
+      // ---- MODE: choose (several organics) ----
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. טרנדים מתקצרים מהר — אם בא לך לתפוס אותו, כתבי לי.`);
-        return res.status(200).json({ status: "trend_make_room_kept", sender });
+        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. אם בא לך לתפוס אותו, כתבי לי.`);
+        return res.status(200).json({ status: "trend_choose_kept", sender });
       }
-
       const pick = incomingText.trim();
-      // Normalize punctuation on both sides so "צק" matches "צ׳ק" — Karen
-      // won't always type the geresh. Same normalizer the sheet search uses.
       const pickNorm = removePunctuationForMatching(pick);
-      const chosenReel = ctx.reels.find((r: any) => {
+      const chosenReel = (ctx.reels || []).find((r: any) => {
         const nameNorm = removePunctuationForMatching(r.name);
-        return (
-          r.name === pick ||
-          nameNorm === pickNorm ||
-          nameNorm.includes(pickNorm) ||
-          pickNorm.includes(nameNorm)
-        );
+        return r.name === pick || nameNorm === pickNorm || nameNorm.includes(pickNorm) || pickNorm.includes(nameNorm);
       });
       if (!chosenReel) {
-        const reelLines = ctx.reels.map((r: any) => `*${r.name}* (${r.date})`).join("\n");
+        const reelLines = (ctx.reels || []).map((r: any) => `"${r.name}"`).join("\n");
         await safeSendWhatsAppMessage(sender, [`לא זיהיתי איזה ריל. אפשר לכתוב את השם של אחד מאלה:`, "", reelLines].join("\n"));
-        return res.status(200).json({ status: "trend_make_room_unclear", sender });
+        return res.status(200).json({ status: "trend_choose_unclear", sender });
       }
-
       const now = new Date();
       const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
       const smartDates = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
       const freedDate = chosenReel.date;
-      // Only move the reel FORWARD — filter out dates that already passed
-      // (same guard the bridge uses). Without this, the soonest "free" smart
-      // date could be earlier in the month, e.g. a reel pushed to 01/07.
       const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(0,0,0,0);
       const futureSmartDates = smartDates.filter((d: string) => {
-        const parts = d.split("/");
-        const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-        return parsed >= tomorrow;
+        const p = d.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrow;
       });
       const newReelDate = futureSmartDates.find((d: string) => d !== freedDate) || futureSmartDates[0];
       if (!newReelDate) {
         await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי להזיז אליו את "${chosenReel.name}". אפשר לנסות מאוחר יותר.`);
-        return res.status(200).json({ status: "trend_make_room_no_date", sender });
+        return res.status(200).json({ status: "trend_choose_no_date", sender });
       }
-
       const newDayName = getHebrewDayName(newReelDate);
       await updateGanttRowDate(spreadsheetId, chosenReel.contentId, newReelDate, newDayName);
-      try {
-        await approveContentForProduction(spreadsheetId, ctx.contentName);
-      } catch (e) {
-        await safeSendWhatsAppMessage(sender, `הזזתי את "${chosenReel.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
-        return res.status(200).json({ status: "trend_make_room_approve_failed", sender });
-      }
-      const freedDayName = getHebrewDayName(freedDate);
-      await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, freedDate, freedDayName, "", "בתכנון");
-      await sortGanttByDate(spreadsheetId);
+      const ok = await scheduleTrendAt(freedDate);
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(
-        sender,
-        [
-          `🔥 סידרתי:`,
-          `• "${chosenReel.name}" עבר ל-${newReelDate} (יום ${newDayName}).`,
-          `• הטרנד "${ctx.contentName}" נכנס ל-${freedDate} (יום ${freedDayName}).`,
-          "",
-          "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף.",
-        ].join("\n")
-      );
-      return res.status(200).json({ status: "trend_made_room", sender });
+      const freedDay = getHebrewDayName(freedDate);
+      await safeSendWhatsAppMessage(sender, ok
+        ? [`סידרתי:`, `• "${chosenReel.name}" עבר ל-${newReelDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
+        : `הזזתי את "${chosenReel.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+      return res.status(200).json({ status: ok ? "trend_made_room" : "trend_choose_failed", sender });
     }
 
     if (pendingQuestion?.questionType === "trend_schedule") {
@@ -2418,25 +2480,88 @@ await safeSendWhatsAppMessage(
                 // taken (week full). Offer to push an organic reel to make
                 // room. Karen picks which; we auto-move it to the nearest smart
                 // date and slot the trend into the freed day (single choice).
-                const weekReels = await getOrganicReelsInWeek(spreadsheetId, todayDate);
-                if (weekReels.length > 0) {
-                  storePendingQuestion(sender, {
-                    questionType: "trend_make_room",
-                    context: { contentId, contentName: pendingDraft.shortName, reels: weekReels },
-                  });
-                  const reelLines = weekReels
-                    .map((r: { name: string; date: string }) => `*${r.name}* (${r.date})`)
-                    .join("\n");
-                  bridgeOfferLine = [
-                    (weekReels.length === 1
-                    ? `🔥 טרנד! היום ומחר כבר תפוסים בריל.`
-                    : `🔥 טרנד! השבוע כבר מלא ב-${weekReels.length} רילסים.`),
-                    (weekReels.length === 1
-                    ? `לדחוף אותו לתאריך אחר כדי לפנות מקום לטרנד?`
-                    : `איזה מהם לדחוף לתאריך אחר כדי לפנות מקום לטרנד?`),
-                    "",
-                    reelLines,
-                  ].join("\n");
+                // Which reels block today/tomorrow, flagged collab vs organic.
+                const blockingReels = await getReelsBlockingDates(spreadsheetId, [todayDate, tomorrowDate]);
+                const organicBlockers = blockingReels.filter((r) => !r.isCollab);
+                const collabBlockers = blockingReels.filter((r) => r.isCollab);
+
+                if (blockingReels.length > 0) {
+                  // Human phrasing of what's occupying the days.
+                  const occNames = blockingReels.map((r) => `"${r.name}"`).join(" ו-");
+                  const dayWord = blockingReels.length === 1 ? "היום תפוס" : "היום ומחר תפוסים";
+
+                  if (organicBlockers.length === 1) {
+                    // MODE recommend: one organic to move, collab(s) stay put.
+                    const org = organicBlockers[0];
+                    const now = new Date();
+                    const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+                    const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+                    const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0,0,0,0);
+                    const futureSmart = smart.filter((d: string) => {
+                      const p = d.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+                    }).filter((d: string) => d !== org.date);
+                    const suggestedDate = futureSmart[0];
+                    if (suggestedDate) {
+                      storePendingQuestion(sender, {
+                        questionType: "trend_make_room",
+                        context: {
+                          contentId, contentName: pendingDraft.shortName,
+                          mode: "recommend",
+                          organic: org, collabs: collabBlockers,
+                          suggestedDate, altDates: futureSmart.slice(0, 3),
+                          freedDate: org.date,
+                        },
+                      });
+                      const collabNote = collabBlockers.length > 0
+                        ? `את "${collabBlockers[0].name}" עדיף להשאיר בתאריך שסגרנו מול המותג, `
+                        : "";
+                      bridgeOfferLine = [
+                        `ראיתי את הטרנד ששלחת.`,
+                        `${dayWord} עם ${occNames}. ${collabNote}אז אני מציעה להעביר את "${org.name}" ל-${suggestedDate}, ולהכניס את הטרנד במקומו.`,
+                        `מתאים לך שאעשה את השינוי? (כן / לא)`,
+                      ].join("\n");
+                    }
+                  } else if (organicBlockers.length > 1) {
+                    // MODE choose: several organics — Karen picks which to move.
+                    storePendingQuestion(sender, {
+                      questionType: "trend_make_room",
+                      context: {
+                        contentId, contentName: pendingDraft.shortName,
+                        mode: "choose", reels: organicBlockers,
+                      },
+                    });
+                    const reelLines = organicBlockers.map((r) => `"${r.name}"`).join("\n");
+                    bridgeOfferLine = [
+                      `ראיתי את הטרנד ששלחת.`,
+                      `${dayWord} עם ${occNames}. כדי לפנות מקום לטרנד, איזה מהם תרצי שאעביר?`,
+                      "",
+                      reelLines,
+                    ].join("\n");
+                  } else {
+                    // MODE all-collab: nothing organic to move — offer another day.
+                    const now = new Date();
+                    const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+                    const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+                    const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0,0,0,0);
+                    const futureSmart = smart.filter((d: string) => {
+                      const p = d.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+                    });
+                    const altDate = futureSmart[0];
+                    if (altDate) {
+                      storePendingQuestion(sender, {
+                        questionType: "trend_make_room",
+                        context: {
+                          contentId, contentName: pendingDraft.shortName,
+                          mode: "otherday", suggestedDate: altDate, altDates: futureSmart.slice(0, 3),
+                        },
+                      });
+                      bridgeOfferLine = [
+                        `ראיתי את הטרנד ששלחת.`,
+                        `${dayWord} עם ${occNames}, ואלה שיתופי פעולה שסגורים מול מותגים אז עדיף לא להזיז אותם.`,
+                        `רוצה שאשבץ את הטרנד ל-${altDate}? (כן / לא)`,
+                      ].join("\n");
+                    }
+                  }
                 }
               }
             } catch (trendErr) {
