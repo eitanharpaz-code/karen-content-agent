@@ -1618,7 +1618,16 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
       const smartDates = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
       const freedDate = chosenReel.date;
-      const newReelDate = smartDates.find((d: string) => d !== freedDate) || smartDates[0];
+      // Only move the reel FORWARD — filter out dates that already passed
+      // (same guard the bridge uses). Without this, the soonest "free" smart
+      // date could be earlier in the month, e.g. a reel pushed to 01/07.
+      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(0,0,0,0);
+      const futureSmartDates = smartDates.filter((d: string) => {
+        const parts = d.split("/");
+        const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+        return parsed >= tomorrow;
+      });
+      const newReelDate = futureSmartDates.find((d: string) => d !== freedDate) || futureSmartDates[0];
       if (!newReelDate) {
         await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי להזיז אליו את "${chosenReel.name}". אפשר לנסות מאוחר יותר.`);
         return res.status(200).json({ status: "trend_make_room_no_date", sender });
