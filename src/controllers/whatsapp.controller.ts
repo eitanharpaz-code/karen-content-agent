@@ -2325,9 +2325,15 @@ await safeSendWhatsAppMessage(
               if (options.length > 0) {
                 storePendingQuestion(sender, {
                   questionType: "trend_schedule",
-                  context: { contentId, contentName: pendingDraft.shortName, options, isStory },
+                  context: { contentId, contentName: pendingDraft.shortName, options, isStory, todayDate, tomorrowDate },
                 });
-                const optLines = options.map((d, i) => `${i === 0 ? "היום" : "מחר"} (${d})`).join(" או ");
+                // Label by the ACTUAL date, not list position — when today is
+                // already taken, the first remaining option is tomorrow, and
+                // calling it "היום" (position-based) would be wrong.
+                const labelFor = (d: string) => (d === todayDate ? "היום" : d === tomorrowDate ? "מחר" : "");
+                const optLines = options
+                  .map((d) => { const lbl = labelFor(d); return lbl ? `${lbl} (${d})` : d; })
+                  .join(" או ");
                 bridgeOfferLine = `🔥 טרנד — כדאי לתפוס אותו מהר לפני שיברח. לשבץ ${optLines}? (או תני לי תאריך אחר)`;
               }
             } catch (trendErr) {
