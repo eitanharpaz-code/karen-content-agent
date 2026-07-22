@@ -131,9 +131,9 @@ export const formatWeeklyStatusLine = (
     const missing = reelTarget - publishedReels;
     const publishedPart = publishedReels === 1 ? "עלה ריל אחד" : `עלו ${publishedReels} רילסים`;
     const missingPart = missing === 1 ? "עוד אחד וסגרנו את היעד" : `עוד ${missing} ליעד`;
-    return `סטטוס שבועי: ${publishedPart} מתוך ${reelTarget} — ${missingPart}.`;
+    return `סטטוס שבועי: ${publishedPart} מתוך ${reelTarget}, ${missingPart}.`;
   }
-  return `סטטוס שבועי: יעד הרילסים הושג — ${publishedReels} כבר באוויר. מכאן הכל בונוס.`;
+  return `סטטוס שבועי: יעד הרילסים הושג, ${publishedReels} כבר באוויר. מכאן הכל בונוס.`;
 };
 
 const isActionable = (item: ContentPriorityItem): boolean =>
@@ -258,7 +258,7 @@ export const buildMorningBriefFromData = ({
     p0Items.slice(0, 3).forEach((item) => {
       const status = item.isReadyToUpload ? "מוכן לעלייה" :
         item.filmed !== "כן" ? "חסר צילום" : "חסר עריכה";
-      lines.push(`* ${item.displayTitle} — ${status}`);
+      lines.push(`* ${item.displayTitle}, ${status}`);
     });
 
     if (p0Items.length > 3) {
@@ -456,7 +456,7 @@ export const buildAfternoonReminderFromData = ({
   // creates a message on its own (if all branches fall through to null,
   // nothing is sent).
   if (weeklyProgress?.reelTargetMet) {
-    lines.push("רק שתדעי — יעד הרילסים השבועי כבר הושג. מכאן הכל בונוס.", "");
+    lines.push("רק שתדעי, יעד הרילסים השבועי כבר הושג. מכאן הכל בונוס.", "");
   }
 
   if (
