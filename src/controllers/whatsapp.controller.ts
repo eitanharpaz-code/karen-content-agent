@@ -2428,8 +2428,12 @@ await safeSendWhatsAppMessage(
                     .map((r: { name: string; date: string }) => `*${r.name}* (${r.date})`)
                     .join("\n");
                   bridgeOfferLine = [
-                    `🔥 טרנד — אבל השבוע כבר מלא בשני רילים.`,
-                    `איזה מהם לדחוף לתאריך אחר כדי לפנות מקום לטרנד?`,
+                    (weekReels.length === 1
+                    ? `🔥 טרנד! היום ומחר כבר תפוסים בריל.`
+                    : `🔥 טרנד! השבוע כבר מלא ב-${weekReels.length} רילסים.`),
+                    (weekReels.length === 1
+                    ? `לדחוף אותו לתאריך אחר כדי לפנות מקום לטרנד?`
+                    : `איזה מהם לדחוף לתאריך אחר כדי לפנות מקום לטרנד?`),
                     "",
                     reelLines,
                   ].join("\n");
