@@ -1885,7 +1885,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         if (bridgeAnswer === "keep") {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "בסדר גמור, הוא נשאר בבנק. אפשר לקדם אותו מתי שבא לך.");
+          await safeSendWhatsAppMessage(sender, "הכול טוב, הוא נשאר בינתיים בבנק. כשתרצי, נמצא לו מקום מתאים בגאנט.");
           return res.status(200).json({ status: "bridge_offer_kept", sender });
         }
 
@@ -2614,7 +2614,7 @@ await safeSendWhatsAppMessage(
                   dayName: bridgeDayName,
                 },
               });
-              bridgeOfferLine = `ודרך אגב — יש יום ${bridgeDayName} (${bridgeDate}) פנוי בגאנט. לשבץ אותו כבר, או להשאיר בבנק בינתיים?`;
+              bridgeOfferLine = `יש לנו מקום פנוי קרוב בגאנט ביום ${bridgeDayName}, ${bridgeDate}. רוצה שאשבץ אותו שם כבר, או שנשאיר אותו בינתיים בבנק? (כן / לא)`;
             }
           } catch (bridgeError) {
             console.error(`[Bridge] free-date lookup failed, keeping passive tail: ${bridgeError}`);
