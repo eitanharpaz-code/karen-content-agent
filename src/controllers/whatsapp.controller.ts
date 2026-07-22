@@ -2471,10 +2471,17 @@ await safeSendWhatsAppMessage(
                 // already taken, the first remaining option is tomorrow, and
                 // calling it "היום" (position-based) would be wrong.
                 const labelFor = (d: string) => (d === todayDate ? "היום" : d === tomorrowDate ? "מחר" : "");
-                const optLines = options
-                  .map((d) => { const lbl = labelFor(d); return lbl ? `${lbl} (${d})` : d; })
-                  .join(" או ");
-                bridgeOfferLine = `🔥 טרנד — כדאי לתפוס אותו מהר לפני שיברח. לשבץ ${optLines}? (או תני לי תאריך אחר)`;
+                if (options.length === 1) {
+                  const d = options[0];
+                  const lbl = labelFor(d);
+                  const when = lbl ? `${lbl} (${d})` : d;
+                  bridgeOfferLine = `סגור! יש לך ${when} מקום פנוי. להכניס אותו לשם?`;
+                } else {
+                  const optLines2 = options
+                    .map((d) => { const lbl = labelFor(d); return lbl ? `${lbl} (${d})` : d; })
+                    .join(" או ");
+                  bridgeOfferLine = `סגור! יש מקום פנוי ${optLines2}. לאיזה מהם להכניס אותו?`;
+                }
               } else {
                 // Fast Lane step 2 (21.7.2026): trend reel, today AND tomorrow
                 // taken (week full). Offer to push an organic reel to make
