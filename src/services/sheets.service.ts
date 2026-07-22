@@ -531,7 +531,7 @@ export type ProductionTaskSearchResult =
  * Removes punctuation that might differ between user input and stored task names.
  * For matching only—does not modify stored values.
  */
-const removePunctuationForMatching = (text: string): string => {
+export const removePunctuationForMatching = (text: string): string => {
   return text
     .replace(/[,.:–\-]/g, "") // comma, period, colon, dashes (both regular and en-dash)
     .replace(/[""\"''״׳]/g, "") // English and Hebrew quotes

@@ -88,6 +88,7 @@ approveContentForProduction,
   findAvailableDatesInMonth,
   findSmartGanttDate,
   getOrganicReelsInWeek,
+  removePunctuationForMatching,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
   saveFastTrackContent,
@@ -1605,9 +1606,18 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       const pick = incomingText.trim();
-      const chosenReel = ctx.reels.find((r: any) =>
-        r.name === pick || r.name.includes(pick) || pick.includes(r.name)
-      );
+      // Normalize punctuation on both sides so "צק" matches "צ׳ק" — Karen
+      // won't always type the geresh. Same normalizer the sheet search uses.
+      const pickNorm = removePunctuationForMatching(pick);
+      const chosenReel = ctx.reels.find((r: any) => {
+        const nameNorm = removePunctuationForMatching(r.name);
+        return (
+          r.name === pick ||
+          nameNorm === pickNorm ||
+          nameNorm.includes(pickNorm) ||
+          pickNorm.includes(nameNorm)
+        );
+      });
       if (!chosenReel) {
         const reelLines = ctx.reels.map((r: any) => `*${r.name}* (${r.date})`).join("\n");
         await safeSendWhatsAppMessage(sender, [`לא זיהיתי איזה ריל. אפשר לכתוב את השם של אחד מאלה:`, "", reelLines].join("\n"));
