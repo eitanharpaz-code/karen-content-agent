@@ -2339,12 +2339,16 @@ export const findSmartGanttDate = async (
   const rows = (response.data.values || []).slice(1);
 
   const organicReelDates: Date[] = [];
+  const allReelDates: Date[] = []; // any reel (organic OR collab) — for the
+  // one-reel-per-day rule: never two reels on the same day, regardless of type.
   for (const row of rows) {
     const date = parseDateFromSheet((row[1] || "").toString().trim());
     if (!date) continue;
     const contentType = (row[4] || "").toString().trim();
     const collab = (row[9] || "").toString().trim();
-    const isOrganicReel = contentType === "ריל" && (collab === "" || collab === "לא");
+    const isReel = contentType === "ריל";
+    const isOrganicReel = isReel && (collab === "" || collab === "לא");
+    if (isReel) allReelDates.push(date);
     if (isOrganicReel) organicReelDates.push(date);
   }
 
@@ -2358,6 +2362,11 @@ export const findSmartGanttDate = async (
     const d = parseDateFromSheet(candidate);
     if (!d) return false;
     if ((reelsPerWeek.get(startOfGanttWeek(d).getTime()) || 0) >= 2) return false;
+    // One-reel-per-day rule: never a second reel on a day that already has any
+    // reel (organic OR collab). Stories/posts may still share the day.
+    for (const rd of allReelDates) {
+      if (rd.getTime() === d.getTime()) return false;
+    }
     for (const rd of organicReelDates) {
       const diffDays = Math.abs((d.getTime() - rd.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays < 2) return false;
