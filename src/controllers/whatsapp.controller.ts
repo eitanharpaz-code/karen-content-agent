@@ -1585,6 +1585,59 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // Bank->production pick follow-up (21.7.2026): Karen was shown the open
     // ideas and replies with a name. Re-run approve on her pick. If it still
     // isn't found, re-offer once rather than looping silently.
+    // Fast Lane trend scheduling follow-up (step 1 — 21.7.2026): Karen was
+    // offered today/tomorrow for a trend. "היום"/"מחר"/"כן" → schedule the
+    // first/second option; explicit date → use it; rejection → keep in bank.
+    // Reuses approveContentForProduction + addRowToGantt + sort. A taken
+    // reel-date is not overwritten (step 2 adds displacement).
+    if (pendingQuestion?.questionType === "trend_schedule") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק. רק שתדעי — טרנדים מתקצרים מהר, אז אם בא לך לתפוס אותו, כתבי לי מתי.`);
+        return res.status(200).json({ status: "trend_schedule_kept", sender });
+      }
+
+      let chosenDate: string | null = null;
+      const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+      if (explicit) {
+        chosenDate = normalizeUserDateInput(explicit[0]);
+      } else if (incomingText.includes("מחר") && ctx.options.length > 1) {
+        chosenDate = ctx.options[1];
+      } else {
+        chosenDate = ctx.options[0];
+      }
+
+      if (!chosenDate) {
+        await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב היום, מחר, או תאריך כמו 29/07/2026.`);
+        return res.status(200).json({ status: "trend_schedule_bad_date", sender });
+      }
+
+      const taken = (await isGanttDateTaken(spreadsheetId, chosenDate)).taken;
+      if (taken && !ctx.isStory) {
+        await safeSendWhatsAppMessage(sender, `ה-${chosenDate} כבר תפוס. אפשר לתת לי תאריך אחר קרוב, ואשבץ שם.`);
+        return res.status(200).json({ status: "trend_schedule_taken", sender });
+      }
+
+      try {
+        await approveContentForProduction(spreadsheetId, ctx.contentName);
+      } catch (e) {
+        await safeSendWhatsAppMessage(sender, `משהו השתבש בשיבוץ. "${ctx.contentName}" נשאר בבנק — אפשר לנסות שוב.`);
+        return res.status(200).json({ status: "trend_schedule_approve_failed", sender });
+      }
+      const dn = getHebrewDayName(chosenDate);
+      await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, chosenDate, dn, "", "בתכנון");
+      await sortGanttByDate(spreadsheetId);
+      clearPendingQuestion(sender);
+      await safeSendWhatsAppMessage(
+        sender,
+        [`🔥 יאללה — שיבצתי את "${ctx.contentName}" ל-${chosenDate} (יום ${dn}).`, "", "כדאי לצלם ולערוך מהר כדי לתפוס את הטרנד. אני אזכיר לך בבריף."].join("\n")
+      );
+      return res.status(200).json({ status: "trend_scheduled", sender });
+    }
+
     if (pendingQuestion?.questionType === "approve_pick_idea") {
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
@@ -2244,7 +2297,47 @@ await safeSendWhatsAppMessage(
           // nothing is free or the lookup fails — message unchanged, zero
           // noise.
           let bridgeOfferLine: string | null = null;
-          try {
+
+          // Fast Lane aggressive scheduling (step 1 — 21.7.2026): a trend is
+          // time-critical; it shouldn't sit in the bank. If this draft is a
+          // trend, offer today/tomorrow up front instead of the calm bridge
+          // offer. Story = unbound by cadence → always offerable; reel = only
+          // a free day. If both taken, fall through to the calm offer (the
+          // full-week displacement flow is step 2).
+          const isTrendDraft = pendingDraft.category === "טרנד";
+          if (isTrendDraft) {
+            try {
+              const now = new Date();
+              const day0 = new Date(now); day0.setHours(0,0,0,0);
+              const day1 = new Date(now); day1.setDate(day1.getDate() + 1); day1.setHours(0,0,0,0);
+              const fmt = (d: Date) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
+              const todayDate = fmt(day0);
+              const tomorrowDate = fmt(day1);
+
+              const isStory = (pendingDraft.contentType || "") === "סטורי";
+              const todayTaken = (await isGanttDateTaken(spreadsheetId, todayDate)).taken;
+              const tomorrowTaken = (await isGanttDateTaken(spreadsheetId, tomorrowDate)).taken;
+
+              const options: string[] = [];
+              if (isStory || !todayTaken) options.push(todayDate);
+              if (isStory || !tomorrowTaken) options.push(tomorrowDate);
+
+              if (options.length > 0) {
+                storePendingQuestion(sender, {
+                  questionType: "trend_schedule",
+                  context: { contentId, contentName: pendingDraft.shortName, options, isStory },
+                });
+                const optLines = options.map((d, i) => `${i === 0 ? "היום" : "מחר"} (${d})`).join(" או ");
+                bridgeOfferLine = `🔥 טרנד — כדאי לתפוס אותו מהר לפני שיברח. לשבץ ${optLines}? (או תני לי תאריך אחר)`;
+              }
+            } catch (trendErr) {
+              console.error(`[Fast Lane] aggressive schedule failed, falling back: ${trendErr}`);
+            }
+          }
+
+          // Only run the calm bridge offer if the Fast Lane didn't already
+          // produce an aggressive one above.
+          if (!bridgeOfferLine) try {
             const bridgeNow = new Date();
             const bridgeFirstOfMonth = `01/${String(bridgeNow.getMonth() + 1).padStart(2, "0")}/${bridgeNow.getFullYear()}`;
             // Step B (21.7.2026): smart date suggestion. Cadence rules

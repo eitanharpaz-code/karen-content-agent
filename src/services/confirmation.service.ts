@@ -246,6 +246,11 @@ export const getNewIdeaContentType = (text: string): "פוסט" | "ריל" | nul
 };
 export const isTrendCommand = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
+  // Layer 1 (21.7.2026): confident trend openers only. Expanded from the
+  // original "starts with טרנד" to the natural ways Karen actually announces
+  // a trend, but still anchored near the start so "רעיון על איך טרנדים
+  // משפיעים" (a normal idea mentioning trends mid-sentence) is NOT swept into
+  // the Fast Lane. Ambiguous mid-sentence mentions → handled later (layer 2).
   const trendPrefixes = [
     "טרנד:",
     "טרנד -",
@@ -254,6 +259,11 @@ export const isTrendCommand = (text: string): boolean => {
     "יש טרנד",
     "טרנד חדש",
     "טרנד ",
+    "ראיתי טרנד",
+    "תפסתי טרנד",
+    "מצאתי טרנד",
+    "יש לי טרנד",
+    "טרנד ל",
   ];
   return trendPrefixes.some((prefix) => normalized.startsWith(prefix));
 };
