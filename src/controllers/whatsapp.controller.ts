@@ -1603,6 +1603,93 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     //  recommend  — one organic to move; "כן" executes, "לא" offers 3 dates.
     //  choose     — several organics; Karen names which to move.
     //  otherday   — all collab; "כן" schedules the trend on another day.
+    // Status no-match follow-up (23.7.2026): Karen was shown what is actually
+    // in production after her wording did not match. She either picks one of
+    // the names, or says it is new and we fall through to the fast-track draft.
+    if (pendingQuestion?.questionType === "status_no_match_pick") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const reply = incomingText.trim();
+
+      // "תוכן חדש" (or a clear variant) → build the fast-track draft.
+      if (/תוכן חדש|חדש לגמרי|זה חדש|משהו חדש/.test(reply)) {
+        clearPendingQuestion(sender);
+        const draft = await createContentDraft(ctx.attempted, sender);
+        const draftSummary = { ...draft, originalUserInput: ctx.attempted, isFastTrack: true };
+        storePendingConfirmation(sender, draftSummary);
+        await safeSendWhatsAppMessage(
+          sender,
+          buildDraftPreviewMessage(draft, {
+            intro: ["יופי, אז נוסיף אותו."],
+            extraBeforeQuestion: [
+              "אחרי אישור אכניס את זה ישר לתכנים שאושרו ואחפש לזה תאריך בגאנט.",
+            ],
+          })
+        );
+        return res.status(200).json({ status: "status_no_match_new_draft", sender });
+      }
+
+      // Otherwise: try to match her reply against the offered names.
+      const replyNorm = removePunctuationForMatching(reply);
+      const picked = (ctx.options || []).find((name: string) => {
+        const n = removePunctuationForMatching(name);
+        return name === reply || n === replyNorm || n.includes(replyNorm) || replyNorm.includes(n);
+      });
+
+      if (!picked) {
+        await safeSendWhatsAppMessage(
+          sender,
+          [
+            "לא זיהיתי לאיזה תוכן התכוונת. אפשר לכתוב את השם של אחד מאלה:",
+            "",
+            ...(ctx.options || []),
+            "",
+            'ואם זה משהו חדש, תכתבי "תוכן חדש".',
+          ].join("\n")
+        );
+        return res.status(200).json({ status: "status_no_match_unclear", sender });
+      }
+
+      // Apply the original status update to the picked content.
+      clearPendingQuestion(sender);
+      const match = await findProductionTaskByName(spreadsheetId, picked);
+      if (!match) {
+        await safeSendWhatsAppMessage(sender, `משהו השתבש במציאת "${picked}". אפשר לנסות שוב.`);
+        return res.status(200).json({ status: "status_no_match_lookup_failed", sender });
+      }
+
+      // findProductionTaskByName can return an ambiguous result; the picked
+      // name came from our own list, so treat only a direct match as valid.
+      if ("ambiguous" in (match as any)) {
+        await safeSendWhatsAppMessage(sender, `נמצאו כמה תכנים בשם "${picked}". אפשר לכתוב את השם המלא?`);
+        return res.status(200).json({ status: "status_no_match_ambiguous", sender });
+      }
+      const single = match as { rowIndex: number; row: string[] };
+
+      const columnUpdates = (ctx.statusTypes || [])
+        .map((st: any) => ({ statusType: st, columnName: getColumnName(st) }))
+        .filter((u: any) => u.columnName);
+
+      for (const u of columnUpdates) {
+        await updateProductionStatus(spreadsheetId, single.rowIndex, u.statusType);
+      }
+      const pickedContentId = (single.row?.[0] || "").toString().trim();
+      if (pickedContentId) {
+        try {
+          await updateApprovedContentStatusById(spreadsheetId, pickedContentId, "ממתין לעריכה");
+        } catch (syncError) {
+          console.error(`[Status] approved-content sync skipped: ${syncError}`);
+        }
+      }
+
+      const doneList = columnUpdates.map((u: any) => u.columnName).join(", ");
+      await safeSendWhatsAppMessage(
+        sender,
+        `מעולה, עדכנתי. "${picked}" סומן כ: ${doneList}`
+      );
+      return res.status(200).json({ status: "status_no_match_resolved", sender });
+    }
+
     if (pendingQuestion?.questionType === "trend_make_room") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -3888,7 +3975,46 @@ if (isArchiveCommand(incomingText)) {
           if (!matchResult) {
             // Fast Track — תוכן לא קיים בהפקה, קרן צילמה ספונטנית
             const isReadyUpdate = statusUpdate.statusTypes.includes("filmed") || statusUpdate.statusTypes.includes("edited");
+
+            // Ask before assuming it is new (23.7.2026). Karen reports on
+            // content by partial or informal names; jumping straight to a new
+            // fast-track draft created noise she then had to cancel. Show what
+            // is actually in production and let her pick, or say it is new.
             if (isReadyUpdate) {
+              try {
+                const openTasks = await getAllProductionTasks(spreadsheetId);
+                const pending = (openTasks || [])
+                  .filter((t: any) => (t.filmed !== "כן" || t.edited !== "כן"))
+                  .map((t: any) => (t.taskName || "").toString().trim())
+                  .filter(Boolean)
+                  .slice(0, 6);
+
+                if (pending.length > 0) {
+                  storePendingQuestion(sender, {
+                    questionType: "status_no_match_pick",
+                    context: {
+                      attempted: statusUpdate.contentName,
+                      rawMessage: incomingText,
+                      statusTypes: statusUpdate.statusTypes,
+                      options: pending,
+                    },
+                  });
+                  await safeSendWhatsAppMessage(
+                    sender,
+                    [
+                      `לא מצאתי את "${statusUpdate.contentName}" בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
+                      "",
+                      ...pending,
+                      "",
+                      'אם זה משהו חדש, פשוט תכתבי "תוכן חדש" ואוסיף אותו.',
+                    ].join("\n")
+                  );
+                  return res.status(200).json({ status: "status_no_match_asked", sender });
+                }
+              } catch (pickError) {
+                console.error(`[Sprint 7] no-match pick failed, falling back to fast track: ${pickError}`);
+              }
+
               const draft = await createContentDraft(statusUpdate.contentName, sender);
               const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
               storePendingConfirmation(sender, draftSummary);
