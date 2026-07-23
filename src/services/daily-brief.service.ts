@@ -278,7 +278,7 @@ export const buildMorningBriefFromData = ({
       const backgroundLine = morningPlanningSignal
         ? `\nברקע: ${morningPlanningSignal.message}`
         : futureHoles.length > 0
-          ? `\nברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`
+          ? `\nברקע: ${futureHoles.length === 1 ? "יום אחד פנוי" : `${futureHoles.length} ימים פנויים`} בגאנט החודש.`
           : "";
       const suggestedAction = morningPlanningSignal
         ? morningPlanningSignal.recommendedAction
