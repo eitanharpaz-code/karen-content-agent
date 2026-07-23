@@ -1,3 +1,4 @@
+import { askClaudeForBridgeIntent } from "../services/bridge-intent.service";
 import { computeScheduledReelGap } from "../services/planning-health.service";
 import { askClaudeForStatusIntent, looksLikeStatusMention } from "../services/status-intent.service";
 import { Request, Response } from "express";
@@ -238,7 +239,7 @@ const buildGeneralHelpResponse = (): string =>
     "- יש לי רעיון ל...",
     "- תוסיפי את ... להפקה",
     "- צילמתי את ... / ערכתי את ...",
-    "- מה צריך שיבוץ לגאנט",
+    "- מה צריך תאריך בגאנט",
     "",
     "מה בא לך לעשות?",
   ].join("\n");
@@ -731,7 +732,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
                 `סבבה, נתחיל מהרעיון "${result.option.title}".`,
                 "",
                 "זה עדיין מבנק הרעיונות, אז קודם צריך להפוך אותו לתוכן מאושר.",
-                "השלב הבא הוא לאשר/להעביר אותו במסלול מהיר, ואז נוכל לשבץ אותו בגאנט.",
+                "השלב הבא הוא לאשר/להעביר אותו במסלול מהיר, ואז נוכל להכניס אותו לגאנט.",
               ].join("\n")
             );
 
@@ -1046,7 +1047,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   if (["ביטול", "עזבי", "עזוב", "לא משנה", "תבטלי"].includes(rawAnswer)) {
     clearPendingQuestion(sender);
-    await safeSendWhatsAppMessage(sender, "סבבה, לא שיבצתי. אפשר לחזור לזה אחר כך.");
+    await safeSendWhatsAppMessage(sender, "סבבה, לא הכנסתי. אפשר לחזור לזה אחר כך.");
     return res.status(200).json({ status: "gantt_write_new_date_cancelled", sender });
   }
 
@@ -1059,7 +1060,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     await safeSendWhatsAppMessage(
       sender,
       [
-        "בסדר, לא שיבצתי בתאריך הזה.",
+        "בסדר, לא הכנסתי בתאריך הזה.",
         "",
         "אפשר לכתוב תאריך אחר,",
         "לכתוב: תוכן אחר",
@@ -1121,8 +1122,8 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       [
         `אין בעיה, נחזור לבחור תוכן אחר ל${monthName}.`,
         "",
-        "מה עוד מחכה לשיבוץ:",
-        displayList || "לא מצאתי כרגע תכנים נוספים לשיבוץ.",
+        "מה עוד מחכה לתאריך:",
+        displayList || "לא מצאתי כרגע תכנים נוספים שמחכים לתאריך.",
         "",
         "כתבי שם של תוכן מהרשימה.",
       ].join("\n")
@@ -1234,7 +1235,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
     if (!firstContent) {
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(sender, `לא נשארו תכנים לשיבוץ ב${monthName}.`);
+      await safeSendWhatsAppMessage(sender, `לא נשארו תכנים שמחכים לתאריך ב${monthName}.`);
       return res.status(200).json({ status: "monthly_planning_no_remaining_content", sender });
     }
 
@@ -1274,7 +1275,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         "מצאתי לו תאריך פנוי קרוב:",
         `${suggestedDate}, יום ${suggestedDayName}.`,
         "",
-        `לשבץ את "${shortName}" לתאריך הזה?`,
+        `להכניס את "${shortName}" לתאריך הזה?`,
         "",
         "אפשר לענות כן או לא.",
       ].join("\n")
@@ -1387,7 +1388,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         "מצאתי לו תאריך פנוי קרוב:",
         `${suggestedDate}, יום ${suggestedDayName}.`,
         "",
-        `לשבץ את "${shortName}" לתאריך הזה?`,
+        `להכניס את "${shortName}" לתאריך הזה?`,
         "",
         "אפשר לענות כן או לא.",
       ].join("\n")
@@ -1403,7 +1404,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     await safeSendWhatsAppMessage(
       sender,
       [
-        "לא הבנתי איזה תוכן לשבץ.",
+        "לא הבנתי איזה תוכן להכניס.",
         "",
         "אפשר לכתוב שם של תוכן מהרשימה, למשל:",
         "צילום שמלות",
@@ -1520,7 +1521,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
             "",
             `נשארו עוד ${updatedRemaining.length} תכנים שלא שובצו ב${monthName}.`,
             "",
-            "מה עוד מחכה לשיבוץ:",
+            "מה עוד מחכה לתאריך:",
             displayList,
             "",
             "על מה הבא?",
@@ -1556,7 +1557,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       // "בשעה 11:00", "ב11 ביום שישי" — all previously rejected because the
       // old regex required the whole message to be ONLY the number. Now we
       // extract the first HH or HH:MM occurrence from anywhere in the text.
-      const timeMatch = rawTimeInput.match(/(?:^|[^\d])([01]?\d|2[0-3])(?::([0-5]\d))?(?![\d:])/);
+      // Four-digit form first ("0400", "1830"): Karen writes it without a
+      // colon, and the general pattern below rejects it because digits follow.
+      const compactTime = rawTimeInput.match(/(?:^|[^\d])([01]\d|2[0-3])([0-5]\d)(?![\d:])/);
+      const timeMatch = compactTime || rawTimeInput.match(/(?:^|[^\d])([01]?\d|2[0-3])(?::([0-5]\d))?(?![\d:])/);
 
       if (!timeMatch) {
         await safeSendWhatsAppMessage(
@@ -1717,7 +1721,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (ctx.mode === "otherday") {
         if (isRejectionMessage(incomingText)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. אם בא לך לתפוס אותו מאוחר יותר, כתבי לי.`);
+          await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו מאוחר יותר, כתבי לי.`);
           return res.status(200).json({ status: "trend_otherday_kept", sender });
         }
         const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
@@ -1731,7 +1735,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const dn = getHebrewDayName(target);
         await safeSendWhatsAppMessage(sender, ok
           ? [`סידרתי. הטרנד "${ctx.contentName}" נכנס ל-${target} (יום ${dn}).`, "", "כדאי לצלם ולערוך אותו מהר. אני אזכיר לך בבריף."].join("\n")
-          : `משהו השתבש בשיבוץ. "${ctx.contentName}" נשאר בבנק. אפשר לנסות שוב.`);
+          : `משהו השתבש. "${ctx.contentName}" נשאר כרגע בלי תאריך. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_scheduled_otherday" : "trend_otherday_failed", sender });
       }
 
@@ -1742,7 +1746,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           const alts = (ctx.altDates || []).filter((d: string) => d !== ctx.suggestedDate).slice(0, 3);
           if (alts.length === 0) {
             clearPendingQuestion(sender);
-            await safeSendWhatsAppMessage(sender, `אין לי כרגע תאריך חלופי פנוי. "${ctx.contentName}" נשאר בבנק בינתיים.`);
+            await safeSendWhatsAppMessage(sender, `אין לי כרגע תאריך חלופי פנוי. "${ctx.contentName}" נשאר כרגע בלי תאריך.`);
             return res.status(200).json({ status: "trend_recommend_no_alt", sender });
           }
           storePendingQuestion(sender, { questionType: "trend_make_room", context: { ...ctx, mode: "recommend_alt" } });
@@ -1763,7 +1767,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const freedDay = getHebrewDayName(ctx.freedDate);
         await safeSendWhatsAppMessage(sender, ok
           ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${ctx.suggestedDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
-          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_recommended_done" : "trend_recommend_failed", sender });
       }
 
@@ -1782,14 +1786,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const freedDay = getHebrewDayName(ctx.freedDate);
         await safeSendWhatsAppMessage(sender, ok
           ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${chosen} (יום ${dn}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
-          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+          : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_recommended_alt_done" : "trend_recommend_alt_failed", sender });
       }
 
       // ---- MODE: choose (several organics) ----
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק בינתיים. אם בא לך לתפוס אותו, כתבי לי.`);
+        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו, כתבי לי.`);
         return res.status(200).json({ status: "trend_choose_kept", sender });
       }
       const pick = incomingText.trim();
@@ -1823,7 +1827,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const freedDay = getHebrewDayName(freedDate);
       await safeSendWhatsAppMessage(sender, ok
         ? [`סידרתי:`, `• "${chosenReel.name}" עבר ל-${newReelDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
-        : `הזזתי את "${chosenReel.name}", אבל משהו השתבש בשיבוץ הטרנד. אפשר לנסות שוב.`);
+        : `הזזתי את "${chosenReel.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
       return res.status(200).json({ status: ok ? "trend_made_room" : "trend_choose_failed", sender });
     }
 
@@ -1833,7 +1837,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר בבנק. רק שתדעי, טרנדים מתקצרים מהר, אז אם בא לך לתפוס אותו, כתבי לי מתי.`);
+        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. רק שתדעי, טרנדים מתקצרים מהר, אז אם בא לך לתפוס אותו, כתבי לי מתי.`);
         return res.status(200).json({ status: "trend_schedule_kept", sender });
       }
 
@@ -1861,7 +1865,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       try {
         await approveContentForProduction(spreadsheetId, ctx.contentName);
       } catch (e) {
-        await safeSendWhatsAppMessage(sender, `משהו השתבש בשיבוץ. "${ctx.contentName}" נשאר בבנק. אפשר לנסות שוב.`);
+        await safeSendWhatsAppMessage(sender, `משהו השתבש. "${ctx.contentName}" נשאר כרגע בלי תאריך. אפשר לנסות שוב.`);
         return res.status(200).json({ status: "trend_schedule_approve_failed", sender });
       }
       const dn = getHebrewDayName(chosenDate);
@@ -1870,7 +1874,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       clearPendingQuestion(sender);
       await safeSendWhatsAppMessage(
         sender,
-        [`יאללה, שיבצתי את "${ctx.contentName}" ל-${chosenDate} (יום ${dn}).`, "", "כדאי לצלם ולערוך מהר כדי לתפוס את הטרנד. אני אזכיר לך בבריף."].join("\n")
+        [`יאללה, הכנסתי את "${ctx.contentName}" לגאנט ל-${chosenDate} (יום ${dn}).`, "", "כדאי לצלם ולערוך מהר כדי לתפוס את הטרנד. אני אזכיר לך בבריף."].join("\n")
       );
       return res.status(200).json({ status: "trend_scheduled", sender });
     }
@@ -1898,7 +1902,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
             questionType: "confirm_gantt_write",
             context: { contentId: picked.contentId, contentName: picked.name, date: suggested, dayName: dn, ganttStatus: "בתכנון" },
           });
-          await safeSendWhatsAppMessage(sender, [`מצאתי לו חור פנוי בגאנט: ${suggested}, יום ${dn}.`, "", `לשבץ את "${picked.name}" לתאריך הזה?`].join("\n"));
+          await safeSendWhatsAppMessage(sender, [`מצאתי לו חור פנוי בגאנט: ${suggested}, יום ${dn}.`, "", `להכניס את "${picked.name}" לתאריך הזה?`].join("\n"));
         }
         return res.status(200).json({ status: "approve_pick_done", sender });
       } catch (pickError) {
@@ -2078,7 +2082,16 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         clearPendingQuestion(sender);
         console.log(`[Route Debug] bridge_offer: explicit command detected, falling through`);
       } else {
-        const bridgeAnswer = classifyBridgeOfferAnswer(incomingText);
+        let bridgeAnswer = classifyBridgeOfferAnswer(incomingText);
+        // Karen phrases this freely ("עדיף לא", "בוא נחכה"). When the phrase
+        // list cannot decide, ask Claude rather than replying "לא הבנתי".
+        if (bridgeAnswer === "unclear") {
+          const claudeIntent = await askClaudeForBridgeIntent(incomingText);
+          if (claudeIntent !== "unclear") {
+            bridgeAnswer = claudeIntent;
+            console.log(`[Route Debug] bridge intent via Claude: ${claudeIntent}`);
+          }
+        }
 
         if (bridgeAnswer === "keep") {
           clearPendingQuestion(sender);
@@ -2139,7 +2152,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           } catch (approveError) {
             await safeSendWhatsAppMessage(
               sender,
-              `משהו השתבש בהעברה להפקה. הרעיון נשאר בבנק. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`
+              `משהו השתבש בהעברה להפקה. הרעיון נשאר כרגע בלי תאריך. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`
             );
             return res.status(200).json({ status: "bridge_offer_approve_failed", sender });
           }
@@ -2190,7 +2203,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           await safeSendWhatsAppMessage(
             sender,
             [
-              `מעולה, העברתי את "${shortConfirmName}" להפקה ושיבצתי לגאנט ב-${date} (יום ${dayName}), כבתכנון.`,
+              `מעולה, העברתי את "${shortConfirmName}" להפקה והכנסתי לגאנט ב-${date} (יום ${dayName}), כבתכנון.`,
               productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
               "",
               "באיזו שעה לתכנן את ההעלאה?",
@@ -2204,9 +2217,9 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         await safeSendWhatsAppMessage(
           sender,
           [
-            `לא בטוחה אם לשבץ את "${contentName.split(/\s+/).slice(0, 6).join(" ")}" ל-${date}.`,
+            "לא בטוחה מה התכוונת.",
             "",
-            "אפשר לענות: לשבץ, או להשאיר בבנק.",
+            "רוצה לקבוע לו תאריך בגאנט, או להשאיר אותו כרגע בלי תאריך?",
           ].join("\n")
         );
         return res.status(200).json({ status: "bridge_offer_unclear", sender });
@@ -2236,7 +2249,7 @@ if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עז
     [
       `סבבה, השארתי את "${shortName}" בהפקה בלי תאריך עלייה.`,
       "",
-      "זה יופיע כמשהו שצריך שיבוץ, כדי שלא ייפול בין הכיסאות.",
+      "זה יופיע כמשהו שמחכה לתאריך, כדי שלא ייפול בין הכיסאות.",
     ].join("\n")
   );
 
@@ -2272,7 +2285,7 @@ const alternatives = available
 
         if (alternatives.length === 0) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "בסדר. לא מצאתי עוד תאריכים פנויים באותו חודש. אפשר לשבץ ידנית עם תאריך אחר.");
+          await safeSendWhatsAppMessage(sender, "בסדר. לא מצאתי עוד תאריכים פנויים באותו חודש. אפשר להכניס ידנית עם תאריך אחר.");
           return res.status(200).json({ status: "gantt_write_no_alternatives", sender });
         }
 
@@ -2303,7 +2316,7 @@ const alternatives = available
         await safeSendWhatsAppMessage(
   sender,
   [
-    `בסדר, לא שיבצתי ב-${date}.`,
+    `בסדר, לא הכנסתי ב-${date}.`,
     "אלה תאריכים פנויים באותו חודש:",
     optionsText,
     "",
@@ -2378,7 +2391,7 @@ await safeSendWhatsAppMessage(
       await safeSendWhatsAppMessage(
         sender,
         [
-          `לא בטוחה אם לשבץ את "${shortName}" ב-${date}.`,
+          `לא בטוחה אם להכניס את "${shortName}" ב-${date}.`,
           "",
           "אפשר לענות כן, לא, לא עכשיו, או לכתוב פקודה אחרת.",
         ].join("\n")
@@ -2639,9 +2652,9 @@ await safeSendWhatsAppMessage(
                   ganttStatus: "מוכן",
                 },
               });
-              await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלשבץ את "${pendingDraft.shortName}" לתאריך הזה?\nהסטטוס בגאנט יהיה "מוכן", כי הסרטון כבר צולם ונערך.\n\nאפשר לענות כן / לא.`);
+              await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\nהסטטוס בגאנט יהיה "מוכן", כי הסרטון כבר צולם ונערך.\n\nאפשר לענות כן / לא.`);
             } else {
-              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר לשבץ ידנית.");
+              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
             }
 
             return res.status(200).json({ status: "fast_track_saved", sender, contentId });
@@ -2872,7 +2885,7 @@ await safeSendWhatsAppMessage(
           const replyText = (pendingDraft.category === "טרנד" && bridgeOfferLine)
             ? bridgeOfferLine
             : [
-                "מעולה, שמרתי את הרעיון בבנק הרעיונות.",
+                "מעולה, שמרתי את הרעיון.",
                 "",
                 `שם: ${pendingDraft.shortName}`,
                 "",
@@ -3282,7 +3295,7 @@ const firstSuggestion = displayItems[0]?.name
 const replyText = [
   `יש לך ${unscheduled.length} תכנים שאושרו ועדיין לא שובצו ב${monthName}.`,
   "",
-  "מה עוד מחכה לשיבוץ:",
+  "מה עוד מחכה לתאריך:",
   `${displayList}${suffix}`,
   "",
   available.length > 0
@@ -3291,7 +3304,7 @@ const replyText = [
   "",
   firstSuggestion
     ? `הייתי מתחילה מ: "${firstSuggestion}".`
-    : "אפשר לבחור תוכן ראשון לשיבוץ.",
+    : "אפשר לבחור תוכן ראשון להכניס.",
   "",
  "אם מתאים להתחיל ממנו, תכתבי כן.",
 "אפשר גם לכתוב שם של תוכן אחר מהרשימה.",
@@ -3769,7 +3782,7 @@ const replyText = [
         // with a name and we approve that one. No duplicate is ever created.
         const openIdeas = await getOpenContentIdeas(spreadsheetId);
         if (openIdeas.length === 0) {
-          await safeSendWhatsAppMessage(sender, `לא מצאתי את "${target}" בבנק, ואין כרגע רעיונות פתוחים להעביר.`);
+          await safeSendWhatsAppMessage(sender, `לא מצאתי את "${target}" ברעיונות השמורים, ואין כרגע רעיונות פתוחים להעביר.`);
           return res.status(200).json({ status: "approve_not_found_empty", sender });
         }
         storePendingQuestion(sender, {
@@ -3779,7 +3792,7 @@ const replyText = [
         const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
         await safeSendWhatsAppMessage(
           sender,
-          [`לא מצאתי את "${target}" בבנק. לאיזה מהרעיונות התכוונת?`, "", ideaLines].join("\n")
+          [`לא מצאתי את "${target}" ברעיונות השמורים. לאיזה מהם התכוונת?`, "", ideaLines].join("\n")
         );
         return res.status(200).json({ status: "approve_pick_idea_offered", sender });
       }
@@ -3824,7 +3837,7 @@ const replyText = [
     "מצאתי לו חור פנוי קרוב בגאנט:",
     `${suggested}, יום ${suggestedDayName}.`,
     "",
-    `לשבץ את "${result.name}" לתאריך הזה?`,
+    `להכניס את "${result.name}" לתאריך הזה?`,
     "",
     "הוא ייכנס כבתכנון, כי עדיין צריך לסמן צילום, עריכה וקאבר.",
     "",
@@ -3832,7 +3845,7 @@ const replyText = [
   ].join("\n")
 );
       } else {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר לשבץ ידנית.");
+        await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
       }
 
       return res.status(200).json({ status: "approved_for_production", sender });
@@ -4023,7 +4036,7 @@ if (isArchiveCommand(incomingText)) {
 
         const ganttEntry = await findGanttEntryByContentId(spreadsheetId, targetContentId);
         if (!ganttEntry) {
-          await safeSendWhatsAppMessage(sender, `"${change.contentName}" עדיין לא משובץ בגאנט, אז אין תאריך להזיז. אפשר לשבץ אותו קודם.`);
+          await safeSendWhatsAppMessage(sender, `"${change.contentName}" עדיין לא משובץ בגאנט, אז אין תאריך להזיז. אפשר להכניס אותו קודם.`);
           return res.status(200).json({ status: "gantt_date_change_not_scheduled", sender });
         }
 

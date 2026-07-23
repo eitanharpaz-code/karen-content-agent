@@ -733,8 +733,14 @@ export type BridgeOfferAnswer = "schedule" | "keep" | "unclear";
 
 const BRIDGE_KEEP_PHRASES = [
   "להשאיר", "בבנק", "בינתיים", "לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "עוד לא", "עזבי",
+  // The intent question now asks "לקבוע תאריך או להשאיר בלי תאריך", so these
+  // are the phrasings it directly invites (23.7.2026).
+  "בלי תאריך", "בלי תאריך כרגע", "לא לקבוע", "לא לקבוע תאריך", "נשאיר", "תשאירי", "השאירי",
 ];
-const BRIDGE_SCHEDULE_PHRASES = ["לשבץ", "שבצי", "תשבצי", "נשבץ", "קדימה", "יאללה", "בטח", "סבבה"];
+const BRIDGE_SCHEDULE_PHRASES = [
+  "לשבץ", "שבצי", "תשבצי", "נשבץ", "קדימה", "יאללה", "בטח", "סבבה",
+  "לקבוע", "תקבעי", "נקבע", "לקבוע תאריך", "כן תאריך", "עם תאריך",
+];
 
 export const classifyBridgeOfferAnswer = (message: string): BridgeOfferAnswer => {
   const raw = message.trim().toLowerCase();

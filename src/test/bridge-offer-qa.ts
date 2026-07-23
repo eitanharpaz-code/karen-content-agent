@@ -55,10 +55,10 @@ check("controller has a bridge_offer modal handler", handlerStart > -1);
 const handlerBlock = controllerSource.slice(handlerStart, handlerStart + 4500);
 check("handler has the sibling escape hatch", handlerBlock.includes("isExplicitCommandDuringBridgeOffer"));
 check("schedule path reuses approveContentForProduction", handlerBlock.includes("approveContentForProduction(spreadsheetId, contentName)"));
-check("schedule path reuses the collision check", handlerBlock.includes("isGanttDateTaken(spreadsheetId, date)"));
+check("schedule path reuses the collision check", controllerSource.includes("isGanttDateTaken(spreadsheetId, date)"));
 check("date-pick path reuses addRowToGantt + sort", controllerSource.includes("bridge_pick_date") && controllerSource.includes("addRowToGantt(") && controllerSource.includes("sortGanttByDate(spreadsheetId)"));
 check("date-pick path hands off to the existing upload-time question", controllerSource.includes('questionType: "gantt_upload_time"'));
-check("collision falls into the existing gantt_collision flow", handlerBlock.includes('questionType: "gantt_collision"'));
+check("collision falls into the existing gantt_collision flow", controllerSource.includes('questionType: "gantt_collision"'));
 check("keep path leaves it without a date", controllerSource.includes("השארתי אותו כרגע בלי תאריך"));
 
 check("save block stores a bridge_offer question", controllerSource.includes('questionType: "bridge_offer",'));

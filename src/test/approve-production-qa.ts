@@ -27,7 +27,7 @@ const shouldIgnore = ["מה יש בהפקה?", "מה בהפקה", "כמה תכנ
 for (const m of shouldIgnore) check(`ignores query: "${m}"`, isApproveForProductionCommand(m) === false);
 
 const src = readFileSync(path.resolve(__dirname, "../controllers/whatsapp.controller.ts"), "utf-8");
-check("not-found path shows the open ideas instead of 'try again'", src.includes("לאיזה מהרעיונות התכוונת?"));
+check("not-found path shows the open ideas instead of 'try again'", src.includes("לאיזה מהם התכוונת?"));
 check("not-found path stores approve_pick_idea", src.includes('questionType: "approve_pick_idea"'));
 check("empty bank handled distinctly", src.includes("approve_not_found_empty"));
 check("pick handler exists", src.includes('pendingQuestion?.questionType === "approve_pick_idea"'));
