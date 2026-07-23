@@ -63,14 +63,14 @@ const run = async () => {
   console.log("קרן: מה הסטטוס של הלוקים שלי לקפריסין");
   const s5 = await send("מה הסטטוס של הלוקים שלי לקפריסין");
   console.log(`סטטוס: ${s5.status}`);
-  console.log("צפוי: visibility_task_status ✅\n");
+  console.log("צפוי: visibility_query_no_match (התוכן לא בגיליון) ✅\n");
 
   separator();
   console.log("שלב 6: עדכון סטטוס הפקה");
   console.log("קרן: צילמתי את הסרטון על הלוקים לקפריסין");
   const s6 = await send("צילמתי את הסרטון על הלוקים לקפריסין");
   console.log(`סטטוס: ${s6.status}`);
-  console.log("צפוי: status_updated ✅\n");
+  console.log("צפוי: status_no_match_asked (מציג מה בהפקה ושואל) ✅\n");
 
   separator();
   console.log("שלב 7: פילטור עדיפות");
@@ -98,21 +98,28 @@ const run = async () => {
   console.log("קרן: בסדר תודה");
   const s10 = await send("בסדר תודה");
   console.log(`סטטוס: ${s10.status}`);
-  console.log("צפוי: low_confidence_idea או meta_conversation ✅\n");
+  console.log("צפוי: conversational_reply (לא כותב לגיליון) ✅\n");
 
   separator();
   console.log("=== סיכום ===");
   const results = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10];
+  // Steps 5 and 6 reference content that is not in the sheet on purpose, so
+  // the correct behaviour is the not-found path, not a successful update
+  // (updated 23.7.2026). Step 10 must NOT write anything.
   const expected = [
     "draft_created", "draft_updated", "confirmed_and_saved",
-    "visibility_query", "visibility_task_status", "status_updated",
+    "visibility_query", "visibility_query_no_match", "status_no_match_asked",
     "visibility_query", "trend_started", "confirmed_and_saved",
-    "low_confidence_idea"
+    "conversational_reply"
   ];
+  const alternatives: Record<string, string[]> = {
+    conversational_reply: ["conversational_reply", "low_confidence_idea", "meta_conversation", "question_clarification"],
+    visibility_query_no_match: ["visibility_query_no_match", "visibility_task_status"],
+    status_no_match_asked: ["status_no_match_asked", "status_updated"],
+  };
   results.forEach((r, i) => {
-    const pass = r.status === expected[i] || 
-                 (expected[i] === "low_confidence_idea" && 
-                  ["low_confidence_idea", "meta_conversation", "question_clarification"].includes(r.status));
+    const pass = r.status === expected[i] ||
+                 (alternatives[expected[i]] || []).includes(r.status);
     console.log(`שלב ${i+1}: ${pass ? "✅" : "❌"} (${r.status})`);
   });
 };

@@ -437,8 +437,42 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     markInteractionToday(sender);
 
     // Check for pending question response (priority: before draft checks)
-    const pendingQuestion = getPendingQuestion(sender);
+    let pendingQuestion = getPendingQuestion(sender);
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
+
+    // Global escape hatch (23.7.2026). Every open question used to swallow
+    // whatever Karen wrote next, so asking something else while a question was
+    // pending left her stuck until the TTL expired. A question or an explicit
+    // command is never an answer, so it clears the pending state and routes
+    // normally. Confirmations and rejections are excluded: those ARE answers.
+    if (pendingQuestion) {
+      const looksLikeAnswer =
+        isConfirmationMessage(incomingText) || isRejectionMessage(incomingText);
+      const looksLikeSomethingElse =
+        !looksLikeAnswer &&
+        (isQuestionLikeMessage(incomingText) ||
+          Boolean(detectVisibilityIntent(incomingText)) ||
+          isArchiveCommand(incomingText) ||
+          isBulkArchiveCommand(incomingText) ||
+          isRestoreCommand(incomingText) ||
+          isApproveForProductionCommand(incomingText) ||
+          isDeadlineUpdate(incomingText) ||
+          isGanttDateChange(incomingText) ||
+          isTrendCommand(incomingText));
+
+      // Modal flows that legitimately expect free text keep their turn.
+      const MODAL_QUESTIONS = new Set([
+        "gantt_upload_time",
+        "monthly_planning",
+        "bulk_archive_confirm",
+      ]);
+
+      if (looksLikeSomethingElse && !MODAL_QUESTIONS.has(pendingQuestion.questionType)) {
+        console.log(`[Route Debug] escape hatch: "${pendingQuestion.questionType}" cleared, routing the new request`);
+        clearPendingQuestion(sender);
+        pendingQuestion = undefined as any;
+      }
+    }
 
     // Bulk archive: awaiting confirmation of a list of matched ideas.
     // "כן" archives them all in sequence; anything else (except explicit
@@ -1725,6 +1759,15 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           return res.status(200).json({ status: "trend_otherday_kept", sender });
         }
         const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+        // Only an explicit date or an actual yes may write to the sheet.
+        // Anything else re-asks instead of assuming consent (23.7.2026).
+        if (!explicit && !isConfirmationMessage(incomingText)) {
+          await safeSendWhatsAppMessage(
+            sender,
+            `לא בטוחה אם לשבץ. אפשר לכתוב כן, תאריך אחר, או לא.`
+          );
+          return res.status(200).json({ status: "trend_otherday_unclear", sender });
+        }
         const target = explicit ? normalizeUserDateInput(explicit[0]) : ctx.suggestedDate;
         if (!target) {
           await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב תאריך כמו 29/07/2026.`);
@@ -1847,8 +1890,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         chosenDate = normalizeUserDateInput(explicit[0]);
       } else if (incomingText.includes("מחר") && ctx.options.length > 1) {
         chosenDate = ctx.options[1];
-      } else {
+      } else if (incomingText.includes("היום")) {
         chosenDate = ctx.options[0];
+      } else if (isConfirmationMessage(incomingText)) {
+        chosenDate = ctx.options[0];
+      } else {
+        // Anything that is not a date and not an actual yes must NOT write to
+        // the sheet. "בסדר תודה" used to fall through here and schedule
+        // silently (23.7.2026).
+        const opts = ctx.options.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["לא בטוחה אם לשבץ. אפשר לכתוב אחד מאלה:", "", ...opts, "", "או לכתוב לא, ונשאיר את זה."].join("\n")
+        );
+        return res.status(200).json({ status: "trend_schedule_unclear", sender });
       }
 
       if (!chosenDate) {
@@ -2298,11 +2353,16 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
     if (pendingQuestion?.questionType === "bridge_offer") {
       const { contentName, date, dayName, availableDates, askedIntentOnly } = pendingQuestion.context as any;
+      // Escape hatch (extended 23.7.2026): Karen often asks something else
+      // instead of answering. A question is never an answer to "set a date?",
+      // so let visibility queries through as well, not just write commands.
       const isExplicitCommandDuringBridgeOffer =
         isArchiveCommand(incomingText) ||
         isApproveForProductionCommand(incomingText) ||
         isRestoreCommand(incomingText) ||
-        isDeadlineUpdate(incomingText);
+        isDeadlineUpdate(incomingText) ||
+        Boolean(detectVisibilityIntent(incomingText)) ||
+        isQuestionLikeMessage(incomingText);
 
       if (isExplicitCommandDuringBridgeOffer) {
         clearPendingQuestion(sender);
