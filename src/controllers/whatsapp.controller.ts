@@ -1666,12 +1666,18 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
       const single = match as { rowIndex: number; row: string[] };
 
+      // updateProductionStatus takes a column INDEX (C=3, D=4, E=5).
+      const COLUMN_FOR_STATUS: Record<string, number> = {
+        filmed: 3,
+        edited: 4,
+        cover_ready: 5,
+      };
       const columnUpdates = (ctx.statusTypes || [])
-        .map((st: any) => ({ statusType: st, columnName: getColumnName(st) }))
-        .filter((u: any) => u.columnName);
+        .map((st: any) => ({ statusType: st, columnIndex: COLUMN_FOR_STATUS[st], columnName: getColumnName(st) }))
+        .filter((u: any) => typeof u.columnIndex === "number");
 
       for (const u of columnUpdates) {
-        await updateProductionStatus(spreadsheetId, single.rowIndex, u.statusType);
+        await updateProductionStatus(spreadsheetId, single.rowIndex, u.columnIndex);
       }
       const pickedContentId = (single.row?.[0] || "").toString().trim();
       if (pickedContentId) {
@@ -4002,7 +4008,7 @@ if (isArchiveCommand(incomingText)) {
                   await safeSendWhatsAppMessage(
                     sender,
                     [
-                      `לא מצאתי את "${statusUpdate.contentName}" בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
+                      `לא מצאתי את התוכן שציינת בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
                       "",
                       ...pending,
                       "",
