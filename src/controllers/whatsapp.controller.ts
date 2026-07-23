@@ -1973,6 +1973,165 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     // Date pick after the intent question (23.7.2026). Karen writes dates in
     // many shapes: "24", "24/7", "יום שישי", "שישי", "הראשון". Match against
     // the offered list rather than demanding one format.
+    // Offer to show what is already saved (23.7.2026). After Karen declines a
+    // date, the agent tells her how many reels are still missing and offers to
+    // show the waiting ideas. This handles her answer: no ends it, yes lists
+    // up to six with a one-line description, and picking one continues into
+    // the normal date flow.
+    // Pick from the saved list (23.7.2026). Karen names one of the ideas, or
+    // asks for more. Choosing one moves it into the normal date flow: offer
+    // the free dates and let her choose, same as after a new idea.
+    if (pendingQuestion?.questionType === "saved_list_pick") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const reply = incomingText.trim();
+
+      if (isRejectionMessage(reply)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לעכשיו.");
+        return res.status(200).json({ status: "saved_pick_declined", sender });
+      }
+
+      // "עוד" → show the next page.
+      if (/^(עוד|הבא|תראי עוד|עוד רעיונות)$/.test(reply)) {
+        try {
+          const ideas = await getOpenContentIdeas(spreadsheetId);
+          const offset = ctx.offset || 6;
+          const next = ideas.slice(offset, offset + 6);
+          if (!next.length) {
+            await safeSendWhatsAppMessage(sender, "זה כל מה שיש כרגע. אפשר לבחור אחד מהרשימה.");
+            return res.status(200).json({ status: "saved_pick_no_more", sender });
+          }
+          storePendingQuestion(sender, {
+            questionType: "saved_list_pick",
+            context: {
+              options: next.map((i: any) => ({ contentId: i.contentId, name: i.idea, summary: i.summary })),
+              allNames: ctx.allNames,
+              offset: offset + 6,
+            },
+          });
+          const lines: string[] = [];
+          for (const i of next) {
+            lines.push(`"${i.idea}"`);
+            if (i.summary) lines.push(i.summary);
+            lines.push("");
+          }
+          const more = ideas.length > offset + 6;
+          const footer = more
+            ? 'אפשר לבחור אחד בשם, או לכתוב "עוד" להמשך.'
+            : "איזה מהם תרצי להכניס לגאנט?";
+          await safeSendWhatsAppMessage(sender, ["ואלה הבאים:", "", ...lines, footer].join("\n"));
+          return res.status(200).json({ status: "saved_pick_more_shown", sender });
+        } catch (moreError) {
+          console.error(`[Saved list] more failed: ${moreError}`);
+          await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את ההמשך. אפשר לבחור מהרשימה שכבר הצגתי.");
+          return res.status(200).json({ status: "saved_pick_more_failed", sender });
+        }
+      }
+
+      // Match the reply against the offered names.
+      const replyNorm = removePunctuationForMatching(reply);
+      const picked = (ctx.options || []).find((o: any) => {
+        const n = removePunctuationForMatching(o.name);
+        return o.name === reply || n === replyNorm || n.includes(replyNorm) || replyNorm.includes(n);
+      });
+
+      if (!picked) {
+        const names = (ctx.options || []).map((o: any) => `"${o.name}"`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["לא זיהיתי איזה רעיון. אפשר לכתוב את השם של אחד מאלה:", "", ...names].join("\n")
+        );
+        return res.status(200).json({ status: "saved_pick_unclear", sender });
+      }
+
+      // Continue into the normal date flow.
+      try {
+        const now = new Date();
+        const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+        const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0, 0, 0, 0);
+        const futureDates = smart.filter((d: string) => {
+          const p = d.split("/");
+          return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+        }).slice(0, 3);
+
+        if (!futureDates.length) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות שוב מאוחר יותר.");
+          return res.status(200).json({ status: "saved_pick_no_dates", sender });
+        }
+
+        storePendingQuestion(sender, {
+          questionType: "bridge_pick_date",
+          context: { contentId: picked.contentId, contentName: picked.name, dates: futureDates },
+        });
+        const lines = futureDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(
+          sender,
+          [`מעולה, אלה התאריכים הפנויים הקרובים ל"${picked.name}":`, "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
+        );
+        return res.status(200).json({ status: "saved_pick_dates_offered", sender });
+      } catch (dateError) {
+        console.error(`[Saved list] date lookup failed: ${dateError}`);
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+        return res.status(200).json({ status: "saved_pick_date_failed", sender });
+      }
+    }
+
+    if (pendingQuestion?.questionType === "offer_saved_list") {
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לעכשיו.");
+        return res.status(200).json({ status: "saved_list_declined", sender });
+      }
+
+      try {
+        const ideas = await getOpenContentIdeas(spreadsheetId);
+        if (!ideas.length) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות שמחכים לתאריך.");
+          return res.status(200).json({ status: "saved_list_empty", sender });
+        }
+
+        const shown = ideas.slice(0, 6);
+        const hasMore = ideas.length > 6;
+        storePendingQuestion(sender, {
+          questionType: "saved_list_pick",
+          context: {
+            options: shown.map((i: any) => ({ contentId: i.contentId, name: i.idea, summary: i.summary })),
+            allNames: ideas.map((i: any) => i.idea),
+            offset: 6,
+          },
+        });
+
+        const lines: string[] = [];
+        for (const i of shown) {
+          lines.push(`"${i.idea}"`);
+          if (i.summary) lines.push(i.summary);
+          lines.push("");
+        }
+
+        const header = hasMore
+          ? "אלה הרעיונות הראשונים שכבר שמורים ומחכים לתאריך:"
+          : "אלה הרעיונות שכבר שמורים ומחכים לתאריך:";
+        const footer = hasMore
+          ? 'אפשר לבחור אחד מהם בשם, או לכתוב "עוד" ואציג לך את השאר.'
+          : "איזה מהם תרצי להכניס לגאנט?";
+
+        await safeSendWhatsAppMessage(sender, [header, "", ...lines, footer].join("\n"));
+        return res.status(200).json({ status: "saved_list_shown", sender });
+      } catch (listError) {
+        console.error(`[Saved list] failed: ${listError}`);
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
+        return res.status(200).json({ status: "saved_list_failed", sender });
+      }
+    }
+
     if (pendingQuestion?.questionType === "bridge_pick_date") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
