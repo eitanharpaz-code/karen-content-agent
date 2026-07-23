@@ -3,6 +3,7 @@ import {
   getAllProductionTasksWithPriority,
   getGanttByDateRange,
   findAvailableDatesInMonth,
+  getOpenContentIdeas,
 } from "./sheets.service";
 import {
   computePriorityItems,
@@ -113,6 +114,7 @@ export type MorningBriefData = {
   monthName: string;
   planningSignals?: PlanningHealthSignal[];
   weeklyProgress?: WeeklyProgress;
+  savedIdeasCount?: number;
 };
 
 // Weekly progress (12.7.2026): one context line at the top of the morning
@@ -239,6 +241,7 @@ export const buildMorningBriefFromData = ({
   monthName,
   planningSignals = [],
   weeklyProgress,
+  savedIdeasCount = 0,
 }: MorningBriefData): string | null => {
   const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
 
@@ -281,6 +284,24 @@ export const buildMorningBriefFromData = ({
         ? morningPlanningSignal.recommendedAction
         : "מה החורים בגאנט";
 
+      // Nothing urgent and nothing approved waiting: instead of a generic
+      // "here are commands you could type", point at what is actually sitting
+      // there and offer to show it (23.7.2026). savedIdeasCount is passed in
+      // by the caller, which also arms the follow-up question.
+      const idleOffer = (savedIdeasCount || 0) > 0
+        ? [
+            "",
+            savedIdeasCount === 1
+              ? "יש לך רעיון אחד שמחכה לתאריך. רוצה לראות אותו ולבחור מתי להעלות?"
+              : `יש לך ${savedIdeasCount} רעיונות שמחכים לתאריך. רוצה לראות אותם ולבחור אחד?`,
+          ]
+        : [
+            "",
+            "אם בא לך להתקדם, אפשר לכתוב:",
+            `* ${suggestedAction}`,
+            `* בואי נתכנן את ${monthName}`,
+          ];
+
       return [
         "בוקר טוב קרן :)",
         "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
@@ -288,10 +309,7 @@ export const buildMorningBriefFromData = ({
         "",
         "היום נראה יחסית רגוע.",
         "לא מצאתי משהו דחוף שצריך טיפול מיידי." + backgroundLine,
-        "",
-        "אם בא לך להתקדם, אפשר לכתוב:",
-        `* ${suggestedAction}`,
-        `* בואי נתכנן את ${monthName}`,
+        ...idleOffer,
       ].join("\n");
     }
 
@@ -349,12 +367,23 @@ export const buildMorningBrief = async (): Promise<string | null> => {
   const { priorityItems, futureHoles, planningSignals, weeklyProgress } = await fetchBriefData();
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
 
+  // Count ideas waiting without a date, so an otherwise quiet brief can point
+  // at something concrete instead of listing commands (23.7.2026).
+  let savedIdeasCount = 0;
+  try {
+    const savedIdeas = await getOpenContentIdeas(process.env.GOOGLE_SHEETS_ID!);
+    savedIdeasCount = savedIdeas.length;
+  } catch (savedError) {
+    console.error(`[Daily Brief] saved-ideas count skipped: ${savedError}`);
+  }
+
   const deterministic = buildMorningBriefFromData({
     priorityItems,
     futureHoles,
     monthName,
     planningSignals,
     weeklyProgress,
+    savedIdeasCount,
   });
 
   if (!deterministic) return null;

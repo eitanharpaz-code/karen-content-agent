@@ -1,3 +1,4 @@
+import { storePendingQuestion } from "./confirmation.service";
 import cron from "node-cron";
 import { sendWhatsAppMessage } from "./whatsapp.service";
 import {
@@ -41,7 +42,21 @@ export const startScheduler = (): void => {
       console.log("[Daily Brief] Running morning brief...");
       try {
         const message = await buildMorningBrief();
-        if (message) await safeSend(message);
+        if (message) {
+          await safeSend(message);
+          // If the brief offered to show the waiting ideas, remember the
+          // question so Karen's "כן" later lands in the right handler
+          // (23.7.2026). Same pendingQuestion mechanism as in conversation.
+          if (message.includes("שמחכים לתאריך") || message.includes("שמחכה לתאריך")) {
+            const target = process.env.DAILY_BRIEF_TO;
+            if (target) {
+              storePendingQuestion(target, {
+                questionType: "offer_saved_list",
+                context: { fromBrief: true },
+              });
+            }
+          }
+        }
       } catch (error) {
         console.error("[Daily Brief] Error building morning brief:", error);
       }
