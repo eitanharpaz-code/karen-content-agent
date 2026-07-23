@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Stage 2B — behavioral test for askClaudeForMatching, using a mocked
 // fetch() so no real network call is made and no API cost is incurred.
 //

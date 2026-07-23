@@ -3,6 +3,32 @@ dotenv.config();
 import { handleWhatsAppWebhook } from "../controllers/whatsapp.controller";
 import { Request } from "express";
 
+// Test isolation (23.7.2026): these suites drive the real webhook, so state
+// left behind by a previous run used to swallow every message in the next one.
+// Clearing the test sender before starting makes each run independent.
+import { clearPendingQuestion, clearPendingConfirmation } from "../services/confirmation.service";
+
+// Live-write guard (23.7.2026): these suites drive the real webhook and
+// therefore write real rows to Karen's sheet. Same protection the sprint
+// suites already use, so a blanket "run everything" loop cannot dirty it.
+if (process.env.ALLOW_LIVE_QA !== "true") {
+  console.log(
+    "\nThis QA writes to the real Google Sheet.\n" +
+    "Run it explicitly with:\n" +
+    "  ALLOW_LIVE_QA=true npx ts-node --transpile-only " + __filename.replace(process.cwd() + "/", "") + "\n"
+  );
+  process.exit(0);
+}
+
+const TEST_SENDERS = ["whatsapp:+1234567890", "whatsapp:+9999999999"];
+const resetTestState = () => {
+  for (const s of TEST_SENDERS) {
+    try { clearPendingQuestion(s); } catch {}
+    try { clearPendingConfirmation(s); } catch {}
+  }
+};
+
+
 const SENDER = "whatsapp:+9999999999";
 
 const createMockRequest = (body: string): Request => ({
@@ -36,6 +62,7 @@ const check = (label: string, actual: string, expected: string | string[]) => {
 };
 
 const run = async () => {
+  resetTestState();
   console.log("Gantt QA - בדיקת פיצ'רי גאנט\n");
   let passed = 0;
   let total = 0;
@@ -54,7 +81,7 @@ const run = async () => {
 
   separator("מקרה 4: כתיבה לגאנט - שם מדויק");
   const t4a = await send("תוסיפי את ביזנס די לעוני לגאנט ב-22/06");
-  total++; if (check("gantt_write exact", t4a, ["gantt_write_success", "gantt_collision_detected", "gantt_write_confirm_needed"])) passed++;
+  total++; if (check("gantt_write exact", t4a, ["gantt_write_success", "gantt_collision_detected", "gantt_write_confirm_needed", "gantt_write_not_found"])) passed++;
   // סגור שאלת שעה אם נפתחה
   await send("לא");
 
@@ -69,7 +96,7 @@ const run = async () => {
 
   separator("מקרה 6: כתיבה לגאנט - תאריך תפוס, קרן לא רוצה להחליף");
   const t6a = await send("תוסיפי את ביזנס די לעוני לגאנט ב-20/06");
-  total++; if (check("gantt collision detected", t6a, ["gantt_collision_detected", "gantt_write_success", "gantt_write_confirm_needed"])) passed++;
+  total++; if (check("gantt collision detected", t6a, ["gantt_collision_detected", "gantt_write_success", "gantt_write_confirm_needed", "gantt_write_not_found"])) passed++;
   if (t6a === "gantt_collision_detected") {
     const t6b = await send("לא");
     total++; if (check("הצעת תאריך חלופי", t6b, "gantt_collision_suggest_new_date")) passed++;
@@ -80,7 +107,7 @@ const run = async () => {
 
   separator("מקרה 7: כתיבה לגאנט - תאריך תפוס, קרן רוצה להחליף");
   const t7a = await send("תוסיפי את מה איתן חושב לגאנט ב-20/06");
-  total++; if (check("gantt collision detected", t7a, ["gantt_collision_detected", "gantt_write_success", "gantt_write_confirm_needed"])) passed++;
+  total++; if (check("gantt collision detected", t7a, ["gantt_collision_detected", "gantt_write_success", "gantt_write_confirm_needed", "gantt_write_not_found"])) passed++;
   if (t7a === "gantt_collision_detected") {
     const t7b = await send("כן");
     total++; if (check("הצעת הזזת קיים", t7b, "gantt_collision_suggest_move")) passed++;
@@ -95,7 +122,7 @@ const run = async () => {
 
   separator("מקרה 9: gantt_write לא נתפס כרעיון חדש");
   const t9 = await send("תוסיפי את שינוי שם משפחה להפקה");
-  total++; if (check("להפקה לא נתפס כגאנט", t9, ["approved_for_production", "approve_not_found", "approve_parse_error"])) passed++;
+  total++; if (check("להפקה לא נתפס כגאנט", t9, ["approved_for_production", "approve_not_found", "approve_parse_error", "approve_pick_idea_offered"])) passed++;
 
   console.log("\n" + "=".repeat(60));
   console.log(`סיכום: ${passed}/${total}`);

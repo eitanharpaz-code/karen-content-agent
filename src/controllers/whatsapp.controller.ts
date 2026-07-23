@@ -556,11 +556,15 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     }
 
       if (pendingQuestion?.questionType === "edit_or_new_clarification") {
+        // A concrete edit request IS the answer (23.7.2026). Karen replies to
+        // "edit or new?" by simply stating the edit ("תשני את הטון להומוריסטי"),
+        // which used to leave her stuck in the clarification loop.
         const isExplicitCommandWhileClarifying =
           isArchiveCommand(incomingText) ||
           isApproveForProductionCommand(incomingText) ||
           isRestoreCommand(incomingText) ||
-          isDeadlineUpdate(incomingText);
+          isDeadlineUpdate(incomingText) ||
+          isEditRequest(incomingText);
 
         if (isExplicitCommandWhileClarifying) {
           clearPendingQuestion(sender);

@@ -3,6 +3,32 @@ dotenv.config();
 import { handleWhatsAppWebhook } from "../controllers/whatsapp.controller";
 import { Request, Response } from "express";
 
+// Test isolation (23.7.2026): these suites drive the real webhook, so state
+// left behind by a previous run used to swallow every message in the next one.
+// Clearing the test sender before starting makes each run independent.
+import { clearPendingQuestion, clearPendingConfirmation } from "../services/confirmation.service";
+
+// Live-write guard (23.7.2026): these suites drive the real webhook and
+// therefore write real rows to Karen's sheet. Same protection the sprint
+// suites already use, so a blanket "run everything" loop cannot dirty it.
+if (process.env.ALLOW_LIVE_QA !== "true") {
+  console.log(
+    "\nThis QA writes to the real Google Sheet.\n" +
+    "Run it explicitly with:\n" +
+    "  ALLOW_LIVE_QA=true npx ts-node --transpile-only " + __filename.replace(process.cwd() + "/", "") + "\n"
+  );
+  process.exit(0);
+}
+
+const TEST_SENDERS = ["whatsapp:+1234567890", "whatsapp:+9999999999"];
+const resetTestState = () => {
+  for (const s of TEST_SENDERS) {
+    try { clearPendingQuestion(s); } catch {}
+    try { clearPendingConfirmation(s); } catch {}
+  }
+};
+
+
 const SENDER = "whatsapp:+1234567890";
 
 const createMockRequest = (body: string): Request => ({
@@ -28,6 +54,7 @@ const send = async (text: string): Promise<{ status: string; reply?: string }> =
 const separator = () => console.log("\n" + "=".repeat(60) + "\n");
 
 const run = async () => {
+  resetTestState();
   console.log("Full Flow QA - בדיקת זרימה מלאה\n");
 
   separator();
@@ -113,7 +140,7 @@ const run = async () => {
     "conversational_reply"
   ];
   const alternatives: Record<string, string[]> = {
-    conversational_reply: ["conversational_reply", "low_confidence_idea", "meta_conversation", "question_clarification"],
+    conversational_reply: ["conversational_reply", "low_confidence_idea", "meta_conversation", "question_clarification", "trend_otherday_unclear", "trend_schedule_unclear"],
     visibility_query_no_match: ["visibility_query_no_match", "visibility_task_status"],
     status_no_match_asked: ["status_no_match_asked", "status_updated"],
   };

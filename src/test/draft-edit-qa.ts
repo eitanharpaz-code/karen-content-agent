@@ -2,6 +2,32 @@ import dotenv from "dotenv";
 import { handleWhatsAppWebhook } from "../controllers/whatsapp.controller";
 import { Request, Response } from "express";
 
+// Test isolation (23.7.2026): these suites drive the real webhook, so state
+// left behind by a previous run used to swallow every message in the next one.
+// Clearing the test sender before starting makes each run independent.
+import { clearPendingQuestion, clearPendingConfirmation } from "../services/confirmation.service";
+
+// Live-write guard (23.7.2026): these suites drive the real webhook and
+// therefore write real rows to Karen's sheet. Same protection the sprint
+// suites already use, so a blanket "run everything" loop cannot dirty it.
+if (process.env.ALLOW_LIVE_QA !== "true") {
+  console.log(
+    "\nThis QA writes to the real Google Sheet.\n" +
+    "Run it explicitly with:\n" +
+    "  ALLOW_LIVE_QA=true npx ts-node --transpile-only " + __filename.replace(process.cwd() + "/", "") + "\n"
+  );
+  process.exit(0);
+}
+
+const TEST_SENDERS = ["whatsapp:+1234567890", "whatsapp:+9999999999"];
+const resetTestState = () => {
+  for (const s of TEST_SENDERS) {
+    try { clearPendingQuestion(s); } catch {}
+    try { clearPendingConfirmation(s); } catch {}
+  }
+};
+
+
 dotenv.config();
 
 // Mock Express objects for testing
@@ -23,6 +49,7 @@ const createMockResponse = (): Response & { statusCode: number; responseData: an
 };
 
 const main = async () => {
+  resetTestState();
   try {
     console.log("Draft Edit Flow QA Test\n");
 
