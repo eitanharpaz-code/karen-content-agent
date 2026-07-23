@@ -400,6 +400,11 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה עוד לא צולם", "מה לא צולם", "מה נשאר לצלם",
     "מה עוד צריך לצלם", "מה מחכה לצילום", "מה טרם צולם",
     "עדיין לא צולם", "לא צולם עדיין", "בלי צילום", "חסר צילום",
+    // Restored 23.7.2026: removing the bare word "צילום" also killed these
+    // legitimate questions. Multi-word phrases are safe because a status
+    // update never contains them.
+    "צריך צילום", "צריכים צילום", "צריכות צילום", "ממתין לצילום",
+    "מחכה לצילום", "מחכים לצילום", "עוד לצלם",
     // Bare "צילום"/"צולם" were removed (23.7.2026): they swallowed status
     // updates like "ספרייט צולם", which Karen writes often. The full phrases
     // above still cover the real questions.
