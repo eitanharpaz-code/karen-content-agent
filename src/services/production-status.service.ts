@@ -280,6 +280,8 @@ export const expandStatusTypesWithDependencies = (statusTypes: ProductionStatusT
   return Array.from(expanded);
 };
 
+// Karen writes passively: "סקויה עלה". Bare forms count as a status update only
+// when the message reads as a statement about a named item, never a question.
 export const detectStatusUpdate = (message: string): StatusUpdateRequest | null => {
   const trimmedMessage = message.trim();
   const statusMatches = findAllProductionStatusMatches(trimmedMessage);
@@ -309,14 +311,30 @@ export const detectStatusUpdate = (message: string): StatusUpdateRequest | null 
   return {
     statusType: statusTypes[0],
     statusTypes: expandedStatusTypes,
-    contentName: extractContentName(trimmedMessage, lastMatch.lastTokenEnd),
+    contentName: extractContentName(trimmedMessage, lastMatch.lastTokenEnd, uniqueStatusMatches[0].firstTokenStart),
     rawMessage: message,
   };
 };
 
-const extractContentName = (message: string, afterIndex: number): string => {
+const extractContentName = (message: string, afterIndex: number, statusStartIndex?: number): string => {
   const afterStatusText = message.substring(afterIndex).trim();
   let cleaned = afterStatusText;
+  // Karen often writes the name BEFORE the status word ("ספרייט צולם").
+  // With nothing after the status, take what precedes it instead of
+  // swallowing the whole message together with the status word.
+  if (!cleaned && typeof statusStartIndex === "number" && statusStartIndex > 0) {
+    const beforeCleaned = message
+      .substring(0, statusStartIndex)
+      .trim()
+      .replace(STATUS_PREFIX_CLEANUP, "")
+      .replace(/^(?:ה|את|על|של|שלי|שלך)\s+/i, "")
+      .replace(/\s+(?:כבר|גם|היום|אתמול)$/i, "")
+      .replace(/^['"]|['"]$/g, "")
+      .trim();
+    if (beforeCleaned) {
+      return normalizeHebrewText(beforeCleaned);
+    }
+  }
 
   if (!cleaned) {
       return normalizeHebrewText(

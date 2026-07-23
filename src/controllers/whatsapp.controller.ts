@@ -1,3 +1,4 @@
+import { askClaudeForStatusIntent, looksLikeStatusMention } from "../services/status-intent.service";
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
@@ -88,6 +89,7 @@ approveContentForProduction,
   findAvailableDatesInMonth,
   findSmartGanttDate,
   getOrganicReelsInWeek,
+  getAllProductionTasks,
   getReelsBlockingDates,
   removePunctuationForMatching,
   updateGanttRowDate,
@@ -3811,11 +3813,41 @@ if (isArchiveCommand(incomingText)) {
     // ===== PRODUCTION STATUS UPDATE CHECK =====
     console.log(`[Route Debug] About to check isProductionStatusUpdate...`);
     // Sprint 7: Check if this is a production status update
-    const isStatusUpdate = isProductionStatusUpdate(incomingText);
+    let isStatusUpdate = isProductionStatusUpdate(incomingText);
     console.log(`[Route Debug] isProductionStatusUpdate: ${isStatusUpdate}`);
 
+    // Claude fallback (23.7.2026): Karen also writes name-first and passively
+    // ("ספרייט צולם", "סקויה עלה"). Regex guards for those proved brittle and
+    // collided with questions ("מה עוד לא נערך"), so when the regex detector
+    // finds nothing but the message mentions a status word, ask Claude one
+    // bounded question. Fast path unchanged for normal phrasing.
+    let claudeStatus: Awaited<ReturnType<typeof askClaudeForStatusIntent>> = null;
+    if (!isStatusUpdate && looksLikeStatusMention(incomingText)) {
+      try {
+        const openTasks = await getAllProductionTasks(process.env.GOOGLE_SHEETS_ID!);
+        const names = (openTasks || [])
+          .map((t: any) => t.taskName || t.name || t.contentName || "")
+          .filter(Boolean);
+        claudeStatus = await askClaudeForStatusIntent(incomingText, names);
+        if (claudeStatus?.isStatusUpdate) {
+          isStatusUpdate = true;
+          console.log(`[Route Debug] Claude status intent: name="${claudeStatus.contentName}" statuses=[${claudeStatus.statuses.join(", ")}]`);
+        }
+      } catch (statusIntentError) {
+        console.error(`[Route Debug] status intent fallback failed: ${statusIntentError}`);
+      }
+    }
+
+
     if (isStatusUpdate) {
-      const statusUpdate = detectStatusUpdate(incomingText);
+      const statusUpdate = detectStatusUpdate(incomingText) || (claudeStatus && claudeStatus.isStatusUpdate
+        ? {
+            statusType: (claudeStatus.statuses[0] === "cover" ? "cover_ready" : claudeStatus.statuses[0]) as any,
+            statusTypes: claudeStatus.statuses.map((s: string) => (s === "cover" ? "cover_ready" : s)) as any,
+            contentName: claudeStatus.contentName,
+            rawMessage: incomingText,
+          }
+        : null);
       console.log(`[Route Debug] detectStatusUpdate: ${statusUpdate ? `{ statusTypes: [${statusUpdate.statusTypes.join(", ")}], contentName: "${statusUpdate.contentName}" }` : "null"}`);
       if (statusUpdate) {
         try {
@@ -3901,12 +3933,12 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           // Found exactly one match - update all detected statuses
          const exactMatch = matchResult as ProductionTaskMatch;
          const statusUpdates = statusUpdate.statusTypes
-            .map((statusType) => {
+            .map((statusType: any) => {
               const columnName = getColumnName(statusType);
               const columnIndex = getProductionStatusColumnIndex(columnName);
               return { statusType, columnName, columnIndex };
             })
-            .filter((update) => update.columnIndex !== null) as { statusType: string; columnName: string; columnIndex: number }[];
+            .filter((update: any) => update.columnIndex !== null) as { statusType: string; columnName: string; columnIndex: number }[];
             const uniqueUpdates = Array.from(
             new Map(statusUpdates.map((update) => [update.columnIndex, update])).values()
           );
