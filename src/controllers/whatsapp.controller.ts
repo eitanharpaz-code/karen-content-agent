@@ -1,3 +1,4 @@
+import { computeScheduledReelGap } from "../services/planning-health.service";
 import { askClaudeForStatusIntent, looksLikeStatusMention } from "../services/status-intent.service";
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
@@ -1965,8 +1966,108 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return res.status(200).json({ status: "gantt_date_change_collision_unclear", sender });
     }
 
+    // Date pick after the intent question (23.7.2026). Karen writes dates in
+    // many shapes: "24", "24/7", "יום שישי", "שישי", "הראשון". Match against
+    // the offered list rather than demanding one format.
+    if (pendingQuestion?.questionType === "bridge_pick_date") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const dates: string[] = ctx.dates || [];
+      const reply = incomingText.trim();
+
+      if (isRejectionMessage(reply)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "סגור, השארתי אותו כרגע בלי תאריך.");
+        return res.status(200).json({ status: "bridge_pick_date_kept", sender });
+      }
+
+      const ORDINALS: Record<string, number> = {
+        "הראשון": 0, "ראשון שברשימה": 0, "הראשונה": 0,
+        "השני": 1, "השנייה": 1, "השניה": 1,
+        "השלישי": 2, "השלישית": 2,
+      };
+
+      let chosen: string | null = null;
+
+      // 1. Full or partial numeric date: 24, 24/7, 24/07/2026
+      const numMatch = reply.match(/(\d{1,2})(?:[./-](\d{1,2}))?(?:[./-](\d{2,4}))?/);
+      if (numMatch) {
+        const day = parseInt(numMatch[1], 10);
+        const month = numMatch[2] ? parseInt(numMatch[2], 10) : null;
+        chosen = dates.find((d) => {
+          const p = d.split("/");
+          const dDay = parseInt(p[0], 10);
+          const dMonth = parseInt(p[1], 10);
+          return dDay === day && (month === null || dMonth === month);
+        }) || null;
+      }
+
+      // 2. Ordinal reference to the list
+      if (!chosen) {
+        for (const [word, idx] of Object.entries(ORDINALS)) {
+          if (reply.includes(word) && dates[idx]) { chosen = dates[idx]; break; }
+        }
+      }
+
+      // 3. Hebrew day name
+      if (!chosen) {
+        chosen = dates.find((d) => {
+          const dn = getHebrewDayName(d);
+          return dn && (reply.includes(dn) || reply.includes(`יום ${dn}`));
+        }) || null;
+      }
+
+      if (!chosen) {
+        const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["לא זיהיתי איזה תאריך. אפשר לבחור אחד מאלה:", "", ...lines].join("\n")
+        );
+        return res.status(200).json({ status: "bridge_pick_date_unclear", sender });
+      }
+
+      clearPendingQuestion(sender);
+      let approveResult;
+      try {
+        approveResult = await approveContentForProduction(spreadsheetId, ctx.contentName);
+      } catch (approveError) {
+        await safeSendWhatsAppMessage(
+          sender,
+          `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`
+        );
+        return res.status(200).json({ status: "bridge_pick_approve_failed", sender });
+      }
+
+      const chosenDayName = getHebrewDayName(chosen);
+      const productionDeadline = await addRowToGantt(
+        spreadsheetId,
+        approveResult.contentId,
+        ctx.contentName,
+        chosen,
+        chosenDayName,
+        "",
+        "בתכנון"
+      );
+      await sortGanttByDate(spreadsheetId);
+
+      storePendingQuestion(sender, {
+        questionType: "gantt_upload_time",
+        context: { contentId: approveResult.contentId, contentName: ctx.contentName, date: chosen },
+      });
+
+      await safeSendWhatsAppMessage(
+        sender,
+        [
+          `מעולה, הכנסתי את "${ctx.contentName}" לגאנט ליום ${chosenDayName}, ${chosen}.`,
+          "",
+          "באיזו שעה לתכנן את ההעלאה?",
+        ].join("\n")
+      );
+      return res.status(200).json({ status: "bridge_pick_date_done", sender });
+    }
+
     if (pendingQuestion?.questionType === "bridge_offer") {
-      const { contentName, date, dayName } = pendingQuestion.context as any;
+      const { contentName, date, dayName, availableDates, askedIntentOnly } = pendingQuestion.context as any;
       const isExplicitCommandDuringBridgeOffer =
         isArchiveCommand(incomingText) ||
         isApproveForProductionCommand(incomingText) ||
@@ -1981,8 +2082,51 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         if (bridgeAnswer === "keep") {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "הכול טוב, הוא נשאר בינתיים בבנק. כשתרצי, נמצא לו מקום מתאים בגאנט.");
-          return res.status(200).json({ status: "bridge_offer_kept", sender });
+          // Respect the "no", but hand her the picture: how many organic reels
+          // are still missing, and an easy way to see what is already waiting.
+          let gapLine = "";
+          let offeredList = false;
+          try {
+            const spreadsheetIdForGap = process.env.GOOGLE_SHEETS_ID!;
+            // Pull a window wide enough to cover this week and next.
+            const gapFrom = new Date(); gapFrom.setDate(gapFrom.getDate() - 7);
+            const gapTo = new Date(); gapTo.setDate(gapTo.getDate() + 21);
+            const ganttForGap = await getGanttByDateRange(spreadsheetIdForGap, gapFrom, gapTo);
+            const thisWeek = computeScheduledReelGap(ganttForGap, {});
+            const nextWeekAnchor = new Date();
+            nextWeekAnchor.setDate(nextWeekAnchor.getDate() + 7);
+            const nextWeek = computeScheduledReelGap(ganttForGap, { anchorDate: nextWeekAnchor });
+            const missing = thisWeek.missing > 0 ? thisWeek.missing : nextWeek.missing;
+            const scopeWord = thisWeek.missing > 0 ? "השבוע" : "החודש";
+            if (missing > 0) {
+              const what = missing === 1 ? "חסר רילס אחד" : `חסרים ${missing} רילסים`;
+              gapLine = ` עדיין ${what} כדי לסגור את ${scopeWord}, רוצה לראות מה כבר שמור ולבחור משם?`;
+              offeredList = true;
+              storePendingQuestion(sender, {
+                questionType: "offer_saved_list",
+                context: { missing, scopeWord },
+              });
+            }
+          } catch (gapError) {
+            console.error(`[Bridge] reel gap lookup skipped: ${gapError}`);
+          }
+          await safeSendWhatsAppMessage(sender, `סגור, השארתי אותו כרגע בלי תאריך.${gapLine}`);
+          return res.status(200).json({ status: offeredList ? "bridge_kept_with_gap" : "bridge_offer_kept", sender });
+        }
+
+        if (bridgeAnswer === "schedule" && askedIntentOnly) {
+          // Intent confirmed. Now offer concrete dates and let her choose.
+          const dates: string[] = (availableDates || [date]).filter(Boolean);
+          storePendingQuestion(sender, {
+            questionType: "bridge_pick_date",
+            context: { contentId: (pendingQuestion.context as any).contentId, contentName, dates },
+          });
+          const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+          await safeSendWhatsAppMessage(
+            sender,
+            ["מעולה, אלה התאריכים הפנויים הקרובים:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
+          );
+          return res.status(200).json({ status: "bridge_dates_offered", sender });
         }
 
         if (bridgeAnswer === "schedule") {
@@ -2701,6 +2845,9 @@ await safeSendWhatsAppMessage(
             if (bridgeFuture.length > 0) {
               const bridgeDate = bridgeFuture[0];
               const bridgeDayName = getHebrewDayName(bridgeDate);
+              // Intent-first (23.7.2026): the old message merged two questions
+              // ("schedule it?" and "on this date?"), so "לא" was ambiguous.
+              // Now we ask only about intent; dates come in the next step.
               storePendingQuestion(sender, {
                 questionType: "bridge_offer",
                 context: {
@@ -2708,9 +2855,11 @@ await safeSendWhatsAppMessage(
                   contentName: pendingDraft.shortName,
                   date: bridgeDate,
                   dayName: bridgeDayName,
+                  availableDates: bridgeFuture.slice(0, 3),
+                  askedIntentOnly: true,
                 },
               });
-              bridgeOfferLine = `יש לנו מקום פנוי קרוב בגאנט ביום ${bridgeDayName}, ${bridgeDate}. רוצה שאשבץ אותו שם כבר, או שנשאיר אותו בינתיים בבנק? (כן / לא)`;
+              bridgeOfferLine = `רוצה לקבוע לו תאריך בגאנט עכשיו, או להשאיר אותו כרגע בלי תאריך?`;
             }
           } catch (bridgeError) {
             console.error(`[Bridge] free-date lookup failed, keeping passive tail: ${bridgeError}`);
