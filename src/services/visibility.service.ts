@@ -400,7 +400,9 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
     "מה עוד לא צולם", "מה לא צולם", "מה נשאר לצלם",
     "מה עוד צריך לצלם", "מה מחכה לצילום", "מה טרם צולם",
     "עדיין לא צולם", "לא צולם עדיין", "בלי צילום", "חסר צילום",
-    "צילום", "צולם",
+    // Bare "צילום"/"צולם" were removed (23.7.2026): they swallowed status
+    // updates like "ספרייט צולם", which Karen writes often. The full phrases
+    // above still cover the real questions.
   ];
   if (filmedPhrases.some((p) => rawText.includes(p))) {
     return "missing_filmed";
