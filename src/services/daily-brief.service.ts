@@ -1,3 +1,4 @@
+import { getHebrewDayName } from "../utils/date-utils";
 import { getValue, setValue } from "./persistence.service";
 import {
   getAllProductionTasksWithPriority,
@@ -18,6 +19,7 @@ import { humanizeBrief } from "./brief-humanizer.service";
 import {
   computePlanningHealthSignals,
   computeWeeklyProgress,
+  computeScheduledReelGap,
 } from "./planning-health.service";
 import type {
   PlanningHealthSignal,
@@ -39,6 +41,19 @@ export const markInteractionToday = (sender: string): void => {
 
 export const hasInteractedToday = (sender: string): boolean => {
   return getValue<string>("interactionLog", sender) === getTodayDateString();
+};
+
+// Days since Karen last wrote (23.7.2026). The interaction log already stores
+// the last date she messaged, so this only reads it. Returns 0 if she wrote
+// today, and null if there is no record at all (nothing to infer from).
+export const getDaysSinceLastInteraction = (sender: string): number | null => {
+  const last = getValue<string>("interactionLog", sender);
+  if (!last) return null;
+  const lastDate = new Date(last + "T00:00:00");
+  if (isNaN(lastDate.getTime())) return null;
+  const today = new Date(getTodayDateString() + "T00:00:00");
+  const diff = Math.round((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+  return diff >= 0 ? diff : null;
 };
 
 const getTodayDateString = (): string => {
@@ -550,6 +565,59 @@ export type AfternoonReminderResult = {
   bypassInteraction: boolean;
 };
 
+// Silence nudge (23.7.2026). When Karen has not written for two days the
+// evening reminder changes character: instead of reporting, it offers to do
+// one small thing for her. Sent once, then it stops. The daily brief keeps
+// running normally either way.
+//
+// Priority: something already on the gantt that is still unfilmed beats a
+// general "you have ideas waiting", because it is closer to falling through.
+export const buildSilenceNudge = (
+  priorityItems: ContentPriorityItem[],
+  savedIdeasCount: number,
+  missingReels: number
+): string | null => {
+  const unfilmedSoon = priorityItems.find(
+    (i) =>
+      !i.isPublished &&
+      i.ganttDate &&
+      i.daysUntilUpload !== null &&
+      i.daysUntilUpload >= 0 &&
+      i.daysUntilUpload <= 3 &&
+      i.filmed !== "כן"
+  );
+
+  if (unfilmedSoon) {
+    const parsedGanttDate = unfilmedSoon.ganttDate
+      ? (() => { const p = unfilmedSoon.ganttDate!.split("/"); return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])); })()
+      : null;
+    const dayName = parsedGanttDate ? getHebrewDayName(parsedGanttDate) : "";
+    const whenWord =
+      unfilmedSoon.daysUntilUpload === 0
+        ? "היום"
+        : unfilmedSoon.daysUntilUpload === 1
+          ? "מחר"
+          : `ליום ${dayName}`;
+    return [
+      `היי קרן, רק קופצת אלייך בעדינות. "${unfilmedSoon.displayTitle}" מתוכנן ${whenWord} ועדיין מחכה לצילום.`,
+      "",
+      "רוצה שאעזור לך להחליט מה לעשות איתו?",
+    ].join("\n");
+  }
+
+  if (missingReels > 0 && savedIdeasCount > 0) {
+    const missingPart =
+      missingReels === 1 ? "חסר כרגע רילס אחד" : `חסרים כרגע ${missingReels} רילסים`;
+    return [
+      `היי קרן, רק קופצת אלייך בעדינות. ${missingPart} כדי לסגור את השבוע, ויש כמה רעיונות שמחכים לתאריך.`,
+      "",
+      "רוצה שאבחר לך את הרעיון שהכי קל לקדם עכשיו?",
+    ].join("\n");
+  }
+
+  return null;
+};
+
 export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderResult> => {
   const { priorityItems, weeklyProgress } = await fetchBriefData();
 
@@ -565,6 +633,31 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
       (item) => !["פורסם", "בוטל", "ארכיון"].includes(item.status)
     ).length < 3;
   const monthName = new Date().toLocaleDateString("he-IL", { month: "long", timeZone: "Asia/Jerusalem" });
+
+  // Two days of silence: replace the report with one small offer, once.
+  // Guarded by a stored flag so it never turns into nagging.
+  const nudgeTarget = process.env.DAILY_BRIEF_TO || "";
+  const silentDays = nudgeTarget ? getDaysSinceLastInteraction(nudgeTarget) : null;
+  if (silentDays !== null && silentDays >= 2) {
+    const alreadyNudged = getValue<string>("silenceNudge", nudgeTarget);
+    const lastWrote = getValue<string>("interactionLog", nudgeTarget);
+    if (!alreadyNudged || alreadyNudged !== lastWrote) {
+      let savedCount = 0;
+      try {
+        const saved = await getOpenContentIdeas(id);
+        savedCount = saved.length;
+      } catch (e) {
+        console.error(`[Silence Nudge] saved count skipped: ${e}`);
+      }
+      const gap = computeScheduledReelGap(twoWeekGantt, {});
+      const nudge = buildSilenceNudge(priorityItems, savedCount, gap.missing);
+      if (nudge) {
+        setValue("silenceNudge", nudgeTarget, lastWrote || "sent");
+        return { message: nudge, bypassInteraction: true };
+      }
+    }
+  }
+
 
   const deterministic = buildAfternoonReminderFromData({
     priorityItems,

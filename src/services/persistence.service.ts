@@ -29,9 +29,11 @@ export type StateSection =
   | "pendingConfirmations"
   | "pendingQuestions"
   | "interactionLog"
-  | "conversationHistory";
+  | "conversationHistory"
+  | "silenceNudge";
 
 type PersistedState = {
+  silenceNudge: Record<string, unknown>;
   pendingConfirmations: Record<string, unknown>;
   pendingQuestions: Record<string, unknown>;
   interactionLog: Record<string, unknown>;
@@ -44,6 +46,7 @@ const STATE_FILE = path.join(DATA_DIR, "agent-state.json");
 const TMP_FILE = path.join(DATA_DIR, "agent-state.json.tmp");
 
 const emptyState = (): PersistedState => ({
+  silenceNudge: {},
   pendingConfirmations: {},
   pendingQuestions: {},
   interactionLog: {},
@@ -63,6 +66,7 @@ const loadStateFromDisk = (): PersistedState => {
 
     // Minimal shape validation: every section must be a plain object.
     const sections: StateSection[] = [
+      "silenceNudge",
       "pendingConfirmations",
       "pendingQuestions",
       "interactionLog",
