@@ -175,6 +175,34 @@ export type WeeklyProgress = {
   reelTargetMet: boolean;
 };
 
+// Scheduled (not published) reel gap (23.7.2026). computeWeeklyProgress
+// measures achievement: reels already marked פורסם. For planning we need the
+// opposite question: how many organic reels are already ON the gantt for a
+// given week, and therefore how many are still missing to reach the target.
+// A reel scheduled but not yet filmed still occupies its slot.
+export const computeScheduledReelGap = (
+  ganttItems: PlanningGanttItem[],
+  options: PlanningHealthOptions = {}
+): { scheduled: number; target: number; missing: number } => {
+  const anchor = options.anchorDate ? new Date(options.anchorDate) : new Date();
+  anchor.setHours(0, 0, 0, 0);
+  const target = options.weeklyReelTarget ?? DEFAULT_WEEKLY_REEL_TARGET;
+  const weekStart = startOfWeek(anchor);
+  const weekEnd = addDays(weekStart, 6);
+
+  const scheduled = ganttItems
+    .map((item) => ({ item, date: parseSheetDate(item.date) }))
+    .filter((entry): entry is { item: PlanningGanttItem; date: Date } =>
+      Boolean(entry.date) &&
+      isUsableContentId(entry.item.contentId) &&
+      !isCollaboration(entry.item) &&
+      isReel(entry.item) &&
+      isInRange(entry.date!, weekStart, weekEnd)
+    ).length;
+
+  return { scheduled, target, missing: Math.max(0, target - scheduled) };
+};
+
 export const computeWeeklyProgress = (
   ganttItems: PlanningGanttItem[],
   options: PlanningHealthOptions = {}
