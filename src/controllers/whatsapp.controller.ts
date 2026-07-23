@@ -90,6 +90,7 @@ approveContentForProduction,
   findSmartGanttDate,
   getOrganicReelsInWeek,
   getAllProductionTasks,
+  getContentNamesWithSummaries,
   getReelsBlockingDates,
   removePunctuationForMatching,
   updateGanttRowDate,
@@ -3824,11 +3825,8 @@ if (isArchiveCommand(incomingText)) {
     let claudeStatus: Awaited<ReturnType<typeof askClaudeForStatusIntent>> = null;
     if (!isStatusUpdate && looksLikeStatusMention(incomingText)) {
       try {
-        const openTasks = await getAllProductionTasks(process.env.GOOGLE_SHEETS_ID!);
-        const names = (openTasks || [])
-          .map((t: any) => t.taskName || t.name || t.contentName || "")
-          .filter(Boolean);
-        claudeStatus = await askClaudeForStatusIntent(incomingText, names);
+        const knownContent = await getContentNamesWithSummaries(process.env.GOOGLE_SHEETS_ID!);
+        claudeStatus = await askClaudeForStatusIntent(incomingText, knownContent);
         if (claudeStatus?.isStatusUpdate) {
           isStatusUpdate = true;
           console.log(`[Route Debug] Claude status intent: name="${claudeStatus.contentName}" statuses=[${claudeStatus.statuses.join(", ")}]`);

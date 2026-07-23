@@ -1089,6 +1089,45 @@ export const getContentIdeaSummary = async (
 // Get content metadata from both בנק רעיונות and תכנים שאושרו.
 // Approved content is important because once an idea moves to production,
 // it is removed from בנק רעיונות.
+// Status matching by summary (23.7.2026): Karen refers to content by the
+// brand or topic that appears in the SUMMARY, not the title. She says
+// "ספרייט צולם" while the row is named "אנשים שמתקשרים במקום לכתוב" and only
+// the summary mentions ספרייט. This returns name + summary for every open
+// item so the classifier can match on either.
+export const getContentNamesWithSummaries = async (
+  spreadsheetId: string
+): Promise<Array<{ name: string; summary: string }>> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const [ideasResponse, approvedResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.contentLibrary}!A:L`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.approvedContent}!A:K`,
+    }),
+  ]);
+
+  const out: Array<{ name: string; summary: string }> = [];
+  const push = (name: string, summary: string) => {
+    const n = (name || "").toString().trim();
+    if (!n) return;
+    out.push({ name: n, summary: (summary || "").toString().trim() });
+  };
+
+  // בנק רעיונות: B = idea name, C = summary
+  for (const row of (ideasResponse.data.values || []).slice(1)) {
+    push(row[1], row[2]);
+  }
+  // תכנים שאושרו: B = content name, C = summary
+  for (const row of (approvedResponse.data.values || []).slice(1)) {
+    push(row[1], row[2]);
+  }
+  return out;
+};
+
 export const getContentIdeasWithPriority = async (
   spreadsheetId: string
 ): Promise<Map<string, { priority: string; category: string; contentType: string }>> => {

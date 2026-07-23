@@ -41,12 +41,16 @@ export const looksLikeStatusMention = (message: string): boolean => {
 
 export const askClaudeForStatusIntent = async (
   message: string,
-  knownContentNames: string[]
+  knownContent: Array<{ name: string; summary: string }>
 ): Promise<ClaudeStatusResult | null> => {
   if (!looksLikeStatusMention(message)) return null;
 
-  const nameList = knownContentNames.length
-    ? knownContentNames.map((n) => `- ${n}`).join("\n")
+  // Include the summary: Karen names content by the brand or topic inside it
+  // ("ספרייט"), which often appears only in the summary, not the title.
+  const nameList = knownContent.length
+    ? knownContent
+        .map((c) => (c.summary ? `- ${c.name} | ${c.summary}` : `- ${c.name}`))
+        .join("\n")
     : "(אין תכנים פתוחים)";
 
   const prompt = [
@@ -55,7 +59,7 @@ export const askClaudeForStatusIntent = async (
     "ההודעה:",
     `"${message}"`,
     "",
-    "תכנים שנמצאים כרגע בהפקה:",
+    "תכנים פתוחים (שם | סיכום):",
     nameList,
     "",
     "השאלה: האם ההודעה מדווחת על התקדמות בתוכן קיים (צולם / נערך / קאבר מוכן / עלה),",
@@ -65,7 +69,10 @@ export const askClaudeForStatusIntent = async (
     "- שאלה (למשל: מה לא צולם, איזה סרטון עלה, מה מוכן) איננה דיווח.",
     "- שלילה (למשל: עוד לא נערך, טרם צולם) איננה דיווח.",
     "- דיווח יכול להופיע בכל סדר מילים, למשל: ספרייט צולם / צילמתי את ספרייט.",
-    "- שם התוכן חייב להיות אחד מהרשימה למעלה, או חלק ברור ממנו. אם אין התאמה, החזר/י לא.",
+    "- כל שורה ברשימה היא: שם התוכן, ואחריו הסיכום שלו.",
+    "- קרן מזכירה לעיתים מותג או נושא שמופיע רק בסיכום. זו התאמה תקפה.",
+    "- החזר/י תמיד את השם המדויק מהרשימה, לא את מה שקרן כתבה.",
+    "- אם אין התאמה ברורה לאף שורה, החזר/י isStatusUpdate=false.",
     "",
     "החזר/י JSON בלבד, בלי טקסט נוסף, במבנה:",
     '{"isStatusUpdate": true/false, "contentName": "שם מהרשימה או ריק", "statuses": ["filmed"|"edited"|"cover"|"uploaded"]}',
