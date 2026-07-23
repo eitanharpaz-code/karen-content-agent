@@ -572,11 +572,19 @@ export type AfternoonReminderResult = {
 //
 // Priority: something already on the gantt that is still unfilmed beats a
 // general "you have ideas waiting", because it is closer to falling through.
+export type SilenceNudgeResult = {
+  message: string;
+  kind: "unfilmed" | "ideas";
+  contentId?: string;
+  contentName?: string;
+  date?: string;
+};
+
 export const buildSilenceNudge = (
   priorityItems: ContentPriorityItem[],
   savedIdeasCount: number,
   missingReels: number
-): string | null => {
+): SilenceNudgeResult | null => {
   const unfilmedSoon = priorityItems.find(
     (i) =>
       !i.isPublished &&
@@ -598,21 +606,30 @@ export const buildSilenceNudge = (
         : unfilmedSoon.daysUntilUpload === 1
           ? "מחר"
           : `ליום ${dayName}`;
-    return [
-      `היי קרן, רק קופצת אלייך בעדינות. "${unfilmedSoon.displayTitle}" מתוכנן ${whenWord} ועדיין מחכה לצילום.`,
-      "",
-      "רוצה שאעזור לך להחליט מה לעשות איתו?",
-    ].join("\n");
+    return {
+      message: [
+        `היי קרן, רק קופצת אלייך בעדינות. "${unfilmedSoon.displayTitle}" מתוכנן ${whenWord} ועדיין מחכה לצילום.`,
+        "",
+        "להשאיר אותו כמו שהוא, או להעביר ליום אחר?",
+      ].join("\n"),
+      kind: "unfilmed",
+      contentId: unfilmedSoon.contentId,
+      contentName: unfilmedSoon.displayTitle,
+      date: unfilmedSoon.ganttDate || undefined,
+    };
   }
 
   if (missingReels > 0 && savedIdeasCount > 0) {
     const missingPart =
       missingReels === 1 ? "חסר כרגע רילס אחד" : `חסרים כרגע ${missingReels} רילסים`;
-    return [
-      `היי קרן, רק קופצת אלייך בעדינות. ${missingPart} כדי לסגור את השבוע, ויש כמה רעיונות שמחכים לתאריך.`,
-      "",
-      "רוצה שאבחר לך את הרעיון שהכי קל לקדם עכשיו?",
-    ].join("\n");
+    return {
+      message: [
+        `היי קרן, רק קופצת אלייך בעדינות. ${missingPart} כדי לסגור את השבוע, ויש כמה רעיונות שמחכים לתאריך.`,
+        "",
+        "רוצה לראות אותם ולבחור אחד?",
+      ].join("\n"),
+      kind: "ideas",
+    };
   }
 
   return null;
@@ -653,7 +670,8 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
       const nudge = buildSilenceNudge(priorityItems, savedCount, gap.missing);
       if (nudge) {
         setValue("silenceNudge", nudgeTarget, lastWrote || "sent");
-        return { message: nudge, bypassInteraction: true };
+        setValue("silenceNudge", `${nudgeTarget}:context`, nudge);
+        return { message: nudge.message, bypassInteraction: true };
       }
     }
   }

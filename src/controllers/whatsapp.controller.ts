@@ -2080,6 +2080,59 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
     }
 
+    // Answer to the evening nudge about unfilmed content (23.7.2026).
+    // She either leaves it where it is, or moves it. Moving reuses the
+    // existing smart-date flow rather than inventing a new one.
+    if (pendingQuestion?.questionType === "nudge_unfilmed_decision") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const reply = incomingText.trim();
+
+      if (/להשאיר|משאיר|נשאיר|כמו שהוא|בסדר|סבבה/.test(reply)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "סגור, השארתי אותו איפה שהוא.");
+        return res.status(200).json({ status: "nudge_kept_as_is", sender });
+      }
+
+      if (/להעביר|תעבירי|נעביר|להזיז|תזיזי|יום אחר|תאריך אחר/.test(reply)) {
+        try {
+          const now = new Date();
+          const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+          const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+          const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0, 0, 0, 0);
+          const dates = smart.filter((d: string) => {
+            const p = d.split("/");
+            return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+          }).filter((d: string) => d !== ctx.date).slice(0, 3);
+
+          if (!dates.length) {
+            clearPendingQuestion(sender);
+            await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב להעביר אליו. אפשר לנסות מאוחר יותר.");
+            return res.status(200).json({ status: "nudge_move_no_dates", sender });
+          }
+
+          storePendingQuestion(sender, {
+            questionType: "bridge_pick_date",
+            context: { contentId: ctx.contentId, contentName: ctx.contentName, dates, mode: "move" },
+          });
+          const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+          await safeSendWhatsAppMessage(
+            sender,
+            [`בסדר. אלה התאריכים הפנויים הקרובים ל"${ctx.contentName}":`, "", ...lines, "", "איזה תאריך מתאים?"].join("\n")
+          );
+          return res.status(200).json({ status: "nudge_move_dates_offered", sender });
+        } catch (moveError) {
+          console.error(`[Nudge] move lookup failed: ${moveError}`);
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+          return res.status(200).json({ status: "nudge_move_failed", sender });
+        }
+      }
+
+      await safeSendWhatsAppMessage(sender, 'לא בטוחה מה התכוונת. להשאיר אותו איפה שהוא, או להעביר ליום אחר?');
+      return res.status(200).json({ status: "nudge_decision_unclear", sender });
+    }
+
     if (pendingQuestion?.questionType === "offer_saved_list") {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
@@ -2190,6 +2243,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       clearPendingQuestion(sender);
+
+      // Move mode: the content is already on the gantt, so just change its
+      // date instead of approving and adding a new row.
+      if (ctx.mode === "move") {
+        const movedDayName = getHebrewDayName(chosen);
+        await updateGanttRowDate(spreadsheetId, ctx.contentId, chosen, movedDayName);
+        await sortGanttByDate(spreadsheetId);
+        await safeSendWhatsAppMessage(
+          sender,
+          `סגור, העברתי את "${ctx.contentName}" ליום ${movedDayName}, ${chosen}.`
+        );
+        return res.status(200).json({ status: "gantt_date_moved", sender });
+      }
+
       let approveResult;
       try {
         approveResult = await approveContentForProduction(spreadsheetId, ctx.contentName);

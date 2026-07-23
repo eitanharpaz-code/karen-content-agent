@@ -1,4 +1,5 @@
 import { storePendingQuestion } from "./confirmation.service";
+import { getValue } from "./persistence.service";
 import cron from "node-cron";
 import { sendWhatsAppMessage } from "./whatsapp.service";
 import {
@@ -81,6 +82,27 @@ export const startScheduler = (): void => {
           return;
         }
         await safeSend(message);
+        // If this was the silence nudge offering the waiting ideas, arm the
+        // same follow-up the conversation flow uses, so her "כן" lands right.
+        // Arm the matching follow-up so her one-word answer lands correctly.
+        if (message.includes("רוצה לראות אותם ולבחור אחד")) {
+          storePendingQuestion(TO, {
+            questionType: "offer_saved_list",
+            context: { fromNudge: true },
+          });
+        } else if (message.includes("להשאיר אותו כמו שהוא, או להעביר ליום אחר")) {
+          const nudgeCtx = getValue<any>("silenceNudge", `${TO}:context`);
+          if (nudgeCtx?.contentId) {
+            storePendingQuestion(TO, {
+              questionType: "nudge_unfilmed_decision",
+              context: {
+                contentId: nudgeCtx.contentId,
+                contentName: nudgeCtx.contentName,
+                date: nudgeCtx.date,
+              },
+            });
+          }
+        }
       } catch (error) {
         console.error("[Daily Brief] Error building afternoon reminder:", error);
       }
