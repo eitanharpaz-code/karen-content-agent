@@ -2225,12 +2225,44 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       // not_found: show what is saved, reusing the existing list handler.
       if (ctx.mode === "not_found") {
-        storePendingQuestion(sender, {
-          questionType: "offer_saved_list",
-          context: { fromLookup: true },
-        });
-        await safeSendWhatsAppMessage(sender, "רגע, מביאה את הרשימה.");
-        return res.status(200).json({ status: "content_lookup_to_list", sender });
+        // Show the list right here (24.7.2026). Storing offer_saved_list only
+        // armed a handler that REACTS to an answer, so Karen got "מביאה את
+        // הרשימה" and nothing followed until she said כן again.
+        try {
+          const ideas = await getOpenContentIdeas(spreadsheetId);
+          if (!ideas.length) {
+            await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות שמחכים לתאריך.");
+            return res.status(200).json({ status: "content_lookup_list_empty", sender });
+          }
+          const shown = ideas.slice(0, 6);
+          const hasMore = ideas.length > 6;
+          storePendingQuestion(sender, {
+            questionType: "saved_list_pick",
+            context: {
+              options: shown.map((i: any) => ({ contentId: i.contentId, name: i.idea, summary: i.summary })),
+              allNames: ideas.map((i: any) => i.idea),
+              offset: 6,
+            },
+          });
+          const listLines: string[] = [];
+          for (const i of shown) {
+            listLines.push(`"${i.idea}"`);
+            if (i.summary && i.summary !== i.idea) listLines.push(i.summary);
+            listLines.push("");
+          }
+          const footer = hasMore
+            ? 'אפשר לבחור אחד מהם בשם, או לכתוב "עוד" ואציג לך את השאר.'
+            : "איזה מהם תרצי להכניס לגאנט?";
+          await safeSendWhatsAppMessage(
+            sender,
+            ["אלה הרעיונות שמחכים לתאריך:", "", ...listLines, footer].join("\n")
+          );
+          return res.status(200).json({ status: "content_lookup_list_shown", sender });
+        } catch (listError) {
+          console.error(`[Content lookup] list failed: ${listError}`);
+          await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
+          return res.status(200).json({ status: "content_lookup_list_failed", sender });
+        }
       }
 
       // waiting: move it to production, then continue to the date offer below.
