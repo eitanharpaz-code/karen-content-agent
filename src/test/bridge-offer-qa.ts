@@ -62,7 +62,7 @@ check("collision falls into the existing gantt_collision flow", controllerSource
 check("keep path leaves it without a date", controllerSource.includes("השארתי אותו כרגע בלי תאריך"));
 
 check("save block stores a bridge_offer question", controllerSource.includes('questionType: "bridge_offer",'));
-check("save block keeps the passive tail as fallback", controllerSource.includes("כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:"));
+check("save block states the no-date case instead of teaching a command", controllerSource.includes("כרגע אין מקום פנוי בגאנט"));
 check("free-date lookup failure is non-fatal (try/catch)", controllerSource.includes("keeping passive tail"));
 
 console.log(`\nBridge offer QA: ${pass} passed, ${fail} failed`);

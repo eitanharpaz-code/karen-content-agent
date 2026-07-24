@@ -59,7 +59,8 @@ check("partial parse: present lines kept, missing line defaulted", partial.intro
 // --- Layer 2: source-level checks ---
 const contentSource = readFileSync(path.resolve(__dirname, "../services/content.service.ts"), "utf-8");
 const introFieldCount = (contentSource.match(/Intro: \[/g) || []).length;
-check("both prompts (draft + edit) request the preview fields", introFieldCount === 2);
+const controllerSourceOrHumanizer = readFileSync(path.resolve(__dirname, "../services/response-humanizer.service.ts"), "utf-8");
+check("wrapper copy is fixed, not generated", controllerSourceOrHumanizer.includes("USE_FIXED_PREVIEW_COPY"));
 check("both return paths attach previewCopy", (contentSource.match(/previewCopy: parsePreviewCopy\(/g) || []).length === 2);
 
 const controllerSource = readFileSync(path.resolve(__dirname, "../controllers/whatsapp.controller.ts"), "utf-8");

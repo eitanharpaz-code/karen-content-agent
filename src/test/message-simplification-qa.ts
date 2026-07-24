@@ -26,14 +26,14 @@ const controllerSource = readFileSync(
 // --- 1. Draft preview simplification (source-level) ---
 const previewFn = controllerSource.slice(
   controllerSource.indexOf("const buildDraftPreviewMessage"),
-  controllerSource.indexOf("const buildDraftPreviewMessage") + 1600
+  controllerSource.indexOf("const buildDraftPreviewMessage") + 2600
 );
 check("draft preview no longer shows קטגוריה", !previewFn.includes("`קטגוריה: ${displayCategory"));
 check("draft preview no longer shows טון", !previewFn.includes("`טון: ${displayTone"));
 check("draft preview no longer shows עדיפות", !previewFn.includes("`עדיפות: ${getDraftPriorityText"));
-check("draft preview still shows שם", previewFn.includes("`שם: ${draft.shortName}`"));
-check("draft preview still shows סוג תוכן conditionally", previewFn.includes("סוג תוכן:"));
-check("draft preview still shows הכיוון בקצרה", previewFn.includes("הכיוון בקצרה:"));
+check("draft preview shows the name in quotes", previewFn.includes('"${draft.shortName}"'));
+check("draft preview prefixes the content type", previewFn.includes("displayContentType(draft.contentType)"));
+check("draft preview shows the summary directly", previewFn.includes("draft.summary"));
 
 // --- 2. Bank display cleanup (behavioral) ---
 const ideasOutput = formatOpenIdeasResponse([

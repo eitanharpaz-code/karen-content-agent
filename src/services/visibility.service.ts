@@ -83,6 +83,16 @@ const normalizeTaskStatusTargetForMatching = (text: string): string => {
   return normalized.trim();
 };
 
+// A target that STARTS with a question word is not a content name: "תזכירי לי
+// מה עולה מחר" is a gantt question, not a request for a specific item
+// (24.7.2026). Checked on the extracted text because \b does not behave with
+// Hebrew inside the pattern itself.
+const TARGET_QUESTION_OPENERS = ["מה", "מתי", "איזה", "איזו", "כמה", "למה", "איפה", "מי", "האם"];
+const targetLooksLikeQuestion = (target: string): boolean => {
+  const first = (target || "").trim().split(/\s+/)[0];
+  return TARGET_QUESTION_OPENERS.includes(first);
+};
+
 export const extractStatusQueryTarget = (text: string): string | null => {
   const conversationalPrefixes = [
     /^ועכשיו[,،]?\s*/i,
@@ -130,6 +140,9 @@ export const extractStatusQueryTarget = (text: string): string | null => {
 
       // Normalize the target to handle formatting issues (quotes, line breaks, prefixes, etc.)
       target = normalizeTaskStatusTargetForMatching(target);
+      if (targetLooksLikeQuestion(target)) {
+        continue;
+      }
       if (!target) {
         continue;
       }
