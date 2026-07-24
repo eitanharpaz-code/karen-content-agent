@@ -25,16 +25,19 @@ export interface HumanizedPreviewCopy {
   changeLine: string;
 }
 
+// Copy polish (24.7.2026): the opener said nothing about the idea, and the
+// two closing lines never told Karen WHAT she could change. One clear line
+// replaces both; the opener drops entirely.
 export const DEFAULT_NEW_DRAFT_COPY: HumanizedPreviewCopy = {
-  intro: "יש פה כיוון טוב.",
-  closingQuestion: "לשמור ככה?",
-  changeLine: "אפשר גם להגיד לי מה לשנות.",
+  intro: "",
+  closingQuestion: "לשמור ככה, או שתרצי לשנות את השם, סוג התוכן או הכיוון?",
+  changeLine: "",
 };
 
 export const DEFAULT_EDIT_COPY: HumanizedPreviewCopy = {
-  intro: "קיבלתי, עדכנתי את הרעיון.",
-  closingQuestion: "לשמור ככה?",
-  changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
+  intro: "עדכנתי.",
+  closingQuestion: "לשמור ככה, או שיש עוד משהו לשנות?",
+  changeLine: "",
 };
 
 interface DraftForHumanizer {
@@ -96,6 +99,13 @@ export const humanizeDraftPreview = async (
   const defaultCopy = mode === "edit" ? DEFAULT_EDIT_COPY : DEFAULT_NEW_DRAFT_COPY;
 
   try {
+    // Fixed copy (24.7.2026): the wrapping lines are now a decided, tested
+    // formulation, so there is nothing for Claude to vary. Rewriting them per
+    // message is what kept reintroducing openers we had removed. The NAME and
+    // SUMMARY are unaffected — they come from content.service, not from here.
+    const USE_FIXED_PREVIEW_COPY = true;
+    if (USE_FIXED_PREVIEW_COPY) return defaultCopy;
+
     const response = await askClaude(prompt);
 
     const introMatch = response.match(/Intro[:\s]*([^\n]+)/i);

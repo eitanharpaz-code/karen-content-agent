@@ -267,44 +267,47 @@ const buildDraftPreviewMessage = (
     closingQuestion?: string;
   } = {}
 ): string => {
-  const introLines = Array.isArray(options.intro)
-    ? options.intro
-    : [options.intro || "יש פה כיוון טוב."];
+  // Copy polish (24.7.2026): the default opener ("יש פה כיוון טוב") said
+  // nothing about the idea and just filled space. Callers that need a real
+  // opener still pass one; without it the message starts with the content.
+  const introLines = options.intro
+    ? (Array.isArray(options.intro) ? options.intro : [options.intro])
+    : [];
 
   // Draft preview simplification (21.7.2026): from the real conversation
   // logs, category/tone/priority are internal noise Karen never acts on —
   // and after retiring topical categories, "קטגוריה: כללי" on every draft is
   // pure clutter. Keep only what she cares about: name, content type, and the
   // direction. Category/tone/priority still live in the sheet, just not shown.
+  const shouldIncludeContentType = options.includeContentType ?? true;
+  // Type sits on its own line above the name (24.7.2026). Inline with a colon
+  // read like a form field, and folding it into a sentence ("רילס על X") broke
+  // on names that are not topics. Karen still needs to see that the agent got
+  // the format right, so it stays visible.
   const lines = [
     ...introLines,
+    ...(introLines.length ? [""] : []),
+    options.previewLine || "ככה כתבתי את הרעיון כרגע:",
     "",
-    options.previewLine || "ככה הייתי שומרת את זה כרגע:",
-    "",
-    `שם: ${draft.shortName}`,
+    ...(shouldIncludeContentType && draft.contentType
+      ? [displayContentType(draft.contentType)]
+      : []),
+    `"${draft.shortName}"`,
+    draft.summary,
   ];
-
-  const shouldIncludeContentType = options.includeContentType ?? true;
-
-  if (shouldIncludeContentType && draft.contentType) {
-    lines.push(`סוג תוכן: ${displayContentType(draft.contentType)}`);
-  }
-
-  lines.push(
-    "",
-    "הכיוון בקצרה:",
-    draft.summary
-  );
 
   if (options.extraBeforeQuestion?.length) {
     lines.push("", ...options.extraBeforeQuestion);
   }
 
+  // One closing line instead of two. The old pair ("לשמור ככה?" plus "אפשר גם
+  // להגיד לי מה לשנות") never said WHAT could change, so Karen had to guess.
   lines.push(
     "",
-    options.closingQuestion || "לשמור ככה?",
-    options.changeLine || "אפשר גם להגיד לי מה לשנות."
+    options.closingQuestion ||
+      "לשמור ככה, או שתרצי לשנות את השם, סוג התוכן או הכיוון?"
   );
+  if (options.changeLine) lines.push(options.changeLine);
 
   return lines.join("\n");
 };
@@ -1618,7 +1621,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const shortTimeName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
       return await continueMonthlyPlanning(
-        `מעולה, עדכנתי את שעת ההעלאה של "${shortTimeName}" ל-${normalizedUploadTime}.`
+        `קבעתי את ההעלאה של "${shortTimeName}" ל-${normalizedUploadTime}.`
       );
       }
     }
@@ -1735,7 +1738,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const doneList = columnUpdates.map((u: any) => u.columnName).join(", ");
       await safeSendWhatsAppMessage(
         sender,
-        `מעולה, עדכנתי. "${picked}" סומן כ: ${doneList}`
+        `סבבה, מעדכנת ש"${picked}" ${doneList.replace(/, ([^,]*)$/, " ו$1")}.`
       );
       return res.status(200).json({ status: "status_no_match_resolved", sender });
     }
@@ -1885,7 +1888,11 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. רק שתדעי, טרנדים מתקצרים מהר, אז אם בא לך לתפוס אותו, כתבי לי מתי.`);
+        await safeSendWhatsAppMessage(sender, [
+          `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך.`,
+          "",
+          "רק שתדעי, טרנדים מתקצרים מהר. אם בא לך לתפוס אותו, כתבי לי מתי.",
+        ].join("\n"));
         return res.status(200).json({ status: "trend_schedule_kept", sender });
       }
 
@@ -2048,7 +2055,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(reply)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לעכשיו.");
+        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לאחר כך.");
         return res.status(200).json({ status: "saved_pick_declined", sender });
       }
 
@@ -2320,7 +2327,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לעכשיו.");
+        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לאחר כך.");
         return res.status(200).json({ status: "saved_list_declined", sender });
       }
 
@@ -2960,12 +2967,16 @@ await safeSendWhatsAppMessage(
         return res.status(200).json({ status: "trend_missing_text", sender });
       }
 
+      // Trends go through Claude like any other idea (24.7.2026). They used to
+      // reuse Karen's raw text as both the name AND the summary, which produced
+      // long unusable names and a duplicated line in the preview. Speed was the
+      // reason; the cost was that trends looked worse than everything else.
+      const trendBase = await createContentDraft(trendText, sender);
       const trendDraft = {
-        shortName: trendText,
+        ...trendBase,
         category: "טרנד",
         tone: "טרנדי" as const,
         priority: "גבוה" as const,
-        summary: trendText,
         originalUserInput: trendText,
       };
       storePendingConfirmation(sender, trendDraft);
@@ -3316,17 +3327,13 @@ await safeSendWhatsAppMessage(
           const replyText = (pendingDraft.category === "טרנד" && bridgeOfferLine)
             ? bridgeOfferLine
             : [
-                "מעולה, שמרתי את הרעיון.",
-                "",
-                `שם: ${pendingDraft.shortName}`,
-                "",
+                // Copy polish (24.7.2026): "מעולה" added nothing, and the name
+                // was just shown in the draft she is confirming. The no-date
+                // branch used to teach a command; now it just states the fact.
                 ...(bridgeOfferLine
-                  ? [bridgeOfferLine]
+                  ? ["שמרתי את הרעיון.", "", bridgeOfferLine]
                   : [
-                      "בשלב הזה הוא נשאר כרעיון פתוח, ועדיין לא נכנס להפקה.",
-                      "",
-                      "כדי לקדם אותו להפקה בהמשך, אפשר לכתוב:",
-                      `תוסיפי את ${pendingDraft.shortName} להפקה`,
+                      "שמרתי את הרעיון. כרגע אין מקום פנוי בגאנט, אז הוא נשאר בינתיים בלי תאריך.",
                     ]),
               ].join("\n");
 
@@ -4809,7 +4816,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
             ? `עדכנתי את משימות ההפקה של "${contentNameDisplay}", אבל לא הצלחתי להשלים עדכון ב: ${secondaryUpdateFailures.join(", ")}.\nכדאי לבדוק ידנית.`
             : isUploaded
               ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
-              : `מעולה, עדכנתי את זה.\n"${contentNameDisplay}" סומן כ: ${uniqueUpdates.map((u) => u.columnName).join(", ")}`;
+              : `סבבה, מעדכנת ש"${contentNameDisplay}" ${uniqueUpdates.map((u) => u.columnName).join(", ").replace(/, ([^,]*)$/, " ו$1")}.`;
           await safeSendWhatsAppMessage(sender, replyText);
 
           console.log(

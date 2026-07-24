@@ -153,7 +153,10 @@ export const displayRequiresShooting = (requiresShooting: string): string => {
 };
 
 export const displayContentType = (contentType: string | undefined): string => {
-  return CONTENT_TYPE_HEBREW_VALUES[contentType || ""] || contentType || "ריל";
+  // Karen says רילס; the sheet stores ריל (24.7.2026). The stored value stays
+  // as it is, only the display changes.
+  const value = CONTENT_TYPE_HEBREW_VALUES[contentType || ""] || contentType || "ריל";
+  return value === "ריל" ? "רילס" : value;
 };
 
 export const displayPlatform = (platform: string): string => {
@@ -164,7 +167,10 @@ export const isConfirmationMessage = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
 
   // Exact-match yes messages — original behavior preserved.
-  const exactYes = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב", "אישור"];
+  // "לשמור ככה" is the exact wording our own question offers, so Karen
+  // naturally echoes it back (24.7.2026). It used to route to the edit path.
+  const exactYes = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב", "אישור",
+    "לשמור ככה", "לשמור", "תשמרי ככה", "שמרי ככה", "ככה זה טוב", "זה טוב"];
   if (exactYes.includes(normalized)) return true;
 
   // Natural confirmation phrasings. Prefix matches (not substring) so
