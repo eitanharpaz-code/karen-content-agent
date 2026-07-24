@@ -284,16 +284,23 @@ const buildDraftPreviewMessage = (
   // read like a form field, and folding it into a sentence ("רילס על X") broke
   // on names that are not topics. Karen still needs to see that the agent got
   // the format right, so it stays visible.
+  // The content type folds into the summary sentence instead of sitting on its
+  // own line (24.7.2026). Karen still sees that the format was understood, but
+  // it reads as a sentence rather than a form field. The summary prompt was
+  // adjusted so it never opens with "סרטון על", which would double up here.
+  const typePrefix =
+    shouldIncludeContentType && draft.contentType
+      ? `${displayContentType(draft.contentType)} על `
+      : "";
+
   const lines = [
     ...introLines,
     ...(introLines.length ? [""] : []),
     options.previewLine || "ככה כתבתי את הרעיון כרגע:",
     "",
-    ...(shouldIncludeContentType && draft.contentType
-      ? [displayContentType(draft.contentType)]
-      : []),
     `"${draft.shortName}"`,
-    draft.summary,
+    "",
+    `${typePrefix}${draft.summary}`,
   ];
 
   if (options.extraBeforeQuestion?.length) {
