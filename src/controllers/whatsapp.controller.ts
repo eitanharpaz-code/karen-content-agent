@@ -3486,9 +3486,19 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
     await safeSendWhatsAppMessage(sender, clarificationPrompt);
     return res.status(200).json({ status: "edit_not_understood", sender });
   }
-  const clarificationPrompt = generateClarificationPrompt(false);
-  await safeSendWhatsAppMessage(sender, clarificationPrompt);
-  return res.status(200).json({ status: "no_pending_for_edit", sender });
+  // NEW_IDEA_BEATS_EDIT (24.7.2026): isEditRequest matches on very general
+  // words ("יהיה", "אני רוצה", "צריך"), so a plain new idea like
+  // "רעיון לסרטון על מה שלא יהיה אני מרוצה" landed here instead of becoming a
+  // draft. With no draft open there is nothing to edit anyway, so if the
+  // message reads like a new idea, let it through rather than asking Karen to
+  // rephrase in a format we invented.
+  if (hasIdeaConfidence(incomingText)) {
+    console.log(`[Route Debug] no draft open and the message reads as a new idea, routing onward`);
+  } else {
+    const clarificationPrompt = generateClarificationPrompt(false);
+    await safeSendWhatsAppMessage(sender, clarificationPrompt);
+    return res.status(200).json({ status: "no_pending_for_edit", sender });
+  }
   }
     const normalizedPlanningSourceText = incomingText.trim();
 
