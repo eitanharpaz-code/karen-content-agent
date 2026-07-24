@@ -1000,6 +1000,158 @@ export type OpenContentIdea = {
   notes: string;
 };
 
+// Content lookup for "תזכיר לי את X" (23.7.2026). Karen forgets what an old
+// idea was about, usually right after the duplicate check surfaced a name she
+// does not recognise. The summary that answers her is already in the sheet;
+// there was just no way to ask for it. Searches the bank and production, and
+// checks the gantt when the item is in production.
+
+export type GanttRowInfo = {
+  date: string;
+  dayName: string;
+  uploadTime: string;
+  contentType: string;
+};
+
+export const getGanttRowByContentId = async (
+  spreadsheetId: string,
+  contentId: string
+): Promise<GanttRowInfo | null> => {
+  if (!contentId) return null;
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.monthlyGantt}!A:N`,
+  });
+  const rows = (response.data.values || []).slice(1);
+  const match = rows.find(
+    (row) => (row[0] || "").toString().trim() === contentId.trim()
+  );
+  if (!match) return null;
+  return {
+    date: (match[1] || "").toString().trim(),
+    dayName: (match[2] || "").toString().trim(),
+    uploadTime: (match[11] || "").toString().trim(),
+    contentType: (match[4] || "").toString().trim(),
+  };
+};
+
+export type ContentLookupState =
+  | "waiting"        // in the bank, not yet in production
+  | "in_production"  // in production, no gantt date
+  | "scheduled"      // in production and scheduled
+  | "ambiguous"
+  | "not_found";
+
+export type ContentLookupResult = {
+  state: ContentLookupState;
+  contentId?: string;
+  name?: string;
+  summary?: string;
+  contentType?: string;
+  filmed?: string;
+  edited?: string;
+  deadline?: string;
+  ganttDate?: string;
+  ganttDayName?: string;
+  uploadTime?: string;
+  candidates?: Array<{ contentId: string; name: string }>;
+};
+
+export const lookupContentByName = async (
+  spreadsheetId: string,
+  query: string
+): Promise<ContentLookupResult> => {
+  const q = removePunctuationForMatching((query || "").trim());
+  if (!q) return { state: "not_found" };
+
+  const matchesName = (name: string): boolean => {
+    const n = removePunctuationForMatching((name || "").trim());
+    if (!n) return false;
+    return n === q || n.includes(q) || q.includes(n);
+  };
+
+  // 1. The bank
+  const ideas = await getOpenContentIdeas(spreadsheetId);
+  const bankHits = ideas.filter((i: any) => matchesName(i.idea));
+
+  // 2. Production (with approved-content summaries alongside)
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const [tasksRes, approvedRes] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.productionTasks}!A:I`,
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_NAMES.approvedContent}!A:K`,
+    }),
+  ]);
+  const taskRows = (tasksRes.data.values || []).slice(1);
+  const approvedRows = (approvedRes.data.values || []).slice(1);
+  const prodHits = taskRows.filter((row) => matchesName((row[1] || "").toString()));
+
+  const total = bankHits.length + prodHits.length;
+  if (total === 0) return { state: "not_found" };
+
+  if (total > 1) {
+    const candidates = [
+      ...bankHits.map((i: any) => ({ contentId: i.contentId, name: i.idea })),
+      ...prodHits.map((row) => ({
+        contentId: (row[0] || "").toString().trim(),
+        name: (row[1] || "").toString().trim(),
+      })),
+    ];
+    // An exact name match wins outright over partial ones.
+    const exact = candidates.filter(
+      (cd) => removePunctuationForMatching(cd.name) === q
+    );
+    if (exact.length !== 1) {
+      return { state: "ambiguous", candidates };
+    }
+  }
+
+  // Production takes precedence: it is the later stage.
+  if (prodHits.length > 0) {
+    const row = prodHits[0];
+    const contentId = (row[0] || "").toString().trim();
+    const approved = approvedRows.find(
+      (a) => (a[0] || "").toString().trim() === contentId
+    );
+    const gantt = await getGanttRowByContentId(spreadsheetId, contentId);
+    const base = {
+      contentId,
+      name: (row[1] || "").toString().trim(),
+      summary: approved ? (approved[2] || "").toString().trim() : "",
+      contentType: gantt?.contentType || (approved ? (approved[10] || "").toString().trim() : "") || "ריל",
+      filmed: (row[2] || "לא").toString().trim(),
+      edited: (row[3] || "לא").toString().trim(),
+      deadline: (row[5] || "").toString().trim(),
+    };
+    if (gantt && gantt.date) {
+      return {
+        state: "scheduled",
+        ...base,
+        ganttDate: gantt.date,
+        ganttDayName: gantt.dayName,
+        uploadTime: gantt.uploadTime,
+      };
+    }
+    return { state: "in_production", ...base };
+  }
+
+  const idea: any = bankHits[0];
+  return {
+    state: "waiting",
+    contentId: idea.contentId,
+    name: idea.idea,
+    summary: idea.summary,
+    contentType: idea.contentType || "ריל",
+  };
+};
+
 export const getOpenContentIdeas = async (spreadsheetId: string): Promise<OpenContentIdea[]> => {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: "v4", auth });

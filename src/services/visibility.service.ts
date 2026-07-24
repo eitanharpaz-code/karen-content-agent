@@ -110,6 +110,14 @@ export const extractStatusQueryTarget = (text: string): string | null => {
     { regex: /^(?:מה מצב)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
     // "מה קורה עם X" or "מה עם X" - requires multi-word (single-word goes to category/question-like)
     { regex: /^(?:מה\s+(?:קורה\s+)?עם)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
+    // "תזכיר/י לי את X" and friends (23.7.2026). Karen asks what an old idea
+    // was about, usually right after the duplicate check surfaced a name she
+    // does not recognise. The summary is in the sheet; she just had no way to
+    // ask for it.
+    { regex: /^(?:תזכיר(?:י)?\s+לי(?:\s+את)?)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
+    { regex: /^(?:מה זה)\s+(.+?)(?:\?|$)/is, multiWordOnly: true },
+    { regex: /^(?:מה הרעיון(?:\s+של)?)\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
+    { regex: /^(?:ספר(?:י)?\s+לי\s+(?:על|לגבי))\s+(.+?)(?:\?|$)/is, multiWordOnly: false },
   ];
 
   for (const { regex, multiWordOnly } of patterns) {

@@ -93,6 +93,7 @@ approveContentForProduction,
   getOrganicReelsInWeek,
   getAllProductionTasks,
   getContentNamesWithSummaries,
+  lookupContentByName,
   getReelsBlockingDates,
   removePunctuationForMatching,
   updateGanttRowDate,
@@ -2192,6 +2193,96 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return res.status(200).json({ status: "nudge_decision_unclear", sender });
     }
 
+    // Follow-up to "תזכיר לי את X" (23.7.2026). Three shapes, by what the
+    // lookup found. Each one hands off to a flow that already exists rather
+    // than building a parallel one.
+    if (pendingQuestion?.questionType === "content_lookup_followup") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+
+      let answer: "yes" | "no" | "unclear" = "unclear";
+      if (isConfirmationMessage(incomingText)) answer = "yes";
+      else if (isRejectionMessage(incomingText)) answer = "no";
+      else {
+        // Karen phrases this freely; ask Claude rather than saying we did not
+        // understand. Same pattern as the date question.
+        const claudeIntent = await askClaudeForBridgeIntent(incomingText);
+        if (claudeIntent === "schedule") answer = "yes";
+        else if (claudeIntent === "keep") answer = "no";
+      }
+
+      if (answer === "unclear") {
+        await safeSendWhatsAppMessage(sender, "לא בטוחה מה התכוונת. אפשר לענות כן או לא.");
+        return res.status(200).json({ status: "content_lookup_unclear", sender });
+      }
+
+      clearPendingQuestion(sender);
+
+      if (answer === "no") {
+        await safeSendWhatsAppMessage(sender, "סגור, הוא נשאר כרגע כמו שהוא.");
+        return res.status(200).json({ status: "content_lookup_declined", sender });
+      }
+
+      // not_found: show what is saved, reusing the existing list handler.
+      if (ctx.mode === "not_found") {
+        storePendingQuestion(sender, {
+          questionType: "offer_saved_list",
+          context: { fromLookup: true },
+        });
+        await safeSendWhatsAppMessage(sender, "רגע, מביאה את הרשימה.");
+        return res.status(200).json({ status: "content_lookup_to_list", sender });
+      }
+
+      // waiting: move it to production, then continue to the date offer below.
+      // approveContentForProduction only writes the rows; the date offer lives
+      // in the approve-COMMAND handler, not in the function itself, so stopping
+      // here left the content in production with no date (fixed 24.7.2026).
+      let lookupContentId = ctx.contentId;
+      if (ctx.mode === "waiting") {
+        try {
+          const approved = await approveContentForProduction(spreadsheetId, ctx.contentName);
+          // Use the id the approve step produced, not the bank one.
+          if (approved?.contentId) lookupContentId = approved.contentId;
+        } catch (approveError) {
+          await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
+          return res.status(200).json({ status: "content_lookup_approve_failed", sender });
+        }
+        await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${ctx.contentName}" להפקה.`);
+      }
+
+      // in_production: offer concrete dates, same as the bridge.
+      try {
+        const now = new Date();
+        const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+        const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0, 0, 0, 0);
+        const dates = smart.filter((d: string) => {
+          const p = d.split("/");
+          return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+        }).slice(0, 3);
+
+        if (!dates.length) {
+          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות מאוחר יותר.");
+          return res.status(200).json({ status: "content_lookup_no_dates", sender });
+        }
+
+        storePendingQuestion(sender, {
+          questionType: "bridge_pick_date",
+          context: { contentId: lookupContentId, contentName: ctx.contentName, dates, alreadyApproved: true },
+        });
+        const dateLines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["מעולה, אלה התאריכים הפנויים הקרובים:", "", ...dateLines, "", "איזה תאריך מתאים לך?"].join("\n")
+        );
+        return res.status(200).json({ status: "content_lookup_dates_offered", sender });
+      } catch (dateError) {
+        console.error(`[Content lookup] date lookup failed: ${dateError}`);
+        await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+        return res.status(200).json({ status: "content_lookup_date_failed", sender });
+      }
+    }
+
     if (pendingQuestion?.questionType === "offer_saved_list") {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
@@ -2314,6 +2405,24 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           `סגור, העברתי את "${ctx.contentName}" ליום ${movedDayName}, ${chosen}.`
         );
         return res.status(200).json({ status: "gantt_date_moved", sender });
+      }
+
+      // Already in production (24.7.2026): arriving here from the content
+      // lookup means the item was approved earlier in the flow. Approving
+      // again fails, so skip straight to writing the gantt row.
+      if (ctx.alreadyApproved) {
+        const dn2 = getHebrewDayName(chosen);
+        await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, chosen, dn2, "", "בתכנון");
+        await sortGanttByDate(spreadsheetId);
+        storePendingQuestion(sender, {
+          questionType: "gantt_upload_time",
+          context: { contentId: ctx.contentId, contentName: ctx.contentName, date: chosen },
+        });
+        await safeSendWhatsAppMessage(
+          sender,
+          [`מעולה, הכנסתי את "${ctx.contentName}" לגאנט ליום ${dn2}, ${chosen}.`, "", "באיזו שעה לתכנן את ההעלאה?"].join("\n")
+        );
+        return res.status(200).json({ status: "bridge_pick_date_done", sender });
       }
 
       let approveResult;
@@ -3423,40 +3532,100 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
         console.log(`[Sprint 10] Visibility query detected: ${visibilityIntent}`);
 
         if (visibilityIntent === "task_status") {
+          // Rebuilt 23.7.2026. This used to search production only and answer
+          // with a dry status line, so "תזכיר לי את X" on a waiting idea found
+          // nothing. Now it searches the bank too, leads with the summary that
+          // actually answers her, and offers the step that fits the state.
           const target = extractStatusQueryTarget(incomingText);
           if (!target) {
-            const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.\nנסי לכתוב: מה הסטטוס של...";
-            await safeSendWhatsAppMessage(sender, replyText);
+            await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין על איזה תוכן שאלת. אפשר לכתוב את השם שלו.");
             return res.status(200).json({ status: "visibility_query_no_target", sender });
           }
 
-          const matchResult = await findProductionTaskByName(spreadsheetId, target);
-          if (!matchResult) {
-            const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.\nנסי לכתוב: מה הסטטוס של...";
-            await safeSendWhatsAppMessage(sender, replyText);
+          const found = await lookupContentByName(spreadsheetId, target);
+
+          if (found.state === "not_found") {
+            storePendingQuestion(sender, {
+              questionType: "content_lookup_followup",
+              context: { mode: "not_found" },
+            });
+            await safeSendWhatsAppMessage(
+              sender,
+              [`לא מצאתי תוכן בשם "${target}".`, "", "רוצה שאציג לך את התכנים ששמורים כרגע?"].join("\n")
+            );
             return res.status(200).json({ status: "visibility_query_no_match", sender, target });
           }
 
-          if ("ambiguous" in matchResult && matchResult.ambiguous) {
-          const matchList = matchResult.matches.map((m: any) => formatTaskStatusResponse(m)).join("\n\n");
-          const replyText = `מצאתי כמה תכנים דומים, הנה הסטטוס של כולם:\n\n${matchList}`;
-          await safeSendWhatsAppMessage(sender, replyText);
-          return res.status(200).json({ status: "visibility_query_ambiguous", sender, target, matches: matchResult.matches.length });
+          if (found.state === "ambiguous") {
+            const names = (found.candidates || []).slice(0, 6).map((cd: any) => `"${cd.name}"`);
+            await safeSendWhatsAppMessage(
+              sender,
+              ["מצאתי כמה תכנים שמתאימים. לאיזה מהם התכוונת?", "", ...names].join("\n")
+            );
+            return res.status(200).json({ status: "visibility_query_ambiguous", sender, target });
           }
 
-          const exactMatch = matchResult as ProductionTaskMatch;
-          const replyText = formatTaskStatusResponse(exactMatch);
-          await safeSendWhatsAppMessage(sender, replyText);
+          // Karen says רילס, the sheet stores ריל (24.7.2026).
+          const rawType = found.contentType || "ריל";
+          const typeWord = rawType === "ריל" ? "רילס" : rawType;
+          const headline = found.summary
+            ? `"${found.name}" הוא ${typeWord} על ${found.summary}`
+            : `"${found.name}" הוא ${typeWord}.`;
 
-          console.log(`[Sprint 10] ✅ Task status response sent for: ${exactMatch.row[1]}`);
+          if (found.state === "waiting") {
+            storePendingQuestion(sender, {
+              questionType: "content_lookup_followup",
+              context: { mode: "waiting", contentId: found.contentId, contentName: found.name },
+            });
+            await safeSendWhatsAppMessage(
+              sender,
+              [headline, "", "הוא עדיין מחכה ולא עבר להפקה. רוצה להעביר אותו להפקה?"].join("\n")
+            );
+            return res.status(200).json({ status: "content_lookup_waiting", sender });
+          }
 
-          return res.status(200).json({
-            status: "visibility_task_status",
-            sender,
-            intent: visibilityIntent,
-            target,
-            taskName: exactMatch.row[1],
+          // Say what already happened and what is still missing.
+          const productionLine =
+            found.filmed === "כן" && found.edited === "כן"
+              ? "הוא כבר צולם ונערך."
+              : found.filmed === "כן"
+                ? "הוא כבר צולם, ונשאר לערוך אותו."
+                : "הוא עדיין מחכה לצילום.";
+
+          const lookupLines = [headline, "", productionLine];
+          if (found.deadline) lookupLines.push(`הדדליין להפקה הוא ${found.deadline}.`);
+
+          if (found.state === "scheduled") {
+            const when = found.ganttDayName
+              ? `ביום ${found.ganttDayName}, ${found.ganttDate}`
+              : `ב-${found.ganttDate}`;
+            // The time appears only when it is actually set in the gantt.
+            lookupLines.push(
+              found.uploadTime
+                ? `הוא מתוכנן לעלות ${when} בשעה ${found.uploadTime}.`
+                : `הוא מתוכנן לעלות ${when}.`
+            );
+            await safeSendWhatsAppMessage(sender, lookupLines.join("\n"));
+            return res.status(200).json({ status: "content_lookup_scheduled", sender });
+          }
+
+          storePendingQuestion(sender, {
+            questionType: "content_lookup_followup",
+            context: { mode: "in_production", contentId: found.contentId, contentName: found.name },
           });
+          // One sentence that ties production state to the missing date, rather
+          // than two separate "he still..." statements (24.7.2026).
+          const noDateLine =
+            found.filmed === "כן" && found.edited === "כן"
+              ? "הוא כבר מוכן, אבל עדיין אין לו תאריך בגאנט. רוצה שנקבע לו אחד?"
+              : found.filmed === "כן"
+                ? "הוא כבר צולם, נשאר לערוך אותו ואין לו עדיין תאריך בגאנט. רוצה שנקבע לו תאריך?"
+                : "הוא עדיין מחכה לצילום ואין לו תאריך בגאנט. רוצה שנמצא לו תאריך מתאים?";
+          const noDateLines = [headline, ""];
+          if (found.deadline) noDateLines.push(`הדדליין להפקה הוא ${found.deadline}.`, "");
+          noDateLines.push(noDateLine);
+          await safeSendWhatsAppMessage(sender, noDateLines.join("\n"));
+          return res.status(200).json({ status: "content_lookup_in_production", sender });
         }
 
         let tasks: any[] = [];
