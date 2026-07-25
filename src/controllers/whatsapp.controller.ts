@@ -4054,7 +4054,12 @@ const replyText = [
           ? null
           : detectOverdueDecisionIntent(incomingText);
 
-      if (overdueDecisionIntent) {
+      // GANTT_MOVE_BEATS_OVERDUE (25.7.2026): "תעבירי את מימה ל27/7" is a full
+      // move command, but the overdue branch matched it first and then failed
+      // to parse the date, because its own regex assumes a short reply like
+      // "לדחות ל27/7" and swallowed the content name as the date. The move flow
+      // is the specific one, so it wins.
+      if (overdueDecisionIntent && !isGanttDateChange(incomingText)) {
         const overdueItems = await fetchOverdueDecisionItems();
         const overdueItem = overdueItems[0];
 

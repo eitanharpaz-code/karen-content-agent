@@ -11,6 +11,18 @@ export const normalizeUserDateInput = (
   input: string,
   fallbackYear: number = new Date().getFullYear()
 ): string | null => {
+  // STRIP_DATE_PREFIX (25.7.2026): Karen writes the date attached to a prefix
+  // ("ל27/7", "ב-27.7", "לתאריך 27/7") because that is natural Hebrew. The
+  // letter glued to the digits broke parsing and four valid attempts in a row
+  // were rejected.
+  if (typeof input === "string") {
+    input = input
+      .trim()
+      .replace(/^(?:לתאריך|בתאריך|תאריך)\s*/u, "")
+      .replace(/^[לבמ]\s*[-־]?\s*/u, "")
+      .trim();
+  }
+
   const match = input.trim().match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2}|\d{4}))?$/);
   if (!match) return null;
 
