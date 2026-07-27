@@ -5021,8 +5021,9 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 
     // ===== FIX 5: Lightweight confidence gating =====
     // Check if message has minimum confidence to be treated as new idea
-    const hasConfidence = hasIdeaConfidence(incomingText);
-    console.log(`[Route Debug] hasIdeaConfidence: ${hasConfidence}`);
+    const messageIntent = await classifyMessageIntent(incomingText, sender);
+    const hasConfidence = messageIntent === "new_idea";
+    console.log(`[Route Debug] classifyMessageIntent: ${messageIntent} -> hasConfidence: ${hasConfidence}`);
 
     if (!hasConfidence) {
       console.log(`[Route Debug] reached fallback: low_confidence_idea`);
