@@ -2608,6 +2608,60 @@ export const getReelsBlockingDates = async (
   return result;
 };
 
+// ===== Stage 1 (26.7.2026): month-full decision for a new organic reel =====
+// Pure decision helper. Sends nothing, writes nothing — returns data only, so
+// the Stage 2 dialog can build on it without surprises.
+export interface MonthFullEvaluation {
+  isMonthFull: boolean;
+  nextMonthDate: string | null;
+  shiftableReels: Array<{ contentId: string; name: string; date: string; dayName: string; isCollab: boolean }>;
+}
+
+export const evaluateMonthFullForReel = async (
+  spreadsheetId: string,
+  requestedDate: string // dd/mm/yyyy
+): Promise<MonthFullEvaluation> => {
+  // Stage 1 fix: only future dates count as free. A day earlier this month is
+  // already gone — the bridge filters these out before deciding "no room", so
+  // this helper must match that logic exactly.
+  const earliest = new Date();
+  earliest.setDate(earliest.getDate() + 1);
+  earliest.setHours(0, 0, 0, 0);
+  const isFuture = (candidate: string): boolean => {
+    const p = candidate.split("/");
+    const parsed = new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+    return parsed >= earliest;
+  };
+  const thisMonthAll = await findSmartGanttDate(spreadsheetId, requestedDate, { forNewItemType: "ריל" });
+  const thisMonth = thisMonthAll.filter(isFuture);
+  if (thisMonth.length > 0) {
+    return { isMonthFull: false, nextMonthDate: null, shiftableReels: [] };
+  }
+  const parts = requestedDate.split("/");
+  const month = parseInt(parts[1]) - 1;
+  const year = parseInt(parts[2]);
+  const nextMonthIndex = month === 11 ? 0 : month + 1;
+  const nextMonthYear = month === 11 ? year + 1 : year;
+  const firstOfNext = `01/${String(nextMonthIndex + 1).padStart(2, "0")}/${nextMonthYear}`;
+  const nextMonthCandidates = (await findSmartGanttDate(spreadsheetId, firstOfNext, { forNewItemType: "ריל" })).filter(isFuture);
+  const nextMonthDate = nextMonthCandidates.length > 0 ? nextMonthCandidates[0] : null;
+  const reqDate = parseDateFromSheet(requestedDate);
+  const weekDates: string[] = [];
+  if (reqDate) {
+    const start = new Date(reqDate);
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      weekDates.push(`${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`);
+    }
+  }
+  const blocking = weekDates.length > 0 ? await getReelsBlockingDates(spreadsheetId, weekDates) : [];
+  const shiftableReels = blocking.filter((r) => !r.isCollab);
+  return { isMonthFull: true, nextMonthDate, shiftableReels };
+};
+
 export const getOrganicReelsInWeek = async (
   spreadsheetId: string,
   referenceDate: string
