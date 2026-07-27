@@ -576,7 +576,11 @@ export const isApproveForProductionCommand = (message: string): boolean => {
   // the original four-form list caught — so every attempt fell through to
   // draft creation and made a duplicate. A move verb + production mention, OR
   // an approval word + production mention, now all route here.
-  const MOVE_VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העבר", "העברי", "מעביר", "מעבירה", "מעבירי"];
+  // Added 26.7.2026 from the live logs: "תכניסי להפקה את X" was not in the
+  // list, so it fell through to draft creation and Karen got a new idea
+  // instead of a move. Same family as the 21.7 expansion.
+  const MOVE_VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העבר", "העברי", "מעביר", "מעבירה", "מעבירי",
+    "תכניסי", "תכניס", "להכניס", "הכניסי", "הכנס", "מכניסה", "מכניס"];
   const APPROVE_WORDS = ["מאושר", "מאושרת", "אשר", "אשרי", "לאשר"];
   const mentionsProduction = raw.includes("להפקה") || raw.includes("הפקה");
   if (!mentionsProduction) return false;
@@ -590,7 +594,10 @@ export const extractApproveTarget = (message: string): string | null => {
   // isApproveForProductionCommand so "תעביר את בת זוג של אוהד להפקה" (and
   // other inflections) yield the content name instead of null -> parse error.
   const raw = message.trim();
-  const VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העברי", "העבר", "מעבירה", "מעבירי", "מעביר", "לאשר", "אשרי", "אשר"];
+  // Kept in sync with MOVE_VERBS above (26.7.2026). If a verb detects the
+  // command but is missing here, the name is extracted with the verb inside it.
+  const VERBS = ["תוסיפי", "תוסיף", "להעביר", "תעבירי", "תעביר", "העברי", "העבר", "מעבירה", "מעבירי", "מעביר", "לאשר", "אשרי", "אשר",
+    "תכניסי", "תכניס", "להכניס", "הכניסי", "הכנס", "מכניסה", "מכניס"];
 
   let name = raw;
   name = name.replace(/מאושר(ת)?/g, " ").replace(/להפקה/g, " ").replace(/הפקה/g, " ");

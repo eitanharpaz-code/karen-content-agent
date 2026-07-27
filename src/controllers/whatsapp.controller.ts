@@ -1889,12 +1889,56 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return res.status(200).json({ status: ok ? "trend_made_room" : "trend_choose_failed", sender });
     }
 
+    // Trend date, written later (26.7.2026). After declining the immediate
+    // slot the agent says "write me when", so a bare date has to land
+    // somewhere. Anything that is not a date falls through to the escape hatch.
+    if (pendingQuestion?.questionType === "trend_awaiting_date") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
+      const chosen = explicit ? normalizeUserDateInput(explicit[0]) : null;
+
+      if (!chosen) {
+        await safeSendWhatsAppMessage(sender, "לא זיהיתי תאריך. אפשר לכתוב למשל 30/7.");
+        return res.status(200).json({ status: "trend_awaiting_date_unclear", sender });
+      }
+
+      clearPendingQuestion(sender);
+      let approveResult;
+      try {
+        approveResult = await approveContentForProduction(spreadsheetId, ctx.contentName);
+      } catch (approveError) {
+        await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
+        return res.status(200).json({ status: "trend_awaiting_date_approve_failed", sender });
+      }
+
+      const dn = getHebrewDayName(chosen);
+      await addRowToGantt(spreadsheetId, approveResult.contentId, ctx.contentName, chosen, dn, "", "בתכנון");
+      await sortGanttByDate(spreadsheetId);
+      storePendingQuestion(sender, {
+        questionType: "gantt_upload_time",
+        context: { contentId: approveResult.contentId, contentName: ctx.contentName, date: chosen },
+      });
+      await safeSendWhatsAppMessage(
+        sender,
+        [`סגור, הכנסתי את "${ctx.contentName}" לגאנט ליום ${dn}, ${chosen}.`, "", "באיזו שעה לתכנן את ההעלאה?"].join("\n")
+      );
+      return res.status(200).json({ status: "trend_scheduled_later", sender });
+    }
+
     if (pendingQuestion?.questionType === "trend_schedule") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
       if (isRejectionMessage(incomingText)) {
-        clearPendingQuestion(sender);
+        // Keep the question open (26.7.2026): the message invites Karen to
+        // "write me when", but clearing the state meant a bare date like "30/7"
+        // arrived with nothing waiting for it and became a new idea. The escape
+        // hatch still releases her if she writes something else entirely.
+        storePendingQuestion(sender, {
+          questionType: "trend_awaiting_date",
+          context: { contentId: ctx.contentId, contentName: ctx.contentName },
+        });
         await safeSendWhatsAppMessage(sender, [
           `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך.`,
           "",
