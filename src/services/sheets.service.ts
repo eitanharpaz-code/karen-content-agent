@@ -2614,6 +2614,7 @@ export const getReelsBlockingDates = async (
 export interface MonthFullEvaluation {
   isMonthFull: boolean;
   nextMonthDate: string | null;
+  nextMonthDates: string[];
   shiftableReels: Array<{ contentId: string; name: string; date: string; dayName: string; isCollab: boolean }>;
 }
 
@@ -2635,7 +2636,7 @@ export const evaluateMonthFullForReel = async (
   const thisMonthAll = await findSmartGanttDate(spreadsheetId, requestedDate, { forNewItemType: "ריל" });
   const thisMonth = thisMonthAll.filter(isFuture);
   if (thisMonth.length > 0) {
-    return { isMonthFull: false, nextMonthDate: null, shiftableReels: [] };
+    return { isMonthFull: false, nextMonthDate: null, nextMonthDates: [], shiftableReels: [] };
   }
   const parts = requestedDate.split("/");
   const month = parseInt(parts[1]) - 1;
@@ -2645,6 +2646,7 @@ export const evaluateMonthFullForReel = async (
   const firstOfNext = `01/${String(nextMonthIndex + 1).padStart(2, "0")}/${nextMonthYear}`;
   const nextMonthCandidates = (await findSmartGanttDate(spreadsheetId, firstOfNext, { forNewItemType: "ריל" })).filter(isFuture);
   const nextMonthDate = nextMonthCandidates.length > 0 ? nextMonthCandidates[0] : null;
+  const nextMonthDates = nextMonthCandidates.slice(0, 3);
   const reqDate = parseDateFromSheet(requestedDate);
   const weekDates: string[] = [];
   if (reqDate) {
@@ -2659,7 +2661,7 @@ export const evaluateMonthFullForReel = async (
   }
   const blocking = weekDates.length > 0 ? await getReelsBlockingDates(spreadsheetId, weekDates) : [];
   const shiftableReels = blocking.filter((r) => !r.isCollab);
-  return { isMonthFull: true, nextMonthDate, shiftableReels };
+  return { isMonthFull: true, nextMonthDate, nextMonthDates, shiftableReels };
 };
 
 export const getOrganicReelsInWeek = async (
