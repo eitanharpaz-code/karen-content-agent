@@ -2555,6 +2555,123 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return res.status(200).json({ status: "bridge_pick_date_done", sender });
     }
 
+    if (pendingQuestion?.questionType === "month_full_pick_reel") {
+      const ctx = pendingQuestion.context as any;
+      const reply = incomingText.trim();
+      const shiftableReels: Array<any> = ctx.shiftableReels || [];
+      // Pick by number (1-based) or by name substring.
+      let picked: any = null;
+      const numMatch = reply.match(/^(\d+)/);
+      if (numMatch) {
+        const idx = parseInt(numMatch[1], 10) - 1;
+        if (idx >= 0 && idx < shiftableReels.length) picked = shiftableReels[idx];
+      }
+      if (!picked) {
+        picked = shiftableReels.find((r: any) => reply.length >= 2 && r.name.includes(reply)) || null;
+      }
+      if (!picked) {
+        storePendingQuestion(sender, { questionType: "month_full_pick_reel", context: ctx });
+        const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ${r.name}`);
+        await safeSendWhatsAppMessage(sender, ["לא זיהיתי איזה תוכן. אפשר לענות במספר:", "", ...reelLines].join("\n"));
+        return res.status(200).json({ status: "month_full_pick_reel_unclear", sender });
+      }
+      const nextMonthDates: string[] = ctx.nextMonthDates || [];
+      if (nextMonthDates.length === 0) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי להזיז אליו. אפשר לנסות שוב.");
+        return res.status(200).json({ status: "month_full_move_no_dates", sender });
+      }
+      storePendingQuestion(sender, {
+        questionType: "month_full_move_date",
+        context: { contentId: ctx.contentId, contentName: ctx.contentName, movingReel: picked, dates: nextMonthDates },
+      });
+      const dateLines = nextMonthDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+      await safeSendWhatsAppMessage(
+        sender,
+        [`לאיזה תאריך להזיז את "${picked.name}"?`, "", ...dateLines, "", "אפשר לענות במספר או בתאריך."].join("\n")
+      );
+      return res.status(200).json({ status: "month_full_move_date_offered", sender });
+    }
+
+    if (pendingQuestion?.questionType === "month_full_move_date") {
+      const ctx = pendingQuestion.context as any;
+      const reply = incomingText.trim();
+      const dates: string[] = ctx.dates || [];
+      let chosen: string | null = null;
+      const numMatch = reply.match(/(\d{1,2})(?:[./-](\d{1,2}))?/);
+      if (numMatch && !numMatch[2] && parseInt(numMatch[1], 10) <= dates.length) {
+        chosen = dates[parseInt(numMatch[1], 10) - 1] || null;
+      }
+      if (!chosen && numMatch) {
+        const day = parseInt(numMatch[1], 10);
+        const month = numMatch[2] ? parseInt(numMatch[2], 10) : null;
+        chosen = dates.find((d) => {
+          const p = d.split("/");
+          return parseInt(p[0], 10) === day && (month === null || parseInt(p[1], 10) === month);
+        }) || null;
+      }
+      // Also match a Hebrew day name against the offered dates ("שישי").
+      if (!chosen) {
+        chosen = dates.find((d) => reply.includes(getHebrewDayName(d))) || null;
+      }
+      if (!chosen) {
+        storePendingQuestion(sender, { questionType: "month_full_move_date", context: ctx });
+        const dateLines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(sender, ["לא זיהיתי תאריך. אפשר:", "", ...dateLines].join("\n"));
+        return res.status(200).json({ status: "month_full_move_date_unclear", sender });
+      }
+      clearPendingQuestion(sender);
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const movingReel = ctx.movingReel;
+      const freedDate = movingReel.date;      // the slot the moved reel vacates
+      const freedDayName = movingReel.dayName;
+      const chosenDayName = getHebrewDayName(chosen);
+
+      // Write 1: move the existing reel to its new date.
+      try {
+        await updateGanttRowDate(spreadsheetId, movingReel.contentId, chosen, chosenDayName);
+      } catch (moveError) {
+        await safeSendWhatsAppMessage(sender, `משהו השתבש בהזזת "${movingReel.name}". לא שיניתי כלום, אפשר לנסות שוב.`);
+        return res.status(200).json({ status: "month_full_move_failed", sender });
+      }
+
+      // Verify the move actually landed before writing the new item, since
+      // updateGanttRowDate returns void and no-ops silently if the row is gone.
+      const moveVerified = await isGanttDateTaken(spreadsheetId, chosen);
+      if (!moveVerified.taken || moveVerified.existingContentId !== movingReel.contentId) {
+        await safeSendWhatsAppMessage(sender, `לא הצלחתי לאמת שההזזה של "${movingReel.name}" נשמרה. עצרתי כדי לא ליצור בלגן בגאנט. אפשר לנסות שוב.`);
+        return res.status(200).json({ status: "month_full_move_unverified", sender });
+      }
+
+      // Write 2: place the new content in the freed slot.
+      let approveResult;
+      try {
+        approveResult = await approveContentForProduction(spreadsheetId, ctx.contentId);
+      } catch (approveError) {
+        await safeSendWhatsAppMessage(sender, `הזזתי את "${movingReel.name}", אבל משהו השתבש בהעברת התוכן החדש להפקה. אפשר לנסות: תוסיפי את ${ctx.contentName} להפקה`);
+        return res.status(200).json({ status: "month_full_move_approve_failed", sender });
+      }
+      const productionDeadline = await addRowToGantt(spreadsheetId, approveResult.contentId, ctx.contentName, freedDate, freedDayName, "", "בתכנון");
+      await sortGanttByDate(spreadsheetId);
+      storePendingQuestion(sender, {
+        questionType: "gantt_upload_time",
+        context: { contentId: approveResult.contentId, contentName: ctx.contentName, date: freedDate },
+      });
+      const shortNew = ctx.contentName.split(/\s+/).slice(0, 6).join(" ");
+      const shortMoved = movingReel.name.split(/\s+/).slice(0, 6).join(" ");
+      await safeSendWhatsAppMessage(
+        sender,
+        [
+          `סגור. העברתי את "${shortMoved}" ל-${chosen} (יום ${chosenDayName}),`,
+          `והכנסתי את "${shortNew}" במקום שהתפנה, ${freedDate} (יום ${freedDayName}).`,
+          productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
+          "",
+          "באיזו שעה לתכנן את ההעלאה?",
+        ].filter(Boolean).join("\n")
+      );
+      return res.status(200).json({ status: "month_full_move_executed", sender });
+    }
+
     if (pendingQuestion?.questionType === "month_full_choice") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -2601,11 +2718,24 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         return res.status(200).json({ status: "month_full_kept_no_date", sender });
       }
 
-      // Branch 3: move existing content — built in the next step.
+      // Branch 3: move existing content — show the shiftable reels and ask which.
       if (saysMove) {
-        storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
-        await safeSendWhatsAppMessage(sender, "את האפשרות של הזזת תוכן עוד רגע מסיימים לבנות. בינתיים אפשר לבחור חודש הבא או להשאיר בלי תאריך.");
-        return res.status(200).json({ status: "month_full_move_not_ready", sender });
+        const shiftableReels: Array<any> = ctx.shiftableReels || [];
+        if (shiftableReels.length === 0) {
+          storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
+          await safeSendWhatsAppMessage(sender, "אין כרגע ריל אורגני שאפשר להזיז השבוע. אפשר לבחור חודש הבא או להשאיר בלי תאריך.");
+          return res.status(200).json({ status: "month_full_no_shiftable", sender });
+        }
+        storePendingQuestion(sender, {
+          questionType: "month_full_pick_reel",
+          context: { contentId, contentName, nextMonthDates, shiftableReels },
+        });
+        const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ${r.name} (${r.date}, יום ${r.dayName})`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["איזה תוכן להזיז כדי לפנות מקום?", "", ...reelLines, "", "אפשר לענות במספר או בשם."].join("\n")
+        );
+        return res.status(200).json({ status: "month_full_pick_reel_offered", sender });
       }
 
       // Unclear: re-ask once.
