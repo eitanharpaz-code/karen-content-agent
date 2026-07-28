@@ -33,10 +33,22 @@ const STATUS_HINTS = [
   "קאבר", "מוכן",
 ];
 
+// Future-tense guard: "יעלה"/"תעלה"/"נעלה" contain "עלה" but are scheduling
+// requests, not status reports. Reject a hint when it sits immediately after a
+// future-tense prefix letter (י/ת/נ/א) with no space between.
+const FUTURE_PREFIX_LETTER = /[יתנא]$/;
 export const looksLikeStatusMention = (message: string): boolean => {
   const text = (message || "").trim();
   if (!text) return false;
-  return STATUS_HINTS.some((h) => text.includes(h));
+  return STATUS_HINTS.some((h) => {
+    let idx = text.indexOf(h);
+    while (idx !== -1) {
+      const before = text.slice(0, idx);
+      if (!FUTURE_PREFIX_LETTER.test(before)) return true;
+      idx = text.indexOf(h, idx + 1);
+    }
+    return false;
+  });
 };
 
 export const askClaudeForStatusIntent = async (
