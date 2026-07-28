@@ -1498,7 +1498,7 @@ export const formatProductionOverview = (items: ProductionOverviewItem[]): strin
   let noDeadlineCount = 0;
 
   for (const item of items) {
-    const collabTag = item.isCollab ? " (שת\"פ)" : "";
+    const collabTag = item.isCollab ? " (שת״פ)" : "";
     const filmedText = item.filmed ? "צולם" : "עדיין לא צולם";
     const editedText = item.edited ? "נערך" : "עדיין לא נערך";
     const stateLine = `${filmedText}, ${editedText}`;
