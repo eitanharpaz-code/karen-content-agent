@@ -50,6 +50,7 @@ import {
   extractGanttDateChange,
   extractApproveTarget,
   classifyBridgeOfferAnswer,
+  extractExplicitDateFromReply,
   getTrendText,
 } from "../services/confirmation.service";
 import {
@@ -2811,7 +2812,61 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           return res.status(200).json({ status: offeredList ? "bridge_kept_with_gap" : "bridge_offer_kept", sender });
         }
 
+        // bridge_offer explicit date honoured (26.7.2026): "תכניס אותו ב-20/8"
+        // is schedule + a specific date. Before this the date was dropped and
+        // our own list was offered instead. If the reply carries a date, write
+        // it directly via the shared extractor (same chain as the plain
+        // schedule branch below).
         if (bridgeAnswer === "schedule" && askedIntentOnly) {
+          const explicitDate = extractExplicitDateFromReply(incomingText);
+          if (explicitDate) {
+            clearPendingQuestion(sender);
+            const sid = process.env.GOOGLE_SHEETS_ID!;
+            const explicitDay = getHebrewDayName(explicitDate);
+            let approveRes;
+            try {
+              approveRes = await approveContentForProduction(sid, contentName);
+            } catch (e) {
+              await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`);
+              return res.status(200).json({ status: "bridge_offer_explicit_approve_failed", sender });
+            }
+            const coll = await isGanttDateTaken(sid, explicitDate);
+            if (coll.taken) {
+              const se = coll.existingName.split(/\s+/).slice(0, 6).join(" ");
+              const sn = contentName.split(/\s+/).slice(0, 6).join(" ");
+              storePendingQuestion(sender, {
+                questionType: "gantt_collision",
+                context: {
+                  newContentId: approveRes.contentId,
+                  newContentName: contentName,
+                  newDate: explicitDate,
+                  newDayName: explicitDay,
+                  existingContentId: coll.existingContentId,
+                  existingName: coll.existingName,
+                  ganttStatus: "בתכנון",
+                },
+              });
+              await safeSendWhatsAppMessage(sender, `העברתי את "${sn}" להפקה, אבל ב-${explicitDate} כבר נתפס "${se}".\nרוצה שאכניס את "${sn}" במקומו ואעביר את "${se}" לתאריך אחר?`);
+              return res.status(200).json({ status: "bridge_offer_explicit_collision", sender });
+            }
+            const pd = await addRowToGantt(sid, approveRes.contentId, contentName, explicitDate, explicitDay, "", "בתכנון");
+            await sortGanttByDate(sid);
+            storePendingQuestion(sender, {
+              questionType: "gantt_upload_time",
+              context: { contentId: approveRes.contentId, contentName, date: explicitDate },
+            });
+            const sc = contentName.split(/\s+/).slice(0, 6).join(" ");
+            await safeSendWhatsAppMessage(
+              sender,
+              [
+                `הכנסתי את "${sc}" לגאנט ליום ${explicitDay}, ${explicitDate}.`,
+                pd ? `הדדליין להפקה הוא ${pd}.` : "",
+                "",
+                "באיזו שעה לתכנן את ההעלאה?",
+              ].filter(Boolean).join("\n")
+            );
+            return res.status(200).json({ status: "bridge_offer_explicit_date", sender });
+          }
           // Intent confirmed. Now offer concrete dates and let her choose.
           const dates: string[] = (availableDates || [date]).filter(Boolean);
           storePendingQuestion(sender, {
@@ -3071,6 +3126,53 @@ await safeSendWhatsAppMessage(
         return res.status(200).json({ status: "gantt_write_confirmed", sender });
       }
 
+      // confirm_gantt_write explicit date honoured (26.7.2026): Karen answers
+      // "תכניס אותו ב-20/8" — a yes plus a different date. Before this it fell
+      // to unclear and a later "כן" wrote the original context date (silent
+      // wrong-date bug). Honour the explicit date via the shared extractor.
+      {
+        const explicitDate = extractExplicitDateFromReply(incomingText);
+        if (explicitDate) {
+          const sid = process.env.GOOGLE_SHEETS_ID!;
+          const newDay = getHebrewDayName(explicitDate);
+          const collision = await isGanttDateTaken(sid, explicitDate);
+          if (collision.taken) {
+            const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+            const shortNew = contentName.split(/\s+/).slice(0, 6).join(" ");
+            storePendingQuestion(sender, {
+              questionType: "gantt_collision",
+              context: {
+                newContentId: contentId,
+                newContentName: contentName,
+                newDate: explicitDate,
+                newDayName: newDay,
+                existingContentId: collision.existingContentId,
+                existingName: collision.existingName,
+                ganttStatus,
+              },
+            });
+            await safeSendWhatsAppMessage(sender, `ב-${explicitDate} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+            return res.status(200).json({ status: "confirm_gantt_write_collision", sender });
+          }
+          const pd = await addRowToGantt(sid, contentId, contentName, explicitDate, newDay, "", ganttStatus || "בתכנון");
+          await sortGanttByDate(sid);
+          storePendingQuestion(sender, {
+            questionType: "gantt_upload_time",
+            context: { contentId, contentName, date: explicitDate, monthlyPlanning },
+          });
+          const shortC = contentName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              `הכנסתי את "${shortC}" לגאנט ליום ${newDay}, ${explicitDate}.`,
+              pd ? `הדדליין להפקה הוא ${pd}.` : "",
+              "",
+              "באיזו שעה לתכנן את ההעלאה?",
+            ].filter(Boolean).join("\n")
+          );
+          return res.status(200).json({ status: "confirm_gantt_write_explicit_date", sender });
+        }
+      }
       const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
       await safeSendWhatsAppMessage(
         sender,

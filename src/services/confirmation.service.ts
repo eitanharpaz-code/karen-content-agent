@@ -1,3 +1,4 @@
+import { normalizeUserDateInput } from "../utils/date-utils";
 import { DraftSummary } from "../types/content.types";
 import { getValue, setValue, deleteValue, StateSection } from "./persistence.service";
 
@@ -783,6 +784,18 @@ export const isGanttDateChange = (message: string): boolean => {
   const hasVerb = GANTT_MOVE_VERBS.some((v) => raw.includes(v));
   const hasTargetDate = GANTT_DATE_PATTERN.test(raw);
   return hasVerb && hasTargetDate;
+};
+
+// Shared helper (26.7.2026): pull an explicit date out of Karen's reply to a
+// scheduling question. Both bridge_offer and confirm_gantt_write asked "set a
+// date?" and silently dropped a date she typed in the answer ("תכניס אותו
+// ב-20/8"), writing a default instead. This returns the normalized date so
+// both flows can honour it, or null when there is none.
+export const extractExplicitDateFromReply = (message: string): string | null => {
+  const raw = (message || "").trim();
+  const m = raw.match(GANTT_DATE_PATTERN);
+  if (!m) return null;
+  return normalizeUserDateInput(m[0]);
 };
 
 export const extractGanttDateChange = (
