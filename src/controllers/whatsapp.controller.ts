@@ -481,6 +481,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         "month_full_choice",
         "month_full_pick_reel",
         "month_full_move_date",
+        "approve_pick_idea",
+        "saved_list_pick",
+        "status_no_match_pick",
       ]);
 
       if (looksLikeSomethingElse && !MODAL_QUESTIONS.has(pendingQuestion.questionType)) {
