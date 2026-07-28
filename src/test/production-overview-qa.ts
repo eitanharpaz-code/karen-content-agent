@@ -77,22 +77,22 @@ const approved = [
   ];
   const items = buildProductionOverviewItems(tasks, approved);
   const text = formatProductionOverview(items);
-  check("text has header", text.includes("\u05de\u05d4 \u05d1\u05d4\u05e4\u05e7\u05d4 \u05e2\u05db\u05e9\u05d9\u05d5:"));
+  check("text has header", text.includes("\u05d6\u05d4 \u05de\u05d4 \u05e9\u05e0\u05de\u05e6\u05d0 \u05db\u05e8\u05d2\u05e2 \u05d1\u05d4\u05e4\u05e7\u05d4:"));
   check("collab tag shown", text.includes("(\u05e9\u05ea\u05f4\u05e4)"));
   check("estimated upload shown (deadline+1)", text.includes(plus(3)));
-  check("no-deadline line shown", text.includes("\u05e2\u05d3\u05d9\u05d9\u05df \u05dc\u05d0 \u05d1\u05d2\u05d0\u05e0\u05d8"));
-  check("single-item invitation", text.includes("\u05ea\u05d5\u05db\u05df \u05d0\u05d7\u05d3 \u05d1\u05dc\u05d9 \u05ea\u05d0\u05e8\u05d9\u05da"));
+  check("no-deadline line shown", text.includes("\u05e2\u05d3\u05d9\u05d9\u05df \u05d0\u05d9\u05df \u05dc\u05d5 \u05ea\u05d0\u05e8\u05d9\u05da \u05d1\u05d2\u05d0\u05e0\u05d8"));
+  check("single-item invitation", text.includes("\u05ea\u05d5\u05db\u05df \u05d0\u05d7\u05d3 \u05e9\u05e2\u05d3\u05d9\u05d9\u05df \u05d0\u05d9\u05df \u05dc\u05d5 \u05ea\u05d0\u05e8\u05d9\u05da"));
 }
 
 // --- Text: empty state + plural invitation ---
 {
-  check("empty state message", formatProductionOverview([]) === "\u05d0\u05d9\u05df \u05db\u05e8\u05d2\u05e2 \u05ea\u05db\u05e0\u05d9\u05dd \u05d1\u05d4\u05e4\u05e7\u05d4.");
+  check("empty state message", formatProductionOverview([]) === "\u05db\u05e8\u05d2\u05e2 \u05d0\u05d9\u05df \u05ea\u05db\u05e0\u05d9\u05dd \u05d1\u05d4\u05e4\u05e7\u05d4.");
   const tasks = [
     mkTask("GEN-002", "\u05d0", "\u05dc\u05d0", "\u05dc\u05d0", ""),
     mkTask("GEN-003", "\u05d1", "\u05dc\u05d0", "\u05dc\u05d0", ""),
   ];
   const text = formatProductionOverview(buildProductionOverviewItems(tasks, approved));
-  check("plural invitation", text.includes("2 \u05ea\u05db\u05e0\u05d9\u05dd \u05d1\u05dc\u05d9 \u05ea\u05d0\u05e8\u05d9\u05da"));
+  check("plural invitation", text.includes("2 \u05ea\u05db\u05e0\u05d9\u05dd \u05e9\u05e2\u05d3\u05d9\u05d9\u05df \u05d0\u05d9\u05df \u05dc\u05d4\u05dd \u05ea\u05d0\u05e8\u05d9\u05da"));
 }
 
 console.log(`\nProduction overview QA: ${passed} passed, ${failed} failed`);

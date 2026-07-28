@@ -1491,35 +1491,45 @@ const estimatedUploadFromDeadline = (deadlineDate: Date | null): string => {
 
 export const formatProductionOverview = (items: ProductionOverviewItem[]): string => {
   if (items.length === 0) {
-    return "אין כרגע תכנים בהפקה.";
+    return "כרגע אין תכנים בהפקה.";
   }
 
-  const lines: string[] = ["מה בהפקה עכשיו:", ""];
+  const lines: string[] = ["זה מה שנמצא כרגע בהפקה:", ""];
   let noDeadlineCount = 0;
+
+  // Three real states only. "edited but not filmed" is impossible (you cannot
+  // edit footage that was never shot), so it has no template.
+  const stateText = (filmed: boolean, edited: boolean): string => {
+    if (filmed && edited) return "צולם ונערך";
+    if (!filmed && !edited) return "עדיין לא צולם ולא נערך";
+    return "צולם, ועדיין לא נערך";
+  };
 
   for (const item of items) {
     const collabTag = item.isCollab ? " (שת״פ)" : "";
-    const filmedText = item.filmed ? "צולם" : "עדיין לא צולם";
-    const editedText = item.edited ? "נערך" : "עדיין לא נערך";
-    const stateLine = `${filmedText}, ${editedText}`;
+    const stateLine = stateText(item.filmed, item.edited);
 
     if (item.hasDeadline) {
       const upload = estimatedUploadFromDeadline(item.deadlineDate);
-      lines.push(`- ${item.name}${collabTag}: ${stateLine}. אמור לעלות בסביבות ${upload}.`);
+      lines.push(`${item.name}${collabTag}: ${stateLine}. כרגע צפוי לעלות בסביבות ${upload}.`);
+      lines.push("");
     } else {
       noDeadlineCount += 1;
-      lines.push(`- ${item.name}${collabTag}: ${stateLine}. עדיין לא בגאנט.`);
+      lines.push(`${item.name}${collabTag}: ${stateLine}. עדיין אין לו תאריך בגאנט.`);
+      lines.push("");
     }
   }
 
   if (noDeadlineCount > 0) {
-    lines.push("");
     lines.push(
       noDeadlineCount === 1
-        ? "יש תוכן אחד בלי תאריך. רוצה שנכניס אותו לגאנט?"
-        : `יש ${noDeadlineCount} תכנים בלי תאריך. רוצה שנכניס אותם לגאנט?`
+        ? "יש תוכן אחד שעדיין אין לו תאריך. רוצה שנכניס אותו לגאנט?"
+        : `יש ${noDeadlineCount} תכנים שעדיין אין להם תאריך. רוצה שנכניס אותם לגאנט?`
     );
   }
 
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
   return lines.join("\n");
 };
