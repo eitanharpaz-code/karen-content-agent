@@ -2740,6 +2740,10 @@ export const updateGanttRowDate = async (
   });
 
   console.log(`[Gantt] ✅ Updated date for ${contentId} to ${newDate} (${newDayName})`);
+  // Keep the production deadline in sync with the new gantt date. Moving a
+  // gantt date used to leave the production tab's deadline stale, which fed
+  // wrong dates into the Daily Brief and anything else that reads the deadline.
+  await updateProductionDeadlineForGanttItem(spreadsheetId, contentId, newDate);
 };
 // Get approved content that has no gantt entry
 export const getApprovedContentNotInGantt = async (
