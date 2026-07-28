@@ -477,6 +477,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         "gantt_upload_time",
         "monthly_planning",
         "bulk_archive_confirm",
+        "month_full_choice",
+        "month_full_pick_reel",
+        "month_full_move_date",
       ]);
 
       if (looksLikeSomethingElse && !MODAL_QUESTIONS.has(pendingQuestion.questionType)) {
@@ -2585,10 +2588,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         questionType: "month_full_move_date",
         context: { contentId: ctx.contentId, contentName: ctx.contentName, movingReel: picked, dates: nextMonthDates },
       });
-      const dateLines = nextMonthDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+      const dateLines = nextMonthDates.map((d: string, i: number) => `${i + 1}. יום ${getHebrewDayName(d)}, ${d}`);
       await safeSendWhatsAppMessage(
         sender,
-        [`לאיזה תאריך להזיז את "${picked.name}"?`, "", ...dateLines, "", "אפשר לענות במספר או בתאריך."].join("\n")
+        [`לאיזה תאריך להעביר את ”${picked.name}”?`, "", ...dateLines, "", "אפשר לענות במספר או בתאריך."].join("\n")
       );
       return res.status(200).json({ status: "month_full_move_date_offered", sender });
     }
@@ -2662,9 +2665,9 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       await safeSendWhatsAppMessage(
         sender,
         [
-          `סגור. העברתי את "${shortMoved}" ל-${chosen} (יום ${chosenDayName}),`,
-          `והכנסתי את "${shortNew}" במקום שהתפנה, ${freedDate} (יום ${freedDayName}).`,
-          productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
+          `העברתי את ”${shortMoved}” ליום ${chosenDayName}, ${chosen}.`,
+          `את ”${shortNew}” הכנסתי במקומו ליום ${freedDayName}, ${freedDate}.`,
+          productionDeadline ? `הדדליין להפקה הוא ${productionDeadline}.` : "",
           "",
           "באיזו שעה לתכנן את ההעלאה?",
         ].filter(Boolean).join("\n")
@@ -2681,7 +2684,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const contentName = ctx.contentName;
 
       const saysNextMonth = ["1", "חודש הבא", "הבא", "לחודש הבא", "להכניס לחודש הבא", "תכניסי לחודש הבא"].some((p) => reply.includes(p));
-      const saysNoDate = ["3", "בלי תאריך", "להשאיר", "להשאיר בלי תאריך", "לא עכשיו"].some((p) => reply.includes(p));
+      const saysNoDate = ["3", "בלי תאריך", "להשאיר", "להעביר להפקה", "הפקה בלי תאריך", "לא עכשיו"].some((p) => reply.includes(p));
       const saysMove = ["2", "להזיז", "להזיז תוכן", "לפנות מקום"].some((p) => reply.includes(p));
 
       // Branch 1: schedule next month — hand the 3 next-month dates to the
@@ -2696,10 +2699,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           questionType: "bridge_pick_date",
           context: { contentId, contentName, dates: nextMonthDates },
         });
-        const lines = nextMonthDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        const lines = nextMonthDates.map((d: string, i: number) => `${i + 1}. יום ${getHebrewDayName(d)}, ${d}`);
         await safeSendWhatsAppMessage(
           sender,
-          ["מעולה, אלה התאריכים הפנויים בחודש הבא:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
+          ["אלה התאריכים הפנויים הקרובים בחודש הבא:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
         );
         return res.status(200).json({ status: "month_full_next_month_offered", sender });
       }
@@ -2714,7 +2717,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           return res.status(200).json({ status: "month_full_keep_approve_failed", sender });
         }
         const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
-        await safeSendWhatsAppMessage(sender, `סגור, העברתי את "${shortName}" להפקה בלי תאריך. הוא יחכה לתאריך כשיתפנה מקום.`);
+        await safeSendWhatsAppMessage(sender, `העברתי את ”${shortName}” להפקה בלי תאריך. כשיתפנה מקום בגאנט, נוכל לקבוע לו אחד.`);
         return res.status(200).json({ status: "month_full_kept_no_date", sender });
       }
 
@@ -2730,10 +2733,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           questionType: "month_full_pick_reel",
           context: { contentId, contentName, nextMonthDates, shiftableReels },
         });
-        const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ${r.name} (${r.date}, יום ${r.dayName})`);
+        const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ”${r.name}”\nיום ${r.dayName}, ${r.date}`);
         await safeSendWhatsAppMessage(
           sender,
-          ["איזה תוכן להזיז כדי לפנות מקום?", "", ...reelLines, "", "אפשר לענות במספר או בשם."].join("\n")
+          ["איזה רילס תרצי להזיז כדי לפנות מקום?", "", ...reelLines, "", "אפשר לענות במספר או בשם."].join("\n")
         );
         return res.status(200).json({ status: "month_full_pick_reel_offered", sender });
       }
@@ -2742,7 +2745,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
       await safeSendWhatsAppMessage(
         sender,
-        ["לא בטוחה מה בחרת. אפשר לענות:", "1 – לחודש הבא", "2 – להזיז תוכן", "3 – להשאיר בלי תאריך"].join("\n")
+        ["לא הייתי בטוחה איזו אפשרות בחרת. אפשר לענות:", "", "1. תחילת החודש הבא", "2. להזיז רילס קיים", "3. להעביר להפקה בלי תאריך"].join("\n")
       );
       return res.status(200).json({ status: "month_full_choice_unclear", sender });
     }
@@ -3587,10 +3590,12 @@ await safeSendWhatsAppMessage(
                   },
                 });
                 bridgeOfferLine = [
-                  "החודש כבר סגור מבחינת כמות הרילסים המאושרים. מה תרצי לעשות?",
-                  "1 – להכניס לתחילת החודש הבא",
-                  "2 – להזיז תוכן קיים כדי לפנות מקום",
-                  "3 – להשאיר בלי תאריך",
+                  "אין כרגע מקום פנוי לרילס נוסף החודש.",
+                  "מה תרצי לעשות?",
+                  "",
+                  "1. לקבוע לו תאריך בתחילת החודש הבא",
+                  "2. להזיז רילס שכבר מתוכנן",
+                  "3. להעביר אותו להפקה בלי תאריך",
                   "",
                   "אפשר לענות במספר או במילים.",
                 ].join("\n");
