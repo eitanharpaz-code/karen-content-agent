@@ -5089,7 +5089,7 @@ if (isArchiveCommand(incomingText)) {
               storePendingConfirmation(sender, draftSummary);
               const replyText = buildDraftPreviewMessage(draft, {
   intro: [
-    "לא מצאתי את זה בהפקה - נראה שצילמת משהו ספונטני, יופי.",
+    "לא מצאתי את זה בהפקה. נראה שצילמת משהו ספונטני.",
     "",
     "יצרתי טיוטה לתוכן מהיר.",
   ],
