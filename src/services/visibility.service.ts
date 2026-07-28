@@ -1,7 +1,7 @@
 import type { ProductionTaskRow, ProductionTaskRowExtended } from "./sheets.service";
 import type { ContentPriorityItem } from "./priority.service";
 import type { PlanningHealthSignal } from "./planning-health.service";
-import { isThisWeek, normalizeUserDateInput } from "../utils/date-utils";
+import { isThisWeek, normalizeUserDateInput, parseDateFromSheet } from "../utils/date-utils";
 import { askClaude, CLASSIFIER_MODEL } from "./claude.service";
 
 // Sprint 10: Visibility Intent Detection
@@ -23,6 +23,7 @@ export type VisibilityIntent =
   | "gantt_query"
   | "gantt_write"
   | "gantt_holes"
+  | "production_overview"
   | "monthly_planning"
   | "ideas_list"
   | null;
@@ -392,6 +393,18 @@ export const detectVisibilityIntent = (text: string): VisibilityIntent => {
   ];
   if (ganttHolesPhrases.some((p) => rawText.includes(p))) {
     return "gantt_holes";
+  }
+  // --- Production Overview Intent (28.7.2026) ---
+  // "מה בהפקה" as a unifying view of everything in the production tab, each
+  // with its filming/editing state and deadline. Distinct from whats_important
+  // (urgency) and from the focused filters (missing_cover etc.). Placed late so
+  // the specific filters win first; "מה בהפקה" reached null before this.
+  const productionOverviewPhrases = [
+    "מה בהפקה", "מה יש בהפקה", "מה קיים בהפקה", "מה במשימות הפקה",
+    "מה נמצא בהפקה", "מה יש לי בהפקה", "מה בהפקה עכשיו",
+  ];
+  if (productionOverviewPhrases.some((p) => rawText.includes(p))) {
+    return "production_overview";
   }
   // --- Monthly Planning Intent ---
   const monthlyPlanningPatterns = [
@@ -1388,4 +1401,125 @@ export const detectVisibilityIntentWithAI = async (
   }
 
   return await askClaudeForVisibilityIntent(text);
+};
+
+
+// --- Production Overview (28.7.2026) ---
+// Unifying view of the production tab: every active item with its filming/
+// editing state and deadline. Pure function — receives data, does not read the
+// sheet. Rules locked with Eitan: three states (future deadline -> show +
+// estimated upload; no deadline -> show + nudge to gantt; overdue-and-not-
+// published -> OMITTED, belongs to the decision/brief path). Shows filming +
+// editing + deadline, NOT cover. Collab resolved from the approved tab
+// (column H) since the short production name may drop the "collab" prefix.
+// Sorted by deadline; items without a deadline sink to the bottom.
+export type ProductionOverviewItem = {
+  contentId: string;
+  name: string;
+  filmed: boolean;
+  edited: boolean;
+  deadline: string;
+  deadlineDate: Date | null;
+  isCollab: boolean;
+  hasDeadline: boolean;
+};
+
+export const buildProductionOverviewItems = (
+  tasks: ProductionTaskRow[],
+  approvedRows: string[][]
+): ProductionOverviewItem[] => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const collabByContentId = new Map<string, boolean>();
+  for (const row of approvedRows.slice(1)) {
+    const id = (row[0] || "").toString().trim();
+    if (!id) continue;
+    const collab = (row[7] || "").toString().trim();
+    collabByContentId.set(id, !(collab === "" || collab === "לא"));
+  }
+
+  const items: ProductionOverviewItem[] = [];
+  for (const t of tasks) {
+    const deadline = (t.deadline || "").toString().trim();
+    const deadlineDate = deadline ? parseDateFromSheet(deadline) : null;
+    const isPublished = (t.uploaded || "").toString().trim() === "כן";
+    // Published content has finished the production journey — it is out, not
+    // "in production". Omit it entirely.
+    if (isPublished) {
+      continue;
+    }
+    // Overdue-and-not-published belongs to the decision/brief path, not here.
+    if (deadlineDate && deadlineDate < today) {
+      continue;
+    }
+    const id = (t.contentId || "").toString().trim();
+    items.push({
+      contentId: id,
+      name: (t.taskName || "").toString().trim(),
+      filmed: (t.filmed || "").toString().trim() === "כן",
+      edited: (t.edited || "").toString().trim() === "כן",
+      deadline,
+      deadlineDate,
+      isCollab: collabByContentId.get(id) || false,
+      hasDeadline: Boolean(deadlineDate),
+    });
+  }
+
+  items.sort((a, b) => {
+    if (a.deadlineDate && b.deadlineDate) return a.deadlineDate.getTime() - b.deadlineDate.getTime();
+    if (a.deadlineDate && !b.deadlineDate) return -1;
+    if (!a.deadlineDate && b.deadlineDate) return 1;
+    return 0;
+  });
+
+  return items;
+};
+
+// Functional text for the production overview (28.7.2026). Deliberately plain —
+// final wording goes to the copywriter once the flow is locked and live. Shows
+// estimated upload (deadline + 1 day) rather than the deadline itself, per the
+// product call. Items without a deadline get a "not in gantt yet" line, and a
+// single gentle invitation to schedule them is appended at the end (never a
+// per-item queue — the agent invites, it does not push).
+const estimatedUploadFromDeadline = (deadlineDate: Date | null): string => {
+  if (!deadlineDate) return "";
+  const up = new Date(deadlineDate);
+  up.setDate(up.getDate() + 1);
+  return `${String(up.getDate()).padStart(2, "0")}/${String(up.getMonth() + 1).padStart(2, "0")}/${up.getFullYear()}`;
+};
+
+export const formatProductionOverview = (items: ProductionOverviewItem[]): string => {
+  if (items.length === 0) {
+    return "אין כרגע תכנים בהפקה.";
+  }
+
+  const lines: string[] = ["מה בהפקה עכשיו:", ""];
+  let noDeadlineCount = 0;
+
+  for (const item of items) {
+    const collabTag = item.isCollab ? " (שת\"פ)" : "";
+    const filmedText = item.filmed ? "צולם" : "עדיין לא צולם";
+    const editedText = item.edited ? "נערך" : "עדיין לא נערך";
+    const stateLine = `${filmedText}, ${editedText}`;
+
+    if (item.hasDeadline) {
+      const upload = estimatedUploadFromDeadline(item.deadlineDate);
+      lines.push(`- ${item.name}${collabTag}: ${stateLine}. אמור לעלות בסביבות ${upload}.`);
+    } else {
+      noDeadlineCount += 1;
+      lines.push(`- ${item.name}${collabTag}: ${stateLine}. עדיין לא בגאנט.`);
+    }
+  }
+
+  if (noDeadlineCount > 0) {
+    lines.push("");
+    lines.push(
+      noDeadlineCount === 1
+        ? "יש תוכן אחד בלי תאריך. רוצה שנכניס אותו לגאנט?"
+        : `יש ${noDeadlineCount} תכנים בלי תאריך. רוצה שנכניס אותם לגאנט?`
+    );
+  }
+
+  return lines.join("\n");
 };

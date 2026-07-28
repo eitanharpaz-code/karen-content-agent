@@ -100,6 +100,7 @@ approveContentForProduction,
   removePunctuationForMatching,
   updateGanttRowDate,
   getApprovedContentNotInGantt,
+  getApprovedContentRows,
   saveFastTrackContent,
   getOpenContentIdeas,
   updateApprovedContentStatusById,
@@ -121,6 +122,8 @@ import {
   extractStatusQueryTarget,
   formatTaskStatusResponse,
   formatVisibilityResponse,
+  buildProductionOverviewItems,
+  formatProductionOverview,
   isLikelyVisibilityQuery,
   isQuestionLikeMessage,
   extractPriorityFromQuery,
@@ -4385,6 +4388,16 @@ const replyText = [
             const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
             const replyText = formatPriorityFilterResponse(allTasks, priority);
             await safeSendWhatsAppMessage(sender, replyText);
+            return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
+          }
+          case "production_overview": {
+            const [prodTasks, approvedRows] = await Promise.all([
+              getAllProductionTasks(spreadsheetId),
+              getApprovedContentRows(spreadsheetId),
+            ]);
+            const overviewItems = buildProductionOverviewItems(prodTasks, approvedRows);
+            const poReply = formatProductionOverview(overviewItems);
+            await safeSendWhatsAppMessage(sender, poReply);
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           default:

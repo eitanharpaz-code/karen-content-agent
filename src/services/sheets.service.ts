@@ -886,6 +886,21 @@ export type ProductionTaskRow = {
 };
 
 // Get all production tasks from משימות הפקה
+// Raw approved-content rows (A:K), including the header at index 0. Used by the
+// production overview to resolve the collab flag (column H) per content_id,
+// since the production tab does not carry it. (28.7.2026)
+export const getApprovedContentRows = async (
+  spreadsheetId: string
+): Promise<string[][]> => {
+  const auth = getAuthClient();
+  const sheets = google.sheets({ version: "v4", auth });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAMES.approvedContent}!A:K`,
+  });
+  return (response.data.values || []) as string[][];
+};
+
 export const getAllProductionTasks = async (
   spreadsheetId: string
 ): Promise<ProductionTaskRow[]> => {
