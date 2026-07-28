@@ -90,6 +90,7 @@ approveContentForProduction,
   isGanttDateTaken,
   findAvailableDatesInMonth,
   findSmartGanttDate,
+  evaluateMonthFullForReel,
   getOrganicReelsInWeek,
   getAllProductionTasks,
   getContentNamesWithSummaries,
@@ -2554,6 +2555,67 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       return res.status(200).json({ status: "bridge_pick_date_done", sender });
     }
 
+    if (pendingQuestion?.questionType === "month_full_choice") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const reply = incomingText.trim();
+      const nextMonthDates: string[] = ctx.nextMonthDates || [];
+      const contentId = ctx.contentId;
+      const contentName = ctx.contentName;
+
+      const saysNextMonth = ["1", "חודש הבא", "הבא", "לחודש הבא", "להכניס לחודש הבא", "תכניסי לחודש הבא"].some((p) => reply.includes(p));
+      const saysNoDate = ["3", "בלי תאריך", "להשאיר", "להשאיר בלי תאריך", "לא עכשיו"].some((p) => reply.includes(p));
+      const saysMove = ["2", "להזיז", "להזיז תוכן", "לפנות מקום"].some((p) => reply.includes(p));
+
+      // Branch 1: schedule next month — hand the 3 next-month dates to the
+      // existing bridge_pick_date flow (no new write code).
+      if (saysNextMonth) {
+        if (nextMonthDates.length === 0) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי גם בחודש הבא. התוכן נשאר בלי תאריך.");
+          return res.status(200).json({ status: "month_full_next_month_empty", sender });
+        }
+        storePendingQuestion(sender, {
+          questionType: "bridge_pick_date",
+          context: { contentId, contentName, dates: nextMonthDates },
+        });
+        const lines = nextMonthDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        await safeSendWhatsAppMessage(
+          sender,
+          ["מעולה, אלה התאריכים הפנויים בחודש הבא:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
+        );
+        return res.status(200).json({ status: "month_full_next_month_offered", sender });
+      }
+
+      // Branch 2: keep in production without a gantt date.
+      if (saysNoDate) {
+        clearPendingQuestion(sender);
+        try {
+          await approveContentForProduction(spreadsheetId, contentId);
+        } catch (approveError) {
+          await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`);
+          return res.status(200).json({ status: "month_full_keep_approve_failed", sender });
+        }
+        const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
+        await safeSendWhatsAppMessage(sender, `סגור, העברתי את "${shortName}" להפקה בלי תאריך. הוא יחכה לתאריך כשיתפנה מקום.`);
+        return res.status(200).json({ status: "month_full_kept_no_date", sender });
+      }
+
+      // Branch 3: move existing content — built in the next step.
+      if (saysMove) {
+        storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
+        await safeSendWhatsAppMessage(sender, "את האפשרות של הזזת תוכן עוד רגע מסיימים לבנות. בינתיים אפשר לבחור חודש הבא או להשאיר בלי תאריך.");
+        return res.status(200).json({ status: "month_full_move_not_ready", sender });
+      }
+
+      // Unclear: re-ask once.
+      storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
+      await safeSendWhatsAppMessage(
+        sender,
+        ["לא בטוחה מה בחרת. אפשר לענות:", "1 – לחודש הבא", "2 – להזיז תוכן", "3 – להשאיר בלי תאריך"].join("\n")
+      );
+      return res.status(200).json({ status: "month_full_choice_unclear", sender });
+    }
     if (pendingQuestion?.questionType === "bridge_offer") {
       const { contentName, date, dayName, availableDates, askedIntentOnly } = pendingQuestion.context as any;
       // Escape hatch (extended 23.7.2026): Karen often asks something else
@@ -3375,6 +3437,38 @@ await safeSendWhatsAppMessage(
           // Show the aggressive scheduling offer directly (the trend is still
           // saved to the bank silently, for tracking). Non-trend ideas keep
           // the normal "saved to bank" message.
+          // month_full_choice offered (26.7.2026): before falling back to the
+          // "no room" dead end, check whether the month is merely full for a new
+          // organic reel. If so, and there is room next month or reels to shift,
+          // offer Karen the choice instead of blocking.
+          if (!bridgeOfferLine) {
+            try {
+              const evalNow = new Date();
+              const evalRequested = `${String(evalNow.getDate()).padStart(2, "0")}/${String(evalNow.getMonth() + 1).padStart(2, "0")}/${evalNow.getFullYear()}`;
+              const monthEval = await evaluateMonthFullForReel(spreadsheetId, evalRequested);
+              if (monthEval.isMonthFull && (monthEval.nextMonthDates.length > 0 || monthEval.shiftableReels.length > 0)) {
+                storePendingQuestion(sender, {
+                  questionType: "month_full_choice",
+                  context: {
+                    contentId,
+                    contentName: pendingDraft.shortName,
+                    nextMonthDates: monthEval.nextMonthDates,
+                    shiftableReels: monthEval.shiftableReels,
+                  },
+                });
+                bridgeOfferLine = [
+                  "החודש כבר סגור מבחינת כמות הרילסים המאושרים. מה תרצי לעשות?",
+                  "1 – להכניס לתחילת החודש הבא",
+                  "2 – להזיז תוכן קיים כדי לפנות מקום",
+                  "3 – להשאיר בלי תאריך",
+                  "",
+                  "אפשר לענות במספר או במילים.",
+                ].join("\n");
+              }
+            } catch (monthFullError) {
+              console.error(`[MonthFull] evaluation skipped: ${monthFullError}`);
+            }
+          }
           const replyText = (pendingDraft.category === "טרנד" && bridgeOfferLine)
             ? bridgeOfferLine
             : [
