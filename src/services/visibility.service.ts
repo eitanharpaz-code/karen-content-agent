@@ -541,7 +541,7 @@ export const isQuestionLikeMessage = (text: string): boolean => {
   }
 
   // Single-word question starters (interrogative words)
-  const singleWordPattern = /^(מה|איזה|איזו|אילו|איפה|כמה|מי)\b/;
+  const singleWordPattern = /^(מה|איזה|איזו|אילו|איפה|כמה|מי)(?=\s|$)/;
   if (singleWordPattern.test(normalized)) {
     return true;
   }
