@@ -2329,7 +2329,7 @@ export const addRowToGantt = async (
 
   const approvedResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAMES.approvedContent}!A:K`,
+    range: `${SHEET_NAMES.approvedContent}!A:L`,
   });
 
   const approvedRows = approvedResponse.data.values || [];
@@ -2337,7 +2337,7 @@ export const addRowToGantt = async (
 
   const priority = approvedRow ? (approvedRow[5] || "").toString().trim() : "";
   const collab = approvedRow ? (approvedRow[7] || "").toString().trim() : "";
-  const contentType = approvedRow ? (approvedRow[10] || "ריל").toString().trim() : "ריל";
+  const contentType = approvedRow ? (approvedRow[11] || "ריל").toString().trim() : "ריל";
 
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.monthlyGantt, [
     contentId,          // A - content_id
