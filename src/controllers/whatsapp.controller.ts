@@ -145,7 +145,7 @@ import {
   hasEditConfidence,
   generateClarificationPrompt,
 } from "../utils/conversation-utils";
-import { isThisWeek, normalizeUserDateInput, getHebrewDayName as getHebrewDayNameFromDate } from "../utils/date-utils";
+import { isThisWeek, normalizeUserDateInput, getHebrewDayName as getHebrewDayNameFromDate, parseDateFromSheet } from "../utils/date-utils";
 import {
   fetchOverdueDecisionItems,
   fetchPriorityItems,
@@ -5154,8 +5154,23 @@ if (isArchiveCommand(incomingText)) {
             if (isReadyUpdate) {
               try {
                 const openTasks = await getAllProductionTasks(spreadsheetId);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const reported = statusUpdate.statusTypes; // e.g. ["filmed"], ["edited"], or both
                 const pending = (openTasks || [])
-                  .filter((t: any) => (t.filmed !== "כן" || t.edited !== "כן"))
+                  .filter((t: any) => {
+                    // Show a task only if it is still missing at least one of the
+                    // steps Karen just reported (filming / editing) — no point
+                    // offering a task that is already done on that step.
+                    const missingReportedStep = reported.some((step: string) => (t as any)[step] !== "כן");
+                    if (!missingReportedStep) return false;
+                    // And only if its deadline has not passed. Empty deadline
+                    // (not yet in the gantt) counts as still relevant.
+                    const raw = (t.deadline || "").toString().trim();
+                    if (!raw) return true;
+                    const d = parseDateFromSheet(raw);
+                    return !d || d >= today;
+                  })
                   .map((t: any) => (t.taskName || "").toString().trim())
                   .filter(Boolean)
                   .slice(0, 6);
