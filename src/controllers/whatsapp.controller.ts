@@ -3072,80 +3072,21 @@ if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עז
 }
 
 if (isRejectionMessage(incomingText)) {
-        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
-
-        const available = await findAvailableDatesInMonth(spreadsheetId, date);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const earliestGanttDate = new Date();
-earliestGanttDate.setDate(earliestGanttDate.getDate() + 1);
-earliestGanttDate.setHours(0, 0, 0, 0);
-
-const alternatives = available
-  .filter((candidateDate) => candidateDate !== date)
-  .filter((candidateDate) => {
-    const parts = candidateDate.split("/");
-    const parsed = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-    return parsed >= earliestGanttDate;
-  })
-  .sort((a, b) => {
-    const aParts = a.split("/");
-    const bParts = b.split("/");
-    const aDate = new Date(parseInt(aParts[2]), parseInt(aParts[1]) - 1, parseInt(aParts[0]));
-    const bDate = new Date(parseInt(bParts[2]), parseInt(bParts[1]) - 1, parseInt(bParts[0]));
-    return aDate.getTime() - bDate.getTime();
-  })
-  .slice(0, 5);
-
-        if (alternatives.length === 0) {
-          clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "בסדר. לא מצאתי עוד תאריכים פנויים באותו חודש. אפשר להכניס ידנית עם תאריך אחר.");
-          return res.status(200).json({ status: "gantt_write_no_alternatives", sender });
-        }
-
-        const firstAlternative = alternatives[0];
-        const firstAlternativeDayName = getHebrewDayName(firstAlternative);
-
-        const optionsText = alternatives
-          .map((candidateDate, index) => {
-            const candidateDayName = getHebrewDayName(candidateDate);
-            return `${index + 1}. ${candidateDate} (${candidateDayName})`;
-          })
-          .join("\n");
-
-        storePendingQuestion(sender, {
-          questionType: "gantt_write_new_date",
-          context: {
-          newContentId: contentId,
-          newContentName: contentName,
-          suggestedDate: firstAlternative,
-          suggestedDayName: firstAlternativeDayName,
-          alternatives,
-          ganttStatus,
-          monthlyPlanning,
-        },
-        });
-
+        // "לא" means: do not schedule now. Karen often prefers to leave content
+        // in production without a gantt date, so we stop here instead of pushing
+        // alternative dates at her. If she wants a different date she simply
+        // gives one (handled by the explicit-date branch below).
+        clearPendingQuestion(sender);
         const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
         await safeSendWhatsAppMessage(
-  sender,
-  [
-    `בסדר, לא הכנסתי ב-${date}.`,
-    "אלה תאריכים פנויים באותו חודש:",
-    optionsText,
-    "",
-    "אפשר לענות כן כדי לבחור את הראשון,",
-    "לכתוב מספר מהרשימה,",
-    "או לכתוב תאריך מלא.",
-    "",
-    "אם תרצי לבחור תוכן אחר מהרשימה, כתבי: תוכן אחר",
-    "אם תרצי לעצור, כתבי: ביטול",
-    "",
-    `לתוכן: "${shortName}"`,
-  ].join("\n")
-);
-        return res.status(200).json({ status: "gantt_write_alternatives_offered", sender });
+          sender,
+          [
+            `בסדר, השארתי את "${shortName}" בהפקה בלי תאריך.`,
+            "",
+            "אפשר לשבץ מתי שתרצי, או פשוט לכתוב לי תאריך עכשיו.",
+          ].join("\n")
+        );
+        return res.status(200).json({ status: "gantt_write_declined", sender });
       }
       if (isConfirmationMessage(incomingText)) {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
