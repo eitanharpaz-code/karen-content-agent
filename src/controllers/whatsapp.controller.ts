@@ -5098,6 +5098,12 @@ if (isArchiveCommand(incomingText)) {
             rawMessage: incomingText,
           }
         : null);
+      // "ערכתי" implies "צולם": you cannot edit footage that was never shot.
+      // If Karen reports only editing, mark filming too, so every downstream
+      // step (the match list, the sheet update, the gantt) sees both.
+      if (statusUpdate && statusUpdate.statusTypes.includes("edited") && !statusUpdate.statusTypes.includes("filmed")) {
+        statusUpdate.statusTypes = ["filmed", ...statusUpdate.statusTypes];
+      }
       console.log(`[Route Debug] detectStatusUpdate: ${statusUpdate ? `{ statusTypes: [${statusUpdate.statusTypes.join(", ")}], contentName: "${statusUpdate.contentName}" }` : "null"}`);
       if (statusUpdate) {
         try {
