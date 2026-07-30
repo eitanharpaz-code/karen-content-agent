@@ -1680,7 +1680,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (/תוכן חדש|חדש לגמרי|זה חדש|משהו חדש/.test(reply)) {
         clearPendingQuestion(sender);
         const draft = await createContentDraft(ctx.attempted, sender);
-        const draftSummary = { ...draft, originalUserInput: ctx.attempted, isFastTrack: true };
+        const draftSummary = { ...draft, originalUserInput: ctx.attempted, isFastTrack: true, statusTypes: ctx.statusTypes };
         storePendingConfirmation(sender, draftSummary);
         await safeSendWhatsAppMessage(
           sender,
@@ -3429,7 +3429,8 @@ await safeSendWhatsAppMessage(
               pendingDraft.category,
               pendingDraft.tone,
               pendingDraft.priority,
-              pendingDraft.contentType || "ריל"
+              pendingDraft.contentType || "ריל",
+              (pendingDraft as any).statusTypes || ["filmed", "edited"]
             );
 
             // חפש חור פנוי בגאנט
@@ -5143,7 +5144,7 @@ if (isArchiveCommand(incomingText)) {
               }
 
               const draft = await createContentDraft(statusUpdate.contentName, sender);
-              const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true };
+              const draftSummary = { ...draft, originalUserInput: statusUpdate.contentName, isFastTrack: true, statusTypes: statusUpdate.statusTypes };
               storePendingConfirmation(sender, draftSummary);
               const replyText = buildDraftPreviewMessage(draft, {
   intro: [

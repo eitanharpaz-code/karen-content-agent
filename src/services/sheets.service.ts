@@ -2808,9 +2808,13 @@ export const saveFastTrackContent = async (
   category: string,
   tone: string,
   priority: string,
-  contentType: string = "ריל"
+  contentType: string = "ריל",
+  statusTypes: string[] = ["filmed", "edited"]
 ): Promise<void> => {
   const timestamp = new Date().toISOString();
+  const filmed = statusTypes.includes("filmed") ? "כן" : "לא";
+  const edited = statusTypes.includes("edited") ? "כן" : "לא";
+  const approvedStatus = (filmed === "כן" && edited === "כן") ? "מוכן לעלייה" : "ממתין לעריכה";
 
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.approvedContent, [
     contentId,
@@ -2819,7 +2823,7 @@ export const saveFastTrackContent = async (
     category,
     tone,
     priority,
-    "מוכן לעלייה",
+    approvedStatus,
     "",
     "",
     timestamp,
@@ -2829,9 +2833,9 @@ export const saveFastTrackContent = async (
   await appendRowToSheet(spreadsheetId, SHEET_NAMES.productionTasks, [
   contentId,
   shortName,
-  "כן",
-  "כן",
-  "כן",
+  filmed,
+  edited,
+  "לא",
   "",
   "",
   timestamp,
