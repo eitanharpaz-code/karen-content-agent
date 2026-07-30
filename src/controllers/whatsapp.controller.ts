@@ -3080,11 +3080,7 @@ if (isRejectionMessage(incomingText)) {
         const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
         await safeSendWhatsAppMessage(
           sender,
-          [
-            `בסדר, השארתי את "${shortName}" בהפקה בלי תאריך.`,
-            "",
-            "אפשר לשבץ מתי שתרצי, או פשוט לכתוב לי תאריך עכשיו.",
-          ].join("\n")
+          `השארתי את "${shortName}" בהפקה בלי תאריך. כשתרצי, נוכל לקבוע לו אחד.`
         );
         return res.status(200).json({ status: "gantt_write_declined", sender });
       }
@@ -3130,16 +3126,14 @@ storePendingQuestion(sender, {
 });
 
 const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
+  const deadlineDayName = productionDeadline ? getHebrewDayName(productionDeadline) : "";
 
-await safeSendWhatsAppMessage(
-  sender,
-  [
-    `מעולה, הוספתי את "${shortConfirmName}" לגאנט ב-${date} (יום ${dayName}).`,
-    productionDeadline ? `דדליין הפקה: ${productionDeadline}.` : "",
-    "",
-    "באיזו שעה לתכנן את ההעלאה?",
-  ].filter(Boolean).join("\n")
-);
+  const confirmLines = [`הכנסתי את "${shortConfirmName}" לגאנט ליום ${dayName}, ${date}.`, ""];
+  if (productionDeadline) {
+    confirmLines.push(`הדדליין להפקה הוא ${deadlineDayName}, ${productionDeadline}.`, "");
+  }
+  confirmLines.push("באיזו שעה לתכנן את ההעלאה?");
+  await safeSendWhatsAppMessage(sender, confirmLines.join("\n"));
         return res.status(200).json({ status: "gantt_write_confirmed", sender });
       }
 
@@ -3444,7 +3438,7 @@ await safeSendWhatsAppMessage(
               return d >= today;
             });
 
-            const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.`;
+            const replyText = `שמרתי את "${pendingDraft.shortName}".`;
             await safeSendWhatsAppMessage(sender, replyText);
 
             // Month full: no free future date this month. Look into next month
@@ -3457,7 +3451,7 @@ await safeSendWhatsAppMessage(
               const nmFirst = `01/${String(nmDate.getMonth() + 1).padStart(2, "0")}/${nmDate.getFullYear()}`;
               const nmAvailable = await findAvailableDatesInMonth(spreadsheetId, nmFirst);
               ftDates = nmAvailable.slice(0, 1);
-              ftNextMonthNote = "החודש מלא, אז הצעתי תאריך לחודש הבא.\n";
+              ftNextMonthNote = "אין מקום פנוי לרילס נוסף החודש, אז בדקתי את תחילת החודש הבא.\n\n";
             }
             if (ftDates.length > 0) {
               const suggested = ftDates[0];
@@ -3481,7 +3475,16 @@ await safeSendWhatsAppMessage(
                   ganttStatus: ftGanttStatus,
                 },
               });
-              await safeSendWhatsAppMessage(sender, `${ftNextMonthNote}מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\n${ftStatusLine}\n\nאפשר לענות כן / לא.`);
+              const choiceLine = "מתאים לך התאריך הזה? אפשר לענות כן, לכתוב תאריך אחר, או לא כדי להשאיר אותו בינתיים בלי תאריך.";
+              await safeSendWhatsAppMessage(
+                sender,
+                [
+                  `${ftNextMonthNote}מצאתי תאריך פנוי קרוב בגאנט:`,
+                  `${suggestedDayName}, ${suggested}`,
+                  "",
+                  choiceLine,
+                ].join("\n")
+              );
             } else {
               await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר להכניס ידנית עם תאריך.");
             }
@@ -5151,11 +5154,11 @@ if (isArchiveCommand(incomingText)) {
                   await safeSendWhatsAppMessage(
                     sender,
                     [
-                      `לא מצאתי את התוכן שציינת בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
+                      `לא מצאתי את "${statusUpdate.contentName}" בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
                       "",
                       ...pending,
                       "",
-                      'אם זה משהו חדש, פשוט תכתבי "תוכן חדש" ואוסיף אותו.',
+                      'אם זה משהו חדש, פשוט תכתבי "תוכן חדש".',
                     ].join("\n")
                   );
                   return res.status(200).json({ status: "status_no_match_asked", sender });

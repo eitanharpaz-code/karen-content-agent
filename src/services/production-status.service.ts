@@ -332,14 +332,12 @@ const extractContentName = (message: string, afterIndex: number, statusStartInde
       .replace(/^['"]|['"]$/g, "")
       .trim();
     if (beforeCleaned) {
-      return normalizeHebrewText(beforeCleaned);
+      return beforeCleaned;
     }
   }
 
   if (!cleaned) {
-      return normalizeHebrewText(
-        message.trim().replace(STATUS_SUFFIX_CLEANUP, "").trim()
-      );
+      return message.trim().replace(STATUS_SUFFIX_CLEANUP, "").trim();
   }
 
   cleaned = cleaned.replace(STATUS_PREFIX_CLEANUP, "").trim();
@@ -364,9 +362,8 @@ const extractContentName = (message: string, afterIndex: number, statusStartInde
     cleaned = cleaned.substring(0, 100).trim();
   }
 
-  cleaned = normalizeHebrewText(cleaned);
 
-  return cleaned || normalizeHebrewText(message.trim());
+  return cleaned || message.trim();
 };
 
 export const getColumnName = (statusType: ProductionStatusType): string => {
