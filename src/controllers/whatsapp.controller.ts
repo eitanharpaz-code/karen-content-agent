@@ -3450,6 +3450,15 @@ await safeSendWhatsAppMessage(
             if (futureAvailable.length > 0) {
               const suggested = futureAvailable[0];
               const suggestedDayName = getHebrewDayName(suggested);
+              // Gantt status must reflect what Karen actually reported. Filmed
+              // AND edited -> "מוכן" (ready to upload). Filmed only -> "בתכנון",
+              // because it still needs editing. The message says the same.
+              const ftStatusTypes: string[] = (pendingDraft as any).statusTypes || ["filmed", "edited"];
+              const ftReady = ftStatusTypes.includes("filmed") && ftStatusTypes.includes("edited");
+              const ftGanttStatus = ftReady ? "מוכן" : "בתכנון";
+              const ftStatusLine = ftReady
+                ? 'הסטטוס בגאנט יהיה "מוכן", כי הסרטון כבר צולם ונערך.'
+                : 'הסטטוס בגאנט יהיה "בתכנון", כי הסרטון צולם אבל עדיין לא נערך.';
               storePendingQuestion(sender, {
                 questionType: "confirm_gantt_write",
                 context: {
@@ -3457,10 +3466,10 @@ await safeSendWhatsAppMessage(
                   contentName: pendingDraft.shortName,
                   date: suggested,
                   dayName: suggestedDayName,
-                  ganttStatus: "מוכן",
+                  ganttStatus: ftGanttStatus,
                 },
               });
-              await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\nהסטטוס בגאנט יהיה "מוכן", כי הסרטון כבר צולם ונערך.\n\nאפשר לענות כן / לא.`);
+              await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\n${ftStatusLine}\n\nאפשר לענות כן / לא.`);
             } else {
               await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
             }
