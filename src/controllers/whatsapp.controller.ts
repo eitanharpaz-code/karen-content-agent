@@ -2436,6 +2436,76 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
     }
 
+    if (pendingQuestion?.questionType === "production_overview_schedule") {
+      const ctx = pendingQuestion.context as any;
+      const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+      const noDateItems: Array<{ contentId: string; name: string }> = ctx.items || [];
+
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender);
+        await safeSendWhatsAppMessage(sender, "בסדר, נשאיר אותם כרגע בלי תאריך.");
+        return res.status(200).json({ status: "production_overview_schedule_declined", sender });
+      }
+
+      if (isConfirmationMessage(incomingText)) {
+        // Scope (28.7): schedule the FIRST item only. The full loop over the
+        // rest belongs to the monthly-planning redesign. The item is already in
+        // production (it has a production row, just no deadline/gantt entry), so
+        // reuse bridge_pick_date with alreadyApproved, same as "תזכיר לי".
+        const first = noDateItems[0];
+        if (!first) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "לא נשאר תוכן בלי תאריך.");
+          return res.status(200).json({ status: "production_overview_schedule_empty", sender });
+        }
+        const now = new Date();
+        const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+        const smart = await findSmartGanttDate(spreadsheetId, firstOfMonth, { forNewItemType: "ריל" });
+        const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); tomorrowD.setHours(0, 0, 0, 0);
+        const dates = smart.filter((d: string) => {
+          const p = d.split("/");
+          return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) >= tomorrowD;
+        }).slice(0, 3);
+        // Month full: this month has no free future date. Instead of a dead
+        // end, look into next month and offer those dates. The content is
+        // already in production, so we reuse bridge_pick_date/alreadyApproved
+        // (which only writes the gantt row, no re-approve). This is why we do
+        // NOT reuse month_full_choice here — that flow is built around
+        // approveContentForProduction, which throws for already-in-production
+        // items (they are no longer in the idea bank).
+        let scheduleDates = dates;
+        let nextMonthNote = "";
+        if (!scheduleDates.length) {
+          const nm = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+          const nmFirst = `01/${String(nm.getMonth() + 1).padStart(2, "0")}/${nm.getFullYear()}`;
+          const nmSmart = await findSmartGanttDate(spreadsheetId, nmFirst, { forNewItemType: "ריל" });
+          scheduleDates = nmSmart.slice(0, 3);
+          nextMonthNote = "החודש מלא, אז הצעתי תאריכים לחודש הבא.";
+        }
+        if (!scheduleDates.length) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר לנסות מאוחר יותר.");
+          return res.status(200).json({ status: "production_overview_schedule_no_dates", sender });
+        }
+        storePendingQuestion(sender, {
+          questionType: "bridge_pick_date",
+          context: { contentId: first.contentId, contentName: first.name, dates: scheduleDates, alreadyApproved: true },
+        });
+        const dateLines = scheduleDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
+        const askLines = nextMonthNote
+          ? [nextMonthNote, "", `מתי להכניס את "${first.name}" לגאנט?`, "", ...dateLines]
+          : [`מתי להכניס את "${first.name}" לגאנט?`, "", ...dateLines];
+        await safeSendWhatsAppMessage(sender, askLines.join("\n"));
+        return res.status(200).json({ status: "production_overview_schedule_started", sender });
+      }
+
+      // Neither yes nor no: let the escape hatch / normal routing handle it by
+      // clearing and falling through would lose the question; instead re-ask
+      // gently once. (A real command would have been caught by the escape hatch.)
+      await safeSendWhatsAppMessage(sender, "רוצה שנכניס אותם לגאנט? אפשר לענות כן או לא.");
+      return res.status(200).json({ status: "production_overview_schedule_unclear", sender });
+    }
+
     if (pendingQuestion?.questionType === "bridge_pick_date") {
       const ctx = pendingQuestion.context as any;
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -4398,6 +4468,19 @@ const replyText = [
             const overviewItems = buildProductionOverviewItems(prodTasks, approvedRows);
             const poReply = formatProductionOverview(overviewItems);
             await safeSendWhatsAppMessage(sender, poReply);
+            // If any items have no deadline, the reply ends with "רוצה שנכניס
+            // אותם לגאנט?". Arm a pending question so a "כן" can start scheduling
+            // them. Deadline-empty in the production tab means not-in-gantt
+            // (every gantt write also writes a deadline), so no gantt cross-check
+            // is needed. Scope (28.7): schedule the FIRST item only; the full
+            // one-by-one loop belongs to the monthly-planning redesign.
+            const poNoDate = overviewItems.filter((i) => !i.hasDeadline);
+            if (poNoDate.length > 0) {
+              storePendingQuestion(sender, {
+                questionType: "production_overview_schedule",
+                context: { items: poNoDate.map((i) => ({ contentId: i.contentId, name: i.name })) },
+              });
+            }
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           default:
