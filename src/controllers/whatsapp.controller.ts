@@ -3447,8 +3447,20 @@ await safeSendWhatsAppMessage(
             const replyText = `מעולה, שמרתי את "${pendingDraft.shortName}" לתכנים שאושרו.`;
             await safeSendWhatsAppMessage(sender, replyText);
 
-            if (futureAvailable.length > 0) {
-              const suggested = futureAvailable[0];
+            // Month full: no free future date this month. Look into next month
+            // and glide there instead of a dead end, same pattern as the
+            // production_overview nudge. A note tells Karen why the dates jumped.
+            let ftDates = futureAvailable;
+            let ftNextMonthNote = "";
+            if (ftDates.length === 0) {
+              const nmDate = new Date(year, month, 1);
+              const nmFirst = `01/${String(nmDate.getMonth() + 1).padStart(2, "0")}/${nmDate.getFullYear()}`;
+              const nmAvailable = await findAvailableDatesInMonth(spreadsheetId, nmFirst);
+              ftDates = nmAvailable.slice(0, 1);
+              ftNextMonthNote = "החודש מלא, אז הצעתי תאריך לחודש הבא.\n";
+            }
+            if (ftDates.length > 0) {
+              const suggested = ftDates[0];
               const suggestedDayName = getHebrewDayName(suggested);
               // Gantt status must reflect what Karen actually reported. Filmed
               // AND edited -> "מוכן" (ready to upload). Filmed only -> "בתכנון",
@@ -3469,9 +3481,9 @@ await safeSendWhatsAppMessage(
                   ganttStatus: ftGanttStatus,
                 },
               });
-              await safeSendWhatsAppMessage(sender, `מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\n${ftStatusLine}\n\nאפשר לענות כן / לא.`);
+              await safeSendWhatsAppMessage(sender, `${ftNextMonthNote}מצאתי תאריך פנוי קרוב בגאנט:\n${suggested}, יום ${suggestedDayName}.\n\nלהכניס את "${pendingDraft.shortName}" לתאריך הזה?\n${ftStatusLine}\n\nאפשר לענות כן / לא.`);
             } else {
-              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
+              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר להכניס ידנית עם תאריך.");
             }
 
             return res.status(200).json({ status: "fast_track_saved", sender, contentId });
