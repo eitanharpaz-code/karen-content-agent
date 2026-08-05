@@ -659,6 +659,76 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         }
       }
 
+      if (pendingQuestion?.questionType === "overdue_pick_which") {
+        // Karen picked which overdue item she meant, after we asked because
+        // several were overdue. Complete the remembered action (currently only
+        // "published") on the chosen item.
+        const { action, options } = pendingQuestion.context as any;
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const rawAnswer = incomingText.trim();
+        const normalizedAnswer = rawAnswer.toLowerCase();
+        if (["ביטול", "בטלי", "עזבי", "עזוב", "לא עכשיו", "אחר כך", "אחכ", 'אח"כ'].includes(normalizedAnswer)) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(sender, "בסדר, השארתי את זה פתוח כרגע.");
+          return res.status(200).json({ status: "overdue_pick_which_cancelled", sender });
+        }
+        // Resolve the pick to one of the offered titles: accept an exact-ish
+        // name, or a 1-based number from the list.
+        const opts: string[] = Array.isArray(options) ? options : [];
+        let chosenTitle = "";
+        const asNumber = parseInt(rawAnswer, 10);
+        if (!isNaN(asNumber) && asNumber >= 1 && asNumber <= opts.length) {
+          chosenTitle = opts[asNumber - 1];
+        } else {
+          // Exact match first, then a contains match either way, so Karen can
+          // type the full title or a distinctive part of it.
+          const answer = rawAnswer.trim();
+          const exact = opts.find((o) => o.trim() === answer);
+          if (exact) {
+            chosenTitle = exact;
+          } else {
+            const partial = opts.find(
+              (o) => o.includes(answer) || answer.includes(o.trim())
+            );
+            if (partial) chosenTitle = partial;
+          }
+        }
+        if (!chosenTitle) {
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              "לא זיהיתי לאיזה מהם. אפשר לכתוב את השם המלא, או מספר מהרשימה:",
+              "",
+              ...opts,
+            ].join("\n")
+          );
+          return res.status(200).json({ status: "overdue_pick_which_unclear", sender });
+        }
+        // Find the contentId for the chosen title from the live overdue list.
+        const overdueNow = await fetchOverdueDecisionItems();
+        const chosen = overdueNow.find(
+          (it) => (it.displayTitle || "").toString().trim() === chosenTitle.trim()
+        );
+        if (!chosen) {
+          clearPendingQuestion(sender);
+          await safeSendWhatsAppMessage(
+            sender,
+            `כבר לא מצאתי את "${chosenTitle}" ברשימת האיחורים. ייתכן שהוא כבר טופל.`
+          );
+          return res.status(200).json({ status: "overdue_pick_which_gone", sender });
+        }
+        if (action === "published") {
+          clearPendingQuestion(sender);
+          await markOverdueItemPublished(spreadsheetId, chosen.contentId);
+          await safeSendWhatsAppMessage(
+            sender,
+            `סגור, סימנתי ש-"${chosen.displayTitle}" עלה. הוא לא יופיע יותר כתזכורת איחור.`
+          );
+          return res.status(200).json({ status: "overdue_pick_which_published", sender });
+        }
+        // Unknown action (should not happen for now): clear and fall through.
+        clearPendingQuestion(sender);
+      }
       if (pendingQuestion?.questionType === "overdue_reschedule_date") {
         const { contentId, contentName } = pendingQuestion.context as any;
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
@@ -4502,6 +4572,34 @@ const replyText = [
       // is the specific one, so it wins.
       if (overdueDecisionIntent && !isGanttDateChange(incomingText)) {
         const overdueItems = await fetchOverdueDecisionItems();
+        // Ambiguity guard (5.8.2026): if several items are overdue and Karen
+        // says just "עלה" (published), do not blindly mark the first one.
+        // Ask which, remembering the action, then complete it on her pick.
+        // For now only "published" gets this; reschedule/archive keep the
+        // old single-item behaviour until we extend it.
+        if (overdueItems.length > 1 && overdueDecisionIntent.type === "published") {
+          const overdueOptions = overdueItems
+            .map((it) => (it.displayTitle || "").toString().trim())
+            .filter(Boolean)
+            .slice(0, 6);
+          storePendingQuestion(sender, {
+            questionType: "overdue_pick_which",
+            context: {
+              action: "published",
+              options: overdueOptions,
+              rawMessage: incomingText,
+            },
+          });
+          await safeSendWhatsAppMessage(
+            sender,
+            [
+              "יש כמה תכנים שאיחרו. לאיזה מהם התכוונת?",
+              "",
+              ...overdueOptions,
+            ].join("\n")
+          );
+          return res.status(200).json({ status: "overdue_pick_which_asked", sender });
+        }
         const overdueItem = overdueItems[0];
 
         if (overdueItem) {
