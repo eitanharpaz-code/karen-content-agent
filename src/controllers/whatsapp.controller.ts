@@ -1,4 +1,5 @@
 import { askClaudeForBridgeIntent } from "../services/bridge-intent.service";
+import { getValue } from "../services/persistence.service";
 import { computeScheduledReelGap } from "../services/planning-health.service";
 import { askClaudeForStatusIntent, looksLikeStatusMention } from "../services/status-intent.service";
 import { Request, Response } from "express";
@@ -5064,6 +5065,9 @@ if (isArchiveCommand(incomingText)) {
             rawMessage: incomingText,
           }
         : null);
+      // Capture what Karen literally reported BEFORE gush A expands it, so
+      // the daily-brief matching below compares against her real action.
+      const reportedActionsRaw: string[] = statusUpdate ? [...statusUpdate.statusTypes] : [];
       // "ערכתי" implies "צולם": you cannot edit footage that was never shot.
       // If Karen reports only editing, mark filming too, so every downstream
       // step (the match list, the sheet update, the gantt) sees both.
@@ -5109,6 +5113,30 @@ if (isArchiveCommand(incomingText)) {
             }
           }
 
+          // Bare action tied to the daily brief (30.7.2026): Karen replies
+          // "ערכתי" with no name, right after an afternoon brief that said
+          // "ערוך את X". Resolve to the content the brief pointed at, but
+          // ONLY when the brief is fresh (<= 2h) and the reported action
+          // matches what the brief asked (edit->edit, film->film,
+          // upload->verify-upload). A mismatch is left for the normal ask path.
+          if (!matchResult && !explicitFastTrack && isProductionStatusUpdate(statusUpdate.contentName)) {
+            const briefCtx = getValue<{ contentId: string; title: string; action: string; savedAt: string }>("briefContext", sender);
+            if (briefCtx && briefCtx.title) {
+              const ageMs = Date.now() - new Date(briefCtx.savedAt).getTime();
+              const withinWindow = ageMs >= 0 && ageMs <= 2 * 60 * 60 * 1000;
+              const actionToReported: Record<string, string> = { film: "filmed", edit: "edited", "verify-upload": "uploaded" };
+              const expectedReported = actionToReported[briefCtx.action];
+              const actionMatches = expectedReported ? reportedActionsRaw.includes(expectedReported) : false;
+              if (withinWindow && actionMatches) {
+                console.log(`[Context] Bare status resolved via brief -> "${briefCtx.title}"`);
+                const retry = await findProductionTaskByName(spreadsheetId, briefCtx.title);
+                if (retry) {
+                  matchResult = retry;
+                  statusUpdate.contentName = briefCtx.title;
+                }
+              }
+            }
+          }
           if (!matchResult) {
             // Fast Track — תוכן לא קיים בהפקה, קרן צילמה ספונטנית
             const isReadyUpdate = statusUpdate.statusTypes.includes("filmed") || statusUpdate.statusTypes.includes("edited");

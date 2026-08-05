@@ -30,7 +30,8 @@ export type StateSection =
   | "pendingQuestions"
   | "interactionLog"
   | "conversationHistory"
-  | "silenceNudge";
+  | "silenceNudge"
+  | "briefContext";
 
 type PersistedState = {
   silenceNudge: Record<string, unknown>;
@@ -38,6 +39,7 @@ type PersistedState = {
   pendingQuestions: Record<string, unknown>;
   interactionLog: Record<string, unknown>;
   conversationHistory: Record<string, unknown>;
+  briefContext: Record<string, unknown>;
   savedAt: string;
 };
 
@@ -51,6 +53,7 @@ const emptyState = (): PersistedState => ({
   pendingQuestions: {},
   interactionLog: {},
   conversationHistory: {},
+  briefContext: {},
   savedAt: new Date().toISOString(),
 });
 
@@ -71,6 +74,7 @@ const loadStateFromDisk = (): PersistedState => {
       "pendingQuestions",
       "interactionLog",
       "conversationHistory",
+      "briefContext",
     ];
     const state = emptyState();
     for (const section of sections) {

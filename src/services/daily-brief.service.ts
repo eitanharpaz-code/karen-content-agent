@@ -690,6 +690,27 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
     ? await humanizeBrief(deterministic, "afternoon")
     : null;
 
+  // Remember what the afternoon brief pointed Karen at, so a bare reply
+  // like "ערכתי" (no name) can resolve to it. The afternoon brief always
+  // centres on a single focus item, which makes this unambiguous. Only the
+  // three reportable actions are stored; keyed by recipient with a timestamp
+  // so the controller can enforce a freshness window.
+  if (humanized && nudgeTarget) {
+    const briefFocus = selectAfternoonFocus(priorityItems, ganttIsLight);
+    if (
+      briefFocus &&
+      (briefFocus.contentId || "").trim() !== "" &&
+      ["film", "edit", "verify-upload"].includes(briefFocus.recommendedAction)
+    ) {
+      setValue("briefContext", nudgeTarget, {
+        contentId: briefFocus.contentId,
+        title: briefFocus.displayTitle,
+        action: briefFocus.recommendedAction,
+        savedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   return {
     message: humanized,
     bypassInteraction: shouldBypassInteractionForAfternoonReminder(
