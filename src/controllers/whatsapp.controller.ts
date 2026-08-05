@@ -5120,19 +5120,55 @@ if (isArchiveCommand(incomingText)) {
           // matches what the brief asked (edit->edit, film->film,
           // upload->verify-upload). A mismatch is left for the normal ask path.
           if (!matchResult && !explicitFastTrack && isProductionStatusUpdate(statusUpdate.contentName)) {
-            const briefCtx = getValue<{ contentId: string; title: string; action: string; savedAt: string }>("briefContext", sender);
-            if (briefCtx && briefCtx.title) {
+            type BriefItem = { contentId: string; title: string; action: string };
+            const briefCtx = getValue<{ items: BriefItem[]; savedAt: string }>("briefContext", sender);
+            const briefItems = briefCtx && Array.isArray(briefCtx.items) ? briefCtx.items : [];
+            if (briefItems.length > 0 && briefCtx) {
+              // Freshness window. Afternoon and morning briefs share this store;
+              // 5h comfortably covers a morning brief answered later in the day.
               const ageMs = Date.now() - new Date(briefCtx.savedAt).getTime();
-              const withinWindow = ageMs >= 0 && ageMs <= 2 * 60 * 60 * 1000;
-              const actionToReported: Record<string, string> = { film: "filmed", edit: "edited", "verify-upload": "uploaded" };
-              const expectedReported = actionToReported[briefCtx.action];
-              const actionMatches = expectedReported ? reportedActionsRaw.includes(expectedReported) : false;
-              if (withinWindow && actionMatches) {
-                console.log(`[Context] Bare status resolved via brief -> "${briefCtx.title}"`);
-                const retry = await findProductionTaskByName(spreadsheetId, briefCtx.title);
-                if (retry) {
-                  matchResult = retry;
-                  statusUpdate.contentName = briefCtx.title;
+              const withinWindow = ageMs >= 0 && ageMs <= 5 * 60 * 60 * 1000;
+              if (withinWindow) {
+                // Keep only offered items whose action matches what Karen
+                // actually reported (edit->edited, film->filmed,
+                // verify-upload->uploaded), comparing against her raw report
+                // (before gush A auto-adds filmed).
+                const actionToReported: Record<string, string> = { film: "filmed", edit: "edited", "verify-upload": "uploaded" };
+                const candidates = briefItems.filter((it) => {
+                  const expected = actionToReported[it.action];
+                  return expected ? reportedActionsRaw.includes(expected) : false;
+                });
+                if (candidates.length === 1) {
+                  // Unambiguous: exactly one offered item matches the action.
+                  console.log(`[Context] Bare status resolved via brief -> "${candidates[0].title}"`);
+                  const retry = await findProductionTaskByName(spreadsheetId, candidates[0].title);
+                  if (retry) {
+                    matchResult = retry;
+                    statusUpdate.contentName = candidates[0].title;
+                  }
+                } else if (candidates.length > 1) {
+                  // Ambiguous: the brief offered several items for this action.
+                  // Ask which one, reusing the existing status_no_match_pick flow.
+                  const options = candidates.map((c) => c.title).filter(Boolean).slice(0, 6);
+                  console.log(`[Context] Bare status ambiguous via brief (${options.length} candidates), asking`);
+                  storePendingQuestion(sender, {
+                    questionType: "status_no_match_pick",
+                    context: {
+                      attempted: statusUpdate.contentName,
+                      rawMessage: incomingText,
+                      statusTypes: statusUpdate.statusTypes,
+                      options,
+                    },
+                  });
+                  await safeSendWhatsAppMessage(
+                    sender,
+                    [
+                      "לאיזה תוכן התכוונת?",
+                      "",
+                      ...options,
+                    ].join("\n")
+                  );
+                  return res.status(200).json({ status: "brief_bare_status_ambiguous", sender });
                 }
               }
             }

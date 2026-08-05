@@ -402,6 +402,36 @@ export const buildMorningBrief = async (): Promise<string | null> => {
   });
 
   if (!deterministic) return null;
+  // Remember what the morning brief offered, so a bare reply like "ערכתי"
+  // (no name) can resolve to it. The morning brief can offer up to two
+  // items, so we store the whole offered set (each with its action). The
+  // controller filters by the action Karen reports: one match -> update,
+  // several -> ask which. Only the three reportable actions are stored.
+  const morningTarget = process.env.DAILY_BRIEF_TO || "";
+  if (morningTarget) {
+    const { primary, secondary } = selectMorningFocus(priorityItems);
+    const offered = [primary, secondary].filter(
+      (item): item is ContentPriorityItem =>
+        Boolean(item && !item.isOverdueAwaitingDecision)
+    );
+    const items = offered
+      .filter(
+        (item) =>
+          (item.contentId || "").trim() !== "" &&
+          ["film", "edit", "verify-upload"].includes(item.recommendedAction)
+      )
+      .map((item) => ({
+        contentId: item.contentId,
+        title: item.displayTitle,
+        action: item.recommendedAction,
+      }));
+    if (items.length > 0) {
+      setValue("briefContext", morningTarget, {
+        items,
+        savedAt: new Date().toISOString(),
+      });
+    }
+  }
 
   // Phase B extension — Claude rewrites the phrasing in Karen's persona.
   // All facts, names, and CTAs stay intact (humanizer enforces this and
@@ -702,10 +732,18 @@ export const buildAfternoonReminderResult = async (): Promise<AfternoonReminderR
       (briefFocus.contentId || "").trim() !== "" &&
       ["film", "edit", "verify-upload"].includes(briefFocus.recommendedAction)
     ) {
+      // Unified shape (30.7.2026): always store an array of offered items, each
+      // with its action. The afternoon brief offers exactly one, so this is an
+      // array of one; the morning brief can offer up to two. The controller
+      // filters this list by the action Karen reports.
       setValue("briefContext", nudgeTarget, {
-        contentId: briefFocus.contentId,
-        title: briefFocus.displayTitle,
-        action: briefFocus.recommendedAction,
+        items: [
+          {
+            contentId: briefFocus.contentId,
+            title: briefFocus.displayTitle,
+            action: briefFocus.recommendedAction,
+          },
+        ],
         savedAt: new Date().toISOString(),
       });
     }
