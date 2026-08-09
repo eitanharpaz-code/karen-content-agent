@@ -160,6 +160,41 @@ import {
   handlePlanningSourceRoutingReply,
   type PlanningSourceRoutingState,
 } from "../services/planning-source-routing.service";
+// Unified "which one did you mean?" question (5.8.2026 copywriter round).
+// One builder for every ambiguity/no-match prompt, so the wording stays
+// consistent everywhere. Two families:
+//  - "found": several matches -> "מצאתי כמה X שמתאימים[ ל-Y]. לאיזה מהם התכוונת?"
+//    (context overrides the tail, e.g. overdue uses "שאיחרו").
+//  - "notFound": no exact match -> "לא מצאתי את Y בין ה-Z. התכוונת לאחד מאלה?"
+// Options and an optional "כתבי תוכן חדש" line follow, with blank-line spacing.
+const buildAmbiguityQuestion = (args: {
+  kind: "found" | "notFound";
+  itemType: "תכנים" | "רעיונות";
+  options: string[];
+  searchedName?: string;
+  location?: string; // notFound: "בהפקה" | "בין הרעיונות השמורים" ...
+  foundContext?: string; // found: overrides "שמתאימים", e.g. "שאיחרו"
+  offerNew?: boolean; // append the "תוכן חדש" line
+}): string => {
+  const { kind, itemType, options, searchedName, location, foundContext, offerNew } = args;
+  let header: string;
+  if (kind === "found") {
+    const tail = foundContext || "שמתאימים";
+    const forName = searchedName ? ` ל"${searchedName}"` : "";
+    header = `מצאתי כמה ${itemType} ${tail}${forName}. לאיזה מהם התכוונת?`;
+  } else {
+    const where = location ? ` ${location}` : "";
+    const singular = itemType === "רעיונות" ? "הרעיון שביקשת" : "התוכן שביקשת";
+    const what = searchedName ? `את "${searchedName}"` : `את ${singular}`;
+    header = `לא מצאתי ${what}${where}. התכוונת לאחד מאלה?`;
+  }
+  const out = [header, "", ...options];
+  if (offerNew) {
+    out.push("", 'אם זה משהו חדש, פשוט תכתבי "תוכן חדש".');
+  }
+  return out.join("\n");
+};
+
 const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
   // Phase A — conversation memory: log every outbound turn regardless of
   // whether Twilio delivery succeeds. Memory tracks what the assistant said,
@@ -722,7 +757,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           await markOverdueItemPublished(spreadsheetId, chosen.contentId);
           await safeSendWhatsAppMessage(
             sender,
-            `סגור, סימנתי ש-"${chosen.displayTitle}" עלה. הוא לא יופיע יותר כתזכורת איחור.`
+            `סימנתי ש-"${chosen.displayTitle}" עלה. הוא לא יופיע יותר בתזכורות האיחור.`
           );
           return res.status(200).json({ status: "overdue_pick_which_published", sender });
         }
@@ -1775,13 +1810,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (!picked) {
         await safeSendWhatsAppMessage(
           sender,
-          [
-            "לא זיהיתי לאיזה תוכן התכוונת. אפשר לכתוב את השם של אחד מאלה:",
-            "",
-            ...(ctx.options || []),
-            "",
-            'ואם זה משהו חדש, תכתבי "תוכן חדש".',
-          ].join("\n")
+          buildAmbiguityQuestion({ kind: "notFound", itemType: "תכנים", location: "בין התכנים שבהפקה", options: ctx.options || [], offerNew: true })
         );
         return res.status(200).json({ status: "status_no_match_unclear", sender });
       }
@@ -1827,7 +1856,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const doneList = columnUpdates.map((u: any) => u.columnName).join(", ");
       await safeSendWhatsAppMessage(
         sender,
-        `סבבה, מעדכנת ש"${picked}" ${doneList.replace(/, ([^,]*)$/, " ו$1")}.`
+        `עדכנתי ש"${picked}" ${doneList.replace(/, ([^,]*)$/, " ו$1")}.`
       );
       return res.status(200).json({ status: "status_no_match_resolved", sender });
     }
@@ -4107,7 +4136,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             const names = (found.candidates || []).slice(0, 6).map((cd: any) => `"${cd.name}"`);
             await safeSendWhatsAppMessage(
               sender,
-              ["מצאתי כמה תכנים שמתאימים. לאיזה מהם התכוונת?", "", ...names].join("\n")
+              buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", options: names })
             );
             return res.status(200).json({ status: "visibility_query_ambiguous", sender, target });
           }
@@ -4305,8 +4334,8 @@ const replyText = [
   `${displayList}${suffix}`,
   "",
   available.length > 0
-    ? `יש מספיק חורים פנויים ב${monthName}.`
-    : `לא מצאתי כרגע חורים פנויים ב${monthName}.`,
+    ? `יש מספיק ימים פנויים ב${monthName}.`
+    : `לא מצאתי כרגע ימים פנויים ב${monthName}.`,
   "",
   firstSuggestion
     ? `הייתי מתחילה מ: "${firstSuggestion}".`
@@ -4592,11 +4621,7 @@ const replyText = [
           });
           await safeSendWhatsAppMessage(
             sender,
-            [
-              "יש כמה תכנים שאיחרו. לאיזה מהם התכוונת?",
-              "",
-              ...overdueOptions,
-            ].join("\n")
+            buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", foundContext: "שאיחרו", options: overdueOptions })
           );
           return res.status(200).json({ status: "overdue_pick_which_asked", sender });
         }
@@ -4613,7 +4638,7 @@ const replyText = [
 
             await safeSendWhatsAppMessage(
               sender,
-              `סגור, סימנתי ש-"${contentName}" עלה. הוא לא יופיע יותר כתזכורת איחור.`
+              `סימנתי ש-"${contentName}" עלה. הוא לא יופיע יותר בתזכורות האיחור.`
             );
 
             return res.status(200).json({
@@ -4640,7 +4665,7 @@ const replyText = [
 
             await safeSendWhatsAppMessage(
               sender,
-              `סגור, סימנתי את "${contentName}" כבוטל. הוא לא יופיע יותר בתזכורות.`
+              `סימנתי את "${contentName}" כבוטל. הוא לא יופיע יותר בתזכורות.`
             );
 
             return res.status(200).json({
@@ -4824,7 +4849,7 @@ const replyText = [
             const lines = partialMatches.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
             await safeSendWhatsAppMessage(
               sender,
-              [`מצאתי כמה רעיונות שמתאימים ל"${target}". לאיזה מהם התכוונת?`, "", lines].join("\n")
+              buildAmbiguityQuestion({ kind: "found", itemType: "רעיונות", searchedName: target, options: [lines] })
             );
             return res.status(200).json({ status: "approve_ambiguous_pick", sender });
           }
@@ -4854,7 +4879,7 @@ const replyText = [
         const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
         await safeSendWhatsAppMessage(
           sender,
-          [`לא מצאתי את "${target}" ברעיונות השמורים. לאיזה מהם התכוונת?`, "", ideaLines].join("\n")
+          buildAmbiguityQuestion({ kind: "notFound", itemType: "רעיונות", searchedName: target, location: "בין הרעיונות השמורים", options: [ideaLines] })
         );
         return res.status(200).json({ status: "approve_pick_idea_offered", sender });
       }
@@ -5260,11 +5285,7 @@ if (isArchiveCommand(incomingText)) {
                   });
                   await safeSendWhatsAppMessage(
                     sender,
-                    [
-                      "לאיזה תוכן התכוונת?",
-                      "",
-                      ...options,
-                    ].join("\n")
+                    buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", options })
                   );
                   return res.status(200).json({ status: "brief_bare_status_ambiguous", sender });
                 }
@@ -5315,13 +5336,7 @@ if (isArchiveCommand(incomingText)) {
                   });
                   await safeSendWhatsAppMessage(
                     sender,
-                    [
-                      `לא מצאתי את "${statusUpdate.contentName}" בין התכנים שבהפקה. התכוונת לאחד מאלה?`,
-                      "",
-                      ...pending,
-                      "",
-                      'אם זה משהו חדש, פשוט תכתבי "תוכן חדש".',
-                    ].join("\n")
+                    buildAmbiguityQuestion({ kind: "notFound", itemType: "תכנים", searchedName: statusUpdate.contentName, location: "בין התכנים שבהפקה", options: pending, offerNew: true })
                   );
                   return res.status(200).json({ status: "status_no_match_asked", sender });
                 }
@@ -5464,7 +5479,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
             ? `עדכנתי את משימות ההפקה של "${contentNameDisplay}", אבל לא הצלחתי להשלים עדכון ב: ${secondaryUpdateFailures.join(", ")}.\nכדאי לבדוק ידנית.`
             : isUploaded
               ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
-              : `סבבה, מעדכנת ש"${contentNameDisplay}" ${uniqueUpdates.map((u) => u.columnName).join(", ").replace(/, ([^,]*)$/, " ו$1")}.`;
+              : `עדכנתי ש"${contentNameDisplay}" ${uniqueUpdates.map((u) => u.columnName).join(", ").replace(/, ([^,]*)$/, " ו$1")}.`;
           await safeSendWhatsAppMessage(sender, replyText);
 
           console.log(

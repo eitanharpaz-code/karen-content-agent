@@ -258,7 +258,7 @@ export const buildMorningBriefFromData = ({
   weeklyProgress,
   savedIdeasCount = 0,
 }: MorningBriefData): string | null => {
-  const lines: string[] = ["בוקר טוב קרן :)", "בריף בוקר קצר, רק כדי לשים פוקוס על היום."];
+  const lines: string[] = ["בוקר טוב קרן :)", "הנה מה שכדאי לקדם היום."];
 
   const weeklyStatusLine = formatWeeklyStatusLine(weeklyProgress);
   if (weeklyStatusLine) lines.push(weeklyStatusLine);
@@ -271,11 +271,11 @@ export const buildMorningBriefFromData = ({
   const { primary, secondary } = selectMorningFocus(priorityItems);
 
   if (p0Items.length > 0) {
-    lines.push("", "*דורש תשומת לב עכשיו*");
+    lines.push("", "*צריך תשומת לב עכשיו*");
 
     p0Items.slice(0, 3).forEach((item) => {
       const status = item.isReadyToUpload ? "מוכן לעלייה" :
-        item.filmed !== "כן" ? "חסר צילום" : "חסר עריכה";
+        item.filmed !== "כן" ? "מחכה לצילום" : "מחכה לעריכה";
       lines.push(`* ${item.displayTitle}, ${status}`);
     });
 
@@ -319,7 +319,7 @@ export const buildMorningBriefFromData = ({
 
       return [
         "בוקר טוב קרן :)",
-        "בריף בוקר קצר, רק כדי לשים פוקוס על היום.",
+        "הנה מה שכדאי לקדם היום.",
         ...(weeklyStatusLine ? [weeklyStatusLine] : []),
         "",
         "היום נראה יחסית רגוע.",
@@ -340,7 +340,7 @@ export const buildMorningBriefFromData = ({
   );
 
   if (regularItems[0]) {
-    lines.push("", "*פוקוס להיום*");
+    lines.push("", "*הפוקוס להיום*");
     lines.push(`* ${formatMorningPrimaryAction(regularItems[0], p0Items.length)}`);
   }
 
@@ -353,7 +353,7 @@ export const buildMorningBriefFromData = ({
   }
 
   if (regularItems[1]) {
-    lines.push("", "*אחר כך, אם יש לך זמן*");
+    lines.push("", "*אחר כך, אם יש זמן*");
     lines.push(`* ${formatAction(regularItems[1])}`);
   }
 
@@ -361,7 +361,7 @@ export const buildMorningBriefFromData = ({
       futureHoles.length > 0 && primary.priorityLevel === "PLANNING";
 
     if (showingGanttHolesBackground) {
-      lines.push("", `ברקע: ${futureHoles.length} חורים פנויים בגאנט החודש.`);
+      lines.push("", `ברקע: ${futureHoles.length} ימים פנויים בגאנט החודש.`);
     } else if (morningPlanningSignal) {
       lines.push("", "*ברקע*");
       lines.push(morningPlanningSignal.message);
@@ -370,7 +370,7 @@ export const buildMorningBriefFromData = ({
 
   const replyItems = regularItems.filter((item) => item.cta.trim() !== "");
   if (replyItems.length > 0) {
-    lines.push("", "*אפשר לענות*");
+    lines.push("", "*אפשר לעדכן*");
     replyItems.forEach((item) => lines.push(`* ${item.cta}`));
   }
 
