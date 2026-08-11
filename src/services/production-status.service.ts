@@ -78,6 +78,10 @@ export const normalizeHebrewText = (text: string): string => {
     .replace(/ף/g, "פ")
     .replace(/ץ/g, "צ");
 
+  // Layer 1 (name matching): drop apostrophe-like marks so "צ׳ק",
+  // "צ'ק" and "צק" all normalize the same. Covers Hebrew geresh (U+05F3),
+  // gershayim (U+05F4), ASCII apostrophe and quote, and curly variants.
+  normalized = normalized.replace(/[\u05F3\u05F4'"\u2018\u2019\u201C\u201D]/g, "");
   normalized = normalized.replace(/\s+/g, " ").trim();
 
   return normalized.toLowerCase();
