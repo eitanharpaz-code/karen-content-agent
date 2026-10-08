@@ -30,13 +30,13 @@ export interface HumanizedPreviewCopy {
 // replaces both; the opener drops entirely.
 export const DEFAULT_NEW_DRAFT_COPY: HumanizedPreviewCopy = {
   intro: "",
-  closingQuestion: "לשמור ככה, או שתרצי לשנות את השם, סוג התוכן או הכיוון?",
+  closingQuestion: "לשמור ככה?",
   changeLine: "",
 };
 
 export const DEFAULT_EDIT_COPY: HumanizedPreviewCopy = {
   intro: "עדכנתי.",
-  closingQuestion: "לשמור ככה, או שיש עוד משהו לשנות?",
+  closingQuestion: "לשמור ככה?",
   changeLine: "",
 };
 

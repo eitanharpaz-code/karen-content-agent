@@ -1,3 +1,9 @@
+import type { PendingQuestion } from '../services/confirmation.service';
+import { isDraftCorrection, pickOfferedOption, matchOfferedOptions } from '../services/conversation-language.service';
+import { resolvePendingTurn } from "../services/pending-turn-resolution.service";
+import { parseSchedulingReply, extractReplyTime, requestedDraftAction, dateClarification } from "../services/scheduling-reply.service";
+import { activateNewDraft, getSuspendedDrafts, resumeSuspendedDraft } from "../services/confirmation.service";
+import type { DraftSummary } from "../types/content.types";
 import { askClaudeForBridgeIntent } from "../services/bridge-intent.service";
 import { getValue } from "../services/persistence.service";
 import { computeScheduledReelGap } from "../services/planning-health.service";
@@ -5,7 +11,7 @@ import { askClaudeForStatusIntent, looksLikeStatusMention } from "../services/st
 import { Request, Response } from "express";
 import { sendWhatsAppMessage } from "../services/whatsapp.service";
 import { createContentDraft, askClaudeForEdit } from "../services/content.service";
-import { startRoutingTrace, finishRoutingTrace } from "../services/routing-trace.service";
+import { startRoutingTrace, finishRoutingTrace, withRoutingTrace, updateRoutingTrace, recordWriteOutcome } from "../services/routing-trace.service";
 import { classifyMessageIntent, generateConversationalReply, isPureGreeting } from "../services/conversation-intent.service";
 import { appendUserMessage, appendAgentMessage } from "../services/conversation-memory.service";
 import {
@@ -59,15 +65,15 @@ import {
 import {
   getExistingContentIds,
   generateContentId,
-  saveContentIdea,
+  saveContentIdea as sheets_saveContentIdea,
   findProductionTaskByName,
-  updateProductionStatus,
-  updateDeadline,
+  updateProductionStatus as sheets_updateProductionStatus,
+  updateDeadline as sheets_updateDeadline,
   findSimilarContentIdea,
- archiveContentIdea,
-  archiveContentByContentId,
+ archiveContentIdea as sheets_archiveContentIdea,
+  archiveContentByContentId as sheets_archiveContentByContentId,
   getArchiveList,
-  restoreFromArchive,
+  restoreFromArchive as sheets_restoreFromArchive,
   getProductionStatusColumnIndex,
   getTasksMissingEdit,
   getTasksMissingFilmed,
@@ -81,16 +87,16 @@ import {
  getAllProductionTasksWithPriority,
   getCategories,
 findRowIndexByContentId,
-approveContentForProduction,
-  updateGanttStatus,
+approveContentForProduction as sheets_approveContentForProduction,
+  updateGanttStatus as sheets_updateGanttStatus,
   getGanttNotPublished,
   getGanttReadyToUpload,
   getGanttThisWeek,
   getGanttByDateRange,
   findApprovedContentByName,
-  addRowToGantt,
- sortGanttByDate,
-  updateGanttUploadTime,
+  addRowToGantt as sheets_addRowToGantt,
+ sortGanttByDate as sheets_sortGanttByDate,
+  updateGanttUploadTime as sheets_updateGanttUploadTime,
   isGanttDateTaken,
   findAvailableDatesInMonth,
   findSmartGanttDate,
@@ -101,12 +107,12 @@ approveContentForProduction,
   lookupContentByName,
   getReelsBlockingDates,
   removePunctuationForMatching,
-  updateGanttRowDate,
+  updateGanttRowDate as sheets_updateGanttRowDate,
   getApprovedContentNotInGantt,
   getApprovedContentRows,
-  saveFastTrackContent,
+  saveFastTrackContent as sheets_saveFastTrackContent,
   getOpenContentIdeas,
-  updateApprovedContentStatusById,
+  updateApprovedContentStatusById as sheets_updateApprovedContentStatusById,
   findGanttEntryByContentId,
   GanttDuplicateError,
 } from "../services/sheets.service";
@@ -197,17 +203,36 @@ const buildAmbiguityQuestion = (args: {
   return out.join("\n");
 };
 
-const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
-  // Phase A — conversation memory: log every outbound turn regardless of
-  // whether Twilio delivery succeeds. Memory tracks what the assistant said,
-  // and Karen sees the message immediately in WhatsApp UI even if Twilio
-  // hiccups downstream, so behavior stays consistent.
-  appendAgentMessage(to, message);
+// Record the outcome of every controller-owned sheet mutation in this request.
+const tracedWrite = <A extends unknown[], R>(name: string, fn: (...args:A)=>Promise<R>) => async (...args:A):Promise<R> => {
+  try { const result=await fn(...args);recordWriteOutcome(name,"succeeded");return result; }
+  catch(error) {recordWriteOutcome(name,"failed");throw error;}
+};
+const saveContentIdea = tracedWrite("saveContentIdea",sheets_saveContentIdea);
+const updateProductionStatus = tracedWrite("updateProductionStatus",sheets_updateProductionStatus);
+const updateDeadline = tracedWrite("updateDeadline",sheets_updateDeadline);
+const archiveContentIdea = tracedWrite("archiveContentIdea",sheets_archiveContentIdea);
+const archiveContentByContentId = tracedWrite("archiveContentByContentId",sheets_archiveContentByContentId);
+const restoreFromArchive = tracedWrite("restoreFromArchive",sheets_restoreFromArchive);
+const approveContentForProduction = tracedWrite("approveContentForProduction",sheets_approveContentForProduction);
+const updateGanttStatus = tracedWrite("updateGanttStatus",sheets_updateGanttStatus);
+const addRowToGantt = tracedWrite("addRowToGantt",sheets_addRowToGantt);
+const sortGanttByDate = tracedWrite("sortGanttByDate",sheets_sortGanttByDate);
+const updateGanttUploadTime = tracedWrite("updateGanttUploadTime",sheets_updateGanttUploadTime);
+const updateGanttRowDate = tracedWrite("updateGanttRowDate",sheets_updateGanttRowDate);
+const saveFastTrackContent = tracedWrite("saveFastTrackContent",sheets_saveFastTrackContent);
+const updateApprovedContentStatusById = tracedWrite("updateApprovedContentStatusById",sheets_updateApprovedContentStatusById);
 
+const safeSendWhatsAppMessage = async (to: string, message: string): Promise<void> => {
+  // Record only replies accepted by Twilio, so failed sends cannot become
+  // invisible context that Karen is assumed to have read.
   try {
     await sendWhatsAppMessage(to, message);
+    appendAgentMessage(to, message);
+    updateRoutingTrace({sendOutcome:"sent"});
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    updateRoutingTrace({sendOutcome:"failed"});
     console.error(`[WhatsApp] Failed to send message to ${to}: ${errorMessage}`);
   }
 };
@@ -323,27 +348,14 @@ const buildDraftPreviewMessage = (
   // pure clutter. Keep only what she cares about: name, content type, and the
   // direction. Category/tone/priority still live in the sheet, just not shown.
   const shouldIncludeContentType = options.includeContentType ?? true;
-  // Type sits on its own line above the name (24.7.2026). Inline with a colon
-  // read like a form field, and folding it into a sentence ("רילס על X") broke
-  // on names that are not topics. Karen still needs to see that the agent got
-  // the format right, so it stays visible.
-  // The content type folds into the summary sentence instead of sitting on its
-  // own line (24.7.2026). Karen still sees that the format was understood, but
-  // it reads as a sentence rather than a form field. The summary prompt was
-  // adjusted so it never opens with "סרטון על", which would double up here.
-  const typePrefix =
-    shouldIncludeContentType && draft.contentType
-      ? `${displayContentType(draft.contentType)} על `
-      : "";
-
   const lines = [
     ...introLines,
     ...(introLines.length ? [""] : []),
-    options.previewLine || "ככה כתבתי את הרעיון כרגע:",
+    options.previewLine || (shouldIncludeContentType && draft.contentType ? `ככה הייתי שומרת את ה${displayContentType(draft.contentType)}:` : "ככה הייתי שומרת את הרעיון:"),
     "",
     `"${draft.shortName}"`,
     "",
-    `${typePrefix}${draft.summary}`,
+    draft.summary,
   ];
 
   if (options.extraBeforeQuestion?.length) {
@@ -352,10 +364,13 @@ const buildDraftPreviewMessage = (
 
   // One closing line instead of two. The old pair ("לשמור ככה?" plus "אפשר גם
   // להגיד לי מה לשנות") never said WHAT could change, so Karen had to guess.
+  if (draft.requestedAction?.kind === "schedule" && draft.requestedAction.date && draft.approvalScope === "save_schedule") {
+    lines.push("", `שיבוץ: ${draft.requestedAction.date}${draft.requestedAction.time ? ` בשעה ${draft.requestedAction.time}` : ""}`);
+  }
   lines.push(
     "",
-    options.closingQuestion ||
-      "לשמור ככה, או שתרצי לשנות את השם, סוג התוכן או הכיוון?"
+    (draft.approvalScope === "save_schedule" ? "לשמור, להעביר להפקה ולשבץ כך?" : options.closingQuestion) ||
+      "לשמור ככה?"
   );
   if (options.changeLine) lines.push(options.changeLine);
 
@@ -439,9 +454,74 @@ const markOverdueItemPublished = async (
   }
 };
 
-export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
+// Shared bank -> production -> gantt path; no second interpretation of approval.
+const scheduleSavedContent = async (sender: string, contentName: string, date: string, time?: string, knownId?: string): Promise<string> => {
+  const sid = process.env.GOOGLE_SHEETS_ID!;
+  let contentId = knownId;
+  try {
+  if (!contentId) {
+    const approved = await approveContentForProduction(sid,contentName);
+    contentId = approved.contentId;
+    recordWriteOutcome("approve","succeeded");
+  }
+  if (await blockDuplicateGanttWrite(sender,sid,contentId!)) return "gantt_duplicate_blocked";
+  const collision = await isGanttDateTaken(sid,date);
+  if (collision.taken) {
+    storePendingQuestion(sender,{questionType:"gantt_collision",context:{newContentId:contentId,newContentName:contentName,newDate:date,newDayName:getHebrewDayName(date),
+      existingContentId:collision.existingContentId,existingName:collision.existingName,ganttStatus:"בתכנון",uploadTime:time}});
+    await safeSendWhatsAppMessage(sender,`העברתי את "${contentName}" להפקה, אבל ב-${date} כבר מתוכנן "${collision.existingName}". להחליף ולהעביר אותו לתאריך אחר?`);
+    return "bridge_offer_explicit_collision";
+  }
+  clearPendingQuestion(sender);
+  const deadline = await addRowToGantt(sid,contentId!,contentName,date,getHebrewDayName(date),"","בתכנון");
+  recordWriteOutcome("gantt","succeeded");
+  // Persist retry context before secondary writes. A failure must not resave the idea.
+  storePendingQuestion(sender,{questionType:"gantt_upload_time",context:{contentId,contentName,date}});
+  try { await sortGanttByDate(sid); } catch { recordWriteOutcome("sort","failed"); }
+  if (time) {
+    try { await updateGanttUploadTime(sid,contentName,date,time); clearPendingQuestion(sender); }
+    catch { recordWriteOutcome("upload_time","failed"); await safeSendWhatsAppMessage(sender,`שיבצתי את "${contentName}" ל-${date}, אבל עדכון השעה לא הצליח. איזו שעה לקבוע?`); return "scheduled_time_failed"; }
+  }
+  await safeSendWhatsAppMessage(sender,[`שיבצתי את "${contentName}" ל-${date}${time?` בשעה ${time}`:""}.`,deadline?`הדדליין להפקה: ${deadline}.`:"",time?"":"באיזו שעה לתכנן את ההעלאה?"].filter(Boolean).join("\n"));
+  return "bridge_offer_explicit_date";
+  } catch (error) {
+    recordWriteOutcome("schedule","failed");
+    await safeSendWhatsAppMessage(sender,`"${contentName}" נשמר, אבל השיבוץ לא הושלם. אפשר לבדוק את הגאנט ולנסות שוב.`);
+    return "saved_schedule_failed";
+  }
+};
+
+const handleWhatsAppWebhookInternal = async (req: Request, res: Response) => {
   const sender = (req.body.From || req.body.from || "").toString();
-  const incomingText = (req.body.Body || req.body.body || "").toString();
+  let incomingText = (req.body.Body || req.body.body || "").toString();
+  let suppliedTime = extractReplyTime(incomingText);
+  let initialPendingType: string | undefined;
+  // Finalize an already-authorized schedule before sending its confirmation.
+  // All older date routes can consume a time supplied in the same turn.
+  async function sendTurnReply(to: string, text: string): Promise<void> {
+    const pending = getPendingQuestion(to);
+    if (suppliedTime && initialPendingType !== "gantt_upload_time" && pending?.questionType === "gantt_upload_time") {
+      const ctx = pending.context as any;
+      try {
+        await updateGanttUploadTime(process.env.GOOGLE_SHEETS_ID!,ctx.contentName,ctx.date,suppliedTime);
+        recordWriteOutcome("upload_time","succeeded");
+        clearPendingQuestion(to);
+        text = text.replace(/באיזו שעה לתכנן את ההעלאה\?/g,"").trim()+`\nשעת ההעלאה: ${suppliedTime}.`;
+        if (ctx.monthlyPlanning) {
+          const plan = ctx.monthlyPlanning;
+          const remaining = plan.remainingContent.filter((item:any)=>item.contentId!==ctx.contentId);
+          if (remaining.length) {
+            storePendingQuestion(to,{questionType:"monthly_planning",context:{...plan,remainingContent:remaining}});
+            text += `\nעל איזה תוכן לשבץ עכשיו?\n${remaining.map((item:any)=>item.name).join("\n")}`;
+          }
+        }
+      } catch {
+        recordWriteOutcome("upload_time","failed");
+        text = text.replace(/באיזו שעה לתכנן את ההעלאה\?/g,"").trim()+"\nעדכון השעה לא הצליח. אפשר לשלוח את השעה שוב.";
+      }
+    }
+    await safeSendWhatsAppMessage(to,text);
+  }
 
   if (!sender || !incomingText) {
     return res.status(400).json({
@@ -451,17 +531,18 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   try {
     // ===== ROUTE DEBUG LOGS =====
-    console.log(`\n[Route Debug] incomingText: "${incomingText}"`);
+    console.log(`[Route Debug] messageSid: ${req.body.MessageSid || req.body.SmsMessageSid || "missing"}`);
 
     // Routing trace (audit Stage 2): every controller exit goes through
     // res.json({ status: ... }) — the status field IS the handler name. One
     // wrap here covers all exits with a uniform trace line (handler + Claude
     // call count + duration), no per-handler instrumentation needed.
-    startRoutingTrace(sender, incomingText);
+    startRoutingTrace(sender, incomingText, req.body.MessageSid || req.body.SmsMessageSid);
     const originalResJson = res.json.bind(res);
     res.json = ((body: any) => {
-      finishRoutingTrace(body?.status ?? body?.error);
-      return originalResJson(body);
+      finishRoutingTrace(body?.status ?? body?.error, { pendingAfter: getPendingQuestion(sender)?.questionType });
+      if (res.statusCode >= 400) return originalResJson(body);
+      return res.type("text/xml").send("<Response/>");
     }) as Response["json"];
 
     // Phase A — conversation memory: log every inbound turn before routing
@@ -480,9 +561,9 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
     if (RESET_PATTERNS.some((p) => p.test(incomingText))) {
       clearPendingConfirmation(sender);
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
-        "בסדר, איפסתי הכל. איך אני יכולה לעזור?"
+        "בסדר, ביטלתי את הפעולה הנוכחית."
       );
       return res.status(200).json({ status: "state_reset", sender });
     }
@@ -492,7 +573,217 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
     // Check for pending question response (priority: before draft checks)
     let pendingQuestion = getPendingQuestion(sender);
+    initialPendingType = pendingQuestion?.questionType;
     console.log(`[Route Debug] pendingQuestion: ${pendingQuestion ? JSON.stringify({ questionType: pendingQuestion.questionType }) : "null"}`);
+
+    let acknowledgedPastDate: string | undefined;
+
+    const conceptTurn = isNewIdeaCommand(incomingText) || isTrendCommand(incomingText) || /^(?:סרטון|רילס?|פוסט|סטורי)\s/.test(incomingText.trim()) || /רואים אותי/.test(incomingText);
+    const activeDraft = getPendingConfirmation(sender);
+    updateRoutingTrace({pendingBefore:pendingQuestion?.questionType});
+
+    if (/^(?:חזרי|תחזרי|חזור|חזרה) (?:ל)?טיוטה/.test(incomingText.trim())) {
+      const requestedName = incomingText.replace(/^(?:חזרי|תחזרי|חזור|חזרה) (?:ל)?טיוטה(?: הקודמת)?[: ]*/, "").trim();
+      const matches = requestedName ? matchOfferedOptions(requestedName, getSuspendedDrafts(sender), item => item.draft.shortName) : [];
+      if (requestedName && matches.length !== 1) {
+        const options = getSuspendedDrafts(sender).map(item => ({id:item.id,name:item.draft.shortName}));
+        storePendingQuestion(sender, {questionType:"resume_draft_pick",context:{options}});
+        await sendTurnReply(sender, ["לאיזו טיוטה לחזור?", ...options.map((item,i) => `${i+1}. ${item.name}`)].join("\n"));
+        return res.status(200).json({status:"resume_draft_choice",sender});
+      }
+      const resumed = resumeSuspendedDraft(sender, matches[0]?.id);
+      await sendTurnReply(sender, resumed ? buildDraftPreviewMessage(resumed) : "אין כרגע טיוטה קודמת בצד.");
+      return res.status(200).json({status:"draft_resumed",sender});
+    }
+    if (pendingQuestion?.questionType === "resume_draft_pick") {
+      if (isRejectionMessage(incomingText)) { clearPendingQuestion(sender); await sendTurnReply(sender,"בסדר."); return res.status(200).json({status:"resume_cancelled",sender}); }
+      if (!isNewIdeaCommand(incomingText)) {
+        const options = pendingQuestion.context?.options as Array<{id:string;name:string}>;
+        const chosen = pickOfferedOption(incomingText, options, item=>item.name);
+        if (!chosen) { await sendTurnReply(sender,"אפשר לבחור במספר או בשם הטיוטה."); return res.status(200).json({status:"resume_unclear",sender}); }
+        const resumed = resumeSuspendedDraft(sender,chosen.id);
+        await sendTurnReply(sender,resumed?buildDraftPreviewMessage(resumed):"הטיוטה אינה זמינה.");
+        return res.status(200).json({status:"draft_resumed",sender});
+      }
+    }
+
+    // Restore the exact blocked operation, never infer a new mutation from "yes".
+    if (pendingQuestion?.questionType === "schedule_date_clarification") {
+      const ctx = pendingQuestion.context as any;
+      if (isRejectionMessage(incomingText)) {
+        clearPendingQuestion(sender); await sendTurnReply(sender,"סגור, לא שיבצתי.");
+        return res.status(200).json({status:"date_clarification_cancelled",sender});
+      }
+      if (!conceptTurn && (parseSchedulingReply(incomingText).kind !== "absent" || isConfirmationMessage(incomingText) || isRejectionMessage(incomingText) || extractReplyTime(incomingText))) {
+        const answer = parseSchedulingReply(incomingText);
+        if (ctx.candidate && isConfirmationMessage(incomingText)) {
+          acknowledgedPastDate = ctx.candidate;
+          incomingText = ctx.originalText;
+        } else if (answer.kind === "valid") {
+          incomingText = ctx.pending ? answer.date : ctx.originalText.replace(/\d{1,2}[./-]\d{1,2}(?:[./-](?:\d{4}|\d{2}))?/g, answer.date);
+          if (!/\d{1,2}[./-]\d{1,2}/.test(ctx.originalText)) incomingText = answer.date;
+          suppliedTime = extractReplyTime(incomingText) || ctx.time;
+        } else {
+          await sendTurnReply(sender, dateClarification(answer));
+          return res.status(200).json({status:"date_clarification_waiting",sender});
+        }
+        if (ctx.pending) storePendingQuestion(sender, ctx.pending); else clearPendingQuestion(sender);
+        pendingQuestion = getPendingQuestion(sender);
+      }
+    }
+    if (pendingQuestion?.questionType === "draft_schedule_date" && activeDraft && !conceptTurn && (parseSchedulingReply(incomingText).kind !== "absent" || isConfirmationMessage(incomingText) || isRejectionMessage(incomingText) || extractReplyTime(incomingText))) {
+      const parsed = parseSchedulingReply(incomingText);
+      const ctx = pendingQuestion.context as any;
+      if (isRejectionMessage(incomingText)) {
+        const changed: DraftSummary = {...activeDraft,requestedAction:{kind:"keep"},approvalScope:"save"};
+        storePendingConfirmation(sender,changed);clearPendingQuestion(sender);
+        await sendTurnReply(sender,buildDraftPreviewMessage(changed));
+      } else if (parsed.kind === "valid" || (ctx.candidate && isConfirmationMessage(incomingText))) {
+        const date = 'date' in parsed ? parsed.date : ctx.candidate;
+        const changed: DraftSummary = {...activeDraft,requestedAction:{kind:"schedule",date,time:extractReplyTime(incomingText) || ctx.time,allowPast:!!ctx.candidate && isConfirmationMessage(incomingText)},approvalScope:"save_schedule"};
+        storePendingConfirmation(sender,changed);clearPendingQuestion(sender);
+        await sendTurnReply(sender,buildDraftPreviewMessage(changed));
+      } else {
+        if (parsed.kind === "past_needs_clarification") storePendingQuestion(sender,{questionType:"draft_schedule_date",context:{candidate:parsed.date,time:ctx.time}});
+        await sendTurnReply(sender,dateClarification(parsed));
+      }
+      return res.status(200).json({status:"draft_date_resolved",sender});
+    }
+    // A date/preference replying to a draft updates its proposed action, not its summary.
+    if (activeDraft && !pendingQuestion && !conceptTurn) {
+      const keep = /בלי תאריך|ללא תאריך|לא לשבץ/.test(incomingText);
+      const parsed = parseSchedulingReply(incomingText);
+      if (keep) {
+        const changed: DraftSummary = {...activeDraft,requestedAction:{kind:"keep"},approvalScope:"save"};
+        storePendingConfirmation(sender,changed);
+        if (/לשמור|^כן/.test(incomingText.trim())) incomingText = "כן";
+        else {
+          await sendTurnReply(sender,buildDraftPreviewMessage(changed));
+          return res.status(200).json({status:"draft_keep_preference",sender});
+        }
+      } else if (parsed.kind !== "absent" && (activeDraft.requestedAction?.kind === "schedule" || /לשבץ|שבצי|תאריך|גאנט/.test(incomingText))) {
+        if (parsed.kind === "valid") {
+          const changed: DraftSummary = {...activeDraft,requestedAction:{kind:"schedule",date:parsed.date,time:suppliedTime || (activeDraft.requestedAction?.kind === "schedule" ? activeDraft.requestedAction.time:undefined)},approvalScope:"save_schedule"};
+          storePendingConfirmation(sender,changed);
+          await sendTurnReply(sender,buildDraftPreviewMessage(changed));
+        } else {
+          storePendingQuestion(sender,{questionType:"draft_schedule_date",context:{candidate:'date' in parsed?parsed.date:undefined,time:suppliedTime}});
+          await sendTurnReply(sender,dateClarification(parsed));
+        }
+        return res.status(200).json({status:"draft_schedule_changed",sender});
+      }
+    }
+    const schedulingQuestions = new Set(["bridge_offer","bridge_pick_date","confirm_gantt_write","gantt_write_new_date","gantt_move_existing","overdue_reschedule_date","trend_schedule","trend_awaiting_date","trend_make_room","month_full_move_date","gantt_date_change_collision","monthly_planning"]);
+    if (!conceptTurn && ((pendingQuestion && schedulingQuestions.has(pendingQuestion.questionType)) || isScheduleByDate(incomingText) || isGanttDateChange(incomingText) || Boolean(extractGanttWriteParams(incomingText)))) {
+      const directDate = isGanttDateChange(incomingText) ? extractGanttDateChange(incomingText)?.targetDate : undefined;
+      const parsed = parseSchedulingReply(directDate || incomingText);
+      if (parsed.kind !== "absent" && parsed.kind !== "valid" && !(parsed.kind === "past_needs_clarification" && parsed.date === acknowledgedPastDate)) {
+        storePendingQuestion(sender,{questionType:"schedule_date_clarification",context:{originalText:incomingText,pending:pendingQuestion,
+          candidate:parsed.kind === "past_needs_clarification"?parsed.date:undefined,time:suppliedTime}});
+        await sendTurnReply(sender,dateClarification(parsed));
+        return res.status(200).json({status:"schedule_date_needs_clarification",sender});
+      }
+    }
+
+    if (activeDraft?.approvalScope === "save_schedule" && activeDraft.requestedAction?.kind === "schedule" && activeDraft.requestedAction.date && isConfirmationMessage(incomingText) && !pendingQuestion) {
+      const checked = parseSchedulingReply(activeDraft.requestedAction.date);
+      if (checked.kind === "past_needs_clarification" && !activeDraft.requestedAction.allowPast) {
+        storePendingQuestion(sender,{questionType:"draft_schedule_date",context:{candidate:checked.date,time:activeDraft.requestedAction.time}});
+        await sendTurnReply(sender,dateClarification(checked));
+        return res.status(200).json({status:"draft_schedule_expired_date",sender});
+      }
+    }
+    if (!conceptTurn && pendingQuestion && schedulingQuestions.has(pendingQuestion.questionType) && isConfirmationMessage(incomingText)) {
+      const ctx = pendingQuestion.context as any;
+      const candidate = ctx.date || ctx.newDate || ctx.suggestedDate;
+      if (candidate && candidate !== acknowledgedPastDate) {
+        const checked = parseSchedulingReply(candidate);
+        if (checked.kind === "past_needs_clarification") {
+          storePendingQuestion(sender,{questionType:"schedule_date_clarification",context:{originalText:incomingText,pending:pendingQuestion,candidate}});
+          await sendTurnReply(sender,dateClarification(checked));
+          return res.status(200).json({status:"suggested_date_expired",sender});
+        }
+      }
+    }
+
+    const guardChosenDate = async (date: string): Promise<boolean> => {
+      const checked = parseSchedulingReply(date);
+      if (checked.kind === "valid" || (checked.kind === "past_needs_clarification" && checked.date === acknowledgedPastDate)) return false;
+      storePendingQuestion(sender,{questionType:"schedule_date_clarification",context:{originalText:incomingText,pending:pendingQuestion,
+        candidate:'date' in checked?checked.date:undefined,time:suppliedTime}});
+      await sendTurnReply(sender,dateClarification(checked));
+      return true;
+    };
+
+    // Local answers first. Only ambiguous concept/edit turns use the contextual classifier.
+    const contextFlows = new Set(["offer_saved_list","saved_list_pick","bridge_offer","schedule_date_clarification","draft_schedule_date","gantt_upload_time","bridge_pick_date","trend_schedule","trend_awaiting_date","confirm_gantt_write"]);
+    const explicitNew = isNewIdeaCommand(incomingText) || isTrendCommand(incomingText);
+    const otherCommand = Boolean(detectVisibilityIntent(incomingText)) || isArchiveCommand(incomingText) || isBulkArchiveCommand(incomingText) || isRestoreCommand(incomingText) || isApproveForProductionCommand(incomingText) || isDeadlineUpdate(incomingText) || isGanttDateChange(incomingText) || isScheduleByDate(incomingText) || isProductionStatusUpdate(incomingText);
+    let decision;
+    if (activeDraft && !explicitNew && !otherCommand && isDraftCorrection(incomingText, `${activeDraft.shortName} ${activeDraft.summary} ${activeDraft.originalUserInput}`)) decision = {kind:"edit_draft" as const};
+    else if (explicitNew || (!otherCommand && !pendingQuestion && conceptTurn) || (!otherCommand && !pendingQuestion && !activeDraft && requestedDraftAction(incomingText) && !/^(?:לשמור\s+)?(?:בלי|ללא) תאריך[.!]?\s*$/.test(incomingText.trim()))) decision = {kind:"new_idea" as const};
+    else if (!["context_turn_clarification","confirm_duplicate","resume_draft_pick"].includes(pendingQuestion?.questionType || "") && (activeDraft || (pendingQuestion && contextFlows.has(pendingQuestion.questionType))) && !otherCommand && !(pendingQuestion?.questionType === "gantt_upload_time" && (extractReplyTime(incomingText) || /^\d{1,2}$/.test(incomingText.trim()))) && !(pendingQuestion && schedulingQuestions.has(pendingQuestion.questionType) && parseSchedulingReply(incomingText).kind !== "absent")) {
+      decision = await resolvePendingTurn(incomingText,pendingQuestion,activeDraft);
+    }
+    if (decision) updateRoutingTrace({routeReason:decision.kind});
+    if (decision?.kind === "clarify") {
+      storePendingQuestion(sender,{questionType:"context_turn_clarification",context:{originalText:incomingText,previous:pendingQuestion}});
+      await sendTurnReply(sender,decision.question);
+      return res.status(200).json({status:"context_turn_unclear",sender});
+    }
+    if (pendingQuestion?.questionType === "context_turn_clarification" && /^(?:רעיון חדש|חדש|לשנות|תיקון|עריכה|לשנות את הטיוטה|לתקן|את הטיוטה|תיקון לטיוטה|זה תיקון|כן לשנות)[.!]?$/.test(incomingText.trim())) {
+      const ctx = pendingQuestion.context as any;
+      decision = {kind:/חדש/.test(incomingText)?"new_idea":"edit_draft"};
+      incomingText = ctx.originalText;
+    }
+    if (decision?.kind === "edit_draft" && activeDraft) {
+      const edit = parseEditRequest(incomingText);
+      const updated = edit && !isDraftCorrection(incomingText, `${activeDraft.shortName} ${activeDraft.summary} ${activeDraft.originalUserInput}`) ? applyEditToDraft(activeDraft,edit) : await askClaudeForEdit(activeDraft,incomingText,sender);
+      if (!updated) { await sendTurnReply(sender,"מה לשנות בטיוטה?"); return res.status(200).json({status:"context_edit_unclear",sender}); }
+      storePendingConfirmation(sender,updated);
+      const dateQuestion = pendingQuestion?.questionType === "draft_schedule_date" ? pendingQuestion
+        : pendingQuestion?.questionType === "context_turn_clarification" && (pendingQuestion.context?.previous as PendingQuestion | undefined)?.questionType === "draft_schedule_date"
+          ? pendingQuestion.context?.previous as PendingQuestion : undefined;
+      if (dateQuestion) {
+        storePendingQuestion(sender,dateQuestion);
+        const candidate = dateQuestion.context?.candidate as string | undefined;
+        await sendTurnReply(sender,buildDraftPreviewMessage(updated,{intro:"עדכנתי.",closingQuestion:candidate
+          ? dateClarification({kind:"past_needs_clarification",date:candidate,explicitYear:true})
+          : "לאיזה תאריך לשבץ?"}));
+      } else {
+        clearPendingQuestion(sender);
+        await sendTurnReply(sender,buildDraftPreviewMessage(updated,{intro:"עדכנתי."}));
+      }
+      return res.status(200).json({status:"context_draft_updated",sender});
+    }
+    if (decision?.kind === "new_idea") {
+      const text = getNewIdeaText(incomingText) || getTrendText(incomingText) || incomingText;
+      if (!text.trim() || /^(רעיון חדש|רעיון חדש:)\s*$/.test(text)) { await sendTurnReply(sender,"מה הרעיון החדש?"); return res.status(200).json({status:"new_idea_missing",sender}); }
+      const similar = process.env.GOOGLE_SHEETS_ID ? await findSimilarContentIdea(process.env.GOOGLE_SHEETS_ID,text) : null;
+      if (similar) {
+        storePendingQuestion(sender,{questionType:"confirm_duplicate",context:{originalInput:text,requestedAction:requestedDraftAction(incomingText),isTrend:isTrendCommand(incomingText)}});
+        await sendTurnReply(sender,`כבר שמור רעיון דומה: "${similar.idea}". לפתוח גם את הרעיון החדש?`);
+        return res.status(200).json({status:"duplicate_found",sender});
+      }
+      const draft = await createContentDraft(text,sender);
+      const summary: DraftSummary = {...draft,originalUserInput:text,
+        contentType:getNewIdeaContentType(incomingText)||draft.contentType,
+        ...(isTrendCommand(incomingText)?{category:"טרנד",priority:"גבוה" as const}:{}),
+        requestedAction:requestedDraftAction(incomingText)};
+      const parked = activateNewDraft(sender,summary);
+      const action = summary.requestedAction;
+      const parsed = action?.kind === "schedule" ? parseSchedulingReply(action.rawDate || action.date || "") : {kind:"absent" as const};
+      if (action?.kind === "schedule" && parsed.kind !== "valid") {
+        storePendingQuestion(sender,{questionType:"draft_schedule_date",context:{candidate:parsed.kind === "past_needs_clarification"?parsed.date:undefined,time:action.time}});
+        await sendTurnReply(sender,buildDraftPreviewMessage(summary,{closingQuestion:dateClarification(parsed),extraBeforeQuestion:parked?["הטיוטה הקודמת נשארה בצד."]:[]}));
+      } else {
+        summary.approvalScope = action?.kind === "schedule"?"save_schedule":"save";
+        storePendingConfirmation(sender,summary);
+        await sendTurnReply(sender,buildDraftPreviewMessage(summary,{extraBeforeQuestion:parked?["הטיוטה הקודמת נשארה בצד."]:[]}));
+      }
+      return res.status(200).json({status:"context_new_draft",sender});
+    }
+    if (decision?.kind === "route_existing_command") { clearPendingQuestion(sender);pendingQuestion=undefined; }
 
     // Global escape hatch (23.7.2026). Every open question used to swallow
     // whatever Karen wrote next, so asking something else while a question was
@@ -591,7 +882,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           failed.forEach((name) => lines.push(`- ${name}`));
         }
 
-        await safeSendWhatsAppMessage(sender, lines.join("\n"));
+        await sendTurnReply(sender, lines.join("\n"));
         return res.status(200).json({
           status: "bulk_archive_done",
           sender,
@@ -602,7 +893,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
       if (isRejectionMessage(incomingText) || /^\s*(לא|בטל|ביטול)\s*[,.!?]?\s*$/i.test(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "בסדר, לא מעבירה כלום.");
+        await sendTurnReply(sender, "בסדר, לא מעבירה כלום.");
         return res.status(200).json({ status: "bulk_archive_cancelled", sender });
       }
 
@@ -611,7 +902,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         `מחכה לאישור על ${items.length === 1 ? "הרעיון" : `${items.length} הרעיונות`} להעברה לארכיון.`,
         "לענות: כן / לא",
       ];
-      await safeSendWhatsAppMessage(sender, promptLines.join("\n"));
+      await sendTurnReply(sender, promptLines.join("\n"));
       return res.status(200).json({ status: "bulk_archive_awaiting_confirmation", sender });
     }
 
@@ -667,7 +958,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         } else if (wantsEdit && draftForClarification) {
           clearPendingQuestion(sender);
           const replyText = "בסדר, מה תרצי לשנות בכיוון הנוכחי?";
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
           return res.status(200).json({ status: "edit_clarification_resolved_edit", sender });
         }
 
@@ -675,7 +966,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           clearPendingQuestion(sender);
           clearPendingConfirmation(sender);
           const replyText = "בסדר, עזבנו את הרעיון הקודם. תכתבי לי את הרעיון החדש.";
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
           return res.status(200).json({ status: "edit_clarification_resolved_new", sender });
         }
 
@@ -691,7 +982,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           "לפתוח רעיון חדש",
         ].join("\n");
 
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
         return res.status(200).json({ status: "edit_or_new_clarification_still_unclear", sender });
         }
       }
@@ -706,7 +997,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const normalizedAnswer = rawAnswer.toLowerCase();
         if (["ביטול", "בטלי", "עזבי", "עזוב", "לא עכשיו", "אחר כך", "אחכ", 'אח"כ'].includes(normalizedAnswer)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "בסדר, השארתי את זה פתוח כרגע.");
+          await sendTurnReply(sender, "בסדר, השארתי את זה פתוח כרגע.");
           return res.status(200).json({ status: "overdue_pick_which_cancelled", sender });
         }
         // Resolve the pick to one of the offered titles: accept an exact-ish
@@ -731,7 +1022,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           }
         }
         if (!chosenTitle) {
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [
               "לא זיהיתי לאיזה מהם. אפשר לכתוב את השם המלא, או מספר מהרשימה:",
@@ -748,7 +1039,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         );
         if (!chosen) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             `כבר לא מצאתי את "${chosenTitle}" ברשימת האיחורים. ייתכן שהוא כבר טופל.`
           );
@@ -757,7 +1048,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         if (action === "published") {
           clearPendingQuestion(sender);
           await markOverdueItemPublished(spreadsheetId, chosen.contentId);
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             `סימנתי ש-"${chosen.displayTitle}" עלה. הוא לא יופיע יותר בתזכורות האיחור.`
           );
@@ -784,7 +1075,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
         if (["ביטול", "בטלי", "עזבי", "עזוב", "לא עכשיו", "אחר כך", "אחכ", 'אח"כ'].includes(normalizedAnswer)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "בסדר, לא מעבירה את התוכן כרגע.");
+          await sendTurnReply(sender, "בסדר, לא מעבירה את התוכן כרגע.");
           return res.status(200).json({
             status: "overdue_reschedule_cancelled",
             sender,
@@ -794,7 +1085,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const normalizedDate = normalizeUserDateInput(rawAnswer);
 
         if (!normalizedDate) {
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             "לא קלטתי תאריך. אפשר לכתוב למשל 18/6."
           );
@@ -807,7 +1098,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const collision = await isGanttDateTaken(spreadsheetId, normalizedDate);
 
         if (collision.taken && collision.existingContentId !== contentId) {
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             `${normalizedDate} כבר תפוס על ידי "${collision.existingName}". לאיזה תאריך אחר להעביר?`
           );
@@ -826,7 +1117,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         );
         await sortGanttByDate(spreadsheetId);
 
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           `סגור, העברתי את "${contentName}" ל-${normalizedDate}.`
         );
@@ -858,7 +1149,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             context: result.state,
           });
 
-          await safeSendWhatsAppMessage(sender, result.message);
+          await sendTurnReply(sender, result.message);
 
           return res.status(200).json({
             status: "planning_source_routing_next_source",
@@ -872,7 +1163,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             context: state,
           });
 
-          await safeSendWhatsAppMessage(sender, result.message);
+          await sendTurnReply(sender, result.message);
 
           return res.status(200).json({
             status: "planning_source_routing_clarify",
@@ -882,7 +1173,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
         if (result.action === "new_idea" || result.action === "cancelled") {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, result.message);
+          await sendTurnReply(sender, result.message);
 
           return res.status(200).json({
             status: `planning_source_routing_${result.action}`,
@@ -894,7 +1185,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           clearPendingQuestion(sender);
 
           if (result.source === "ideaBank") {
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               [
                 `סבבה, נתחיל מהרעיון "${result.option.title}".`,
@@ -916,7 +1207,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
               context: state,
             });
 
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               "חסר לי Content ID לתוכן הזה. תבחרי פריט אחר מהרשימה או כתבי ביטול."
             );
@@ -971,7 +1262,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             });
 
           if (availableDates.length === 0) {
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               [
                 `בחרתי את "${result.option.title}", אבל לא מצאתי תאריך פנוי בשבוע הבא.`,
@@ -1013,7 +1304,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             },
           });
 
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [
               `סבבה, נלך על "${result.option.title}".`,
@@ -1089,7 +1380,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             context: { contentName: newContentName, date: newDate },
           });
           const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortNew}" ב-${newDate}.\nלא מצאתי חור פנוי אחר באותו חודש ל-"${existingName.split(/\s+/).slice(0, 6).join(" ")}". אפשר לעדכן ידנית.\nבאיזו שעה לתכנן את ההעלאה?`);
+          await sendTurnReply(sender, `מעולה, הוספתי את "${shortNew}" ב-${newDate}.\nלא מצאתי חור פנוי אחר באותו חודש ל-"${existingName.split(/\s+/).slice(0, 6).join(" ")}". אפשר לעדכן ידנית.\nבאיזו שעה לתכנן את ההעלאה?`);
           return res.status(200).json({ status: "gantt_collision_replaced_no_slot", sender });
         }
 
@@ -1105,7 +1396,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
             ganttStatus,
           },
         });
-        await safeSendWhatsAppMessage(sender, `אעביר את "${shortExisting}" ל-${suggested} (יום ${suggestedDayName}). מאשרת?`);
+        await sendTurnReply(sender, `אעביר את "${shortExisting}" ל-${suggested} (יום ${suggestedDayName}). מאשרת?`);
         return res.status(200).json({ status: "gantt_collision_suggest_move", sender });
       }
 
@@ -1116,7 +1407,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         const suggested = available[0];
 
         if (!suggested) {
-          await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי באותו חודש. תוכלי לבחור תאריך ידנית.`);
+          await sendTurnReply(sender, `לא מצאתי תאריך פנוי באותו חודש. תוכלי לבחור תאריך ידנית.`);
           return res.status(200).json({ status: "gantt_collision_no_slot", sender });
         }
 
@@ -1127,14 +1418,14 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
           questionType: "gantt_write_new_date",
           context: { newContentId, newContentName, suggestedDate: suggested, suggestedDayName, ganttStatus },
         });
-        await safeSendWhatsAppMessage(sender, `הזמן הפנוי הקרוב הוא ${suggested} (יום ${suggestedDayName}). נכניס את "${shortNew}" שם?`);
+        await sendTurnReply(sender, `הזמן הפנוי הקרוב הוא ${suggested} (יום ${suggestedDayName}). נכניס את "${shortNew}" שם?`);
         return res.status(200).json({ status: "gantt_collision_suggest_new_date", sender });
       }
 
       const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
       const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
 
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [
           `לא בטוחה אם להחליף בין "${shortNew}" לבין "${shortExisting}".`,
@@ -1166,7 +1457,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         : normalizeUserDateInput(incomingText.trim());
 
       if (!targetDate) {
-        await safeSendWhatsAppMessage(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
+        await sendTurnReply(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
         return res.status(200).json({ status: "gantt_move_invalid_date", sender });
       }
 
@@ -1182,7 +1473,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       });
       const shortExisting = existingName.split(/\s+/).slice(0, 6).join(" ");
       const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
-      await safeSendWhatsAppMessage(sender, `מעולה! העברתי את "${shortExisting}" ל-${targetDate} והוספתי את "${shortNew}" ל-${newDate}.\nבאיזו שעה לתכנן את ההעלאה?`);
+      await sendTurnReply(sender, `מעולה! העברתי את "${shortExisting}" ל-${targetDate} והוספתי את "${shortNew}" ל-${newDate}.\nבאיזו שעה לתכנן את ההעלאה?`);
       return res.status(200).json({ status: "gantt_move_confirmed", sender });
       }
     }
@@ -1215,7 +1506,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   if (["ביטול", "עזבי", "עזוב", "לא משנה", "תבטלי"].includes(rawAnswer)) {
     clearPendingQuestion(sender);
-    await safeSendWhatsAppMessage(sender, "סבבה, לא הכנסתי. אפשר לחזור לזה אחר כך.");
+    await sendTurnReply(sender, "סבבה, לא הכנסתי. אפשר לחזור לזה אחר כך.");
     return res.status(200).json({ status: "gantt_write_new_date_cancelled", sender });
   }
 
@@ -1225,7 +1516,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       context: originalContext,
     });
 
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         "בסדר, לא הכנסתי בתאריך הזה.",
@@ -1285,7 +1576,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
       .map((c: any) => `- ${c.name.split(/\s+/).slice(0, 6).join(" ")}`)
       .join("\n");
 
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         `אין בעיה, נחזור לבחור תוכן אחר ל${monthName}.`,
@@ -1321,7 +1612,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
         context: originalContext,
       });
 
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [
           "לא קלטתי תאריך תקין.",
@@ -1373,7 +1664,7 @@ export const handleWhatsAppWebhook = async (req: Request, res: Response) => {
 
   const shortNew = newContentName.split(/\s+/).slice(0, 6).join(" ");
 
-  await safeSendWhatsAppMessage(
+  await sendTurnReply(
     sender,
     [
       `מעולה, הוספתי את "${shortNew}" לגאנט ב-${targetDate} (יום ${targetDayName}).`,
@@ -1393,7 +1684,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   // יציאה מתכנון חודש
   if (isRejectionMessage(incomingText) || ["סיימתי", "עצרי", "עצור", "זהו", "מספיק"].includes(incomingText.trim())) {
     clearPendingQuestion(sender);
-    await safeSendWhatsAppMessage(sender, `סיימנו את תכנון ${monthName}. אפשר תמיד לחזור ולהוסיף עוד.`);
+    await sendTurnReply(sender, `סיימנו את תכנון ${monthName}. אפשר תמיד לחזור ולהוסיף עוד.`);
     return res.status(200).json({ status: "monthly_planning_done", sender });
   }
 
@@ -1403,7 +1694,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
     if (!firstContent) {
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(sender, `לא נשארו תכנים שמחכים לתאריך ב${monthName}.`);
+      await sendTurnReply(sender, `לא נשארו תכנים שמחכים לתאריך ב${monthName}.`);
       return res.status(200).json({ status: "monthly_planning_no_remaining_content", sender });
     }
 
@@ -1411,7 +1702,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     const nearest = await findNearestAvailableGanttDate(monthlySpreadsheetId, month, year);
 
     if (!nearest) {
-      await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
+      await sendTurnReply(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
       return res.status(200).json({ status: "monthly_planning_no_available_date", sender });
     }
 
@@ -1437,7 +1728,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
     const shortName = firstContent.name.split(/\s+/).slice(0, 6).join(" ");
 
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         "מצאתי לו תאריך פנוי קרוב:",
@@ -1477,7 +1768,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   if (monthlyPlanningVisibilityIntent || monthlyPlanningLikelyVisibilityQuestion) {
     storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
 
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         `אני עדיין בתוך תכנון ${monthName}, אז לא אשבץ את זה כתוכן.`,
@@ -1522,7 +1813,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     const nearest = await findNearestAvailableGanttDate(monthlySpreadsheetId, month, year);
 
     if (!nearest) {
-      await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
+      await sendTurnReply(sender, `לא מצאתי תאריך פנוי קרוב ב${monthName}. אפשר לבחור תאריך ידנית.`);
       return res.status(200).json({ status: "monthly_planning_no_available_date_for_choice", sender });
     }
 
@@ -1548,7 +1839,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
     const shortName = chosenContentName.split(/\s+/).slice(0, 6).join(" ");
 
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         "סבבה, נתחיל ממנו.",
@@ -1569,7 +1860,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   const params = extractGanttWriteParams(incomingText);
   if (!params) {
     storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
-    await safeSendWhatsAppMessage(
+    await sendTurnReply(
       sender,
       [
         "לא הבנתי איזה תוכן להכניס.",
@@ -1589,7 +1880,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
   if (!match) {
     storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
-    await safeSendWhatsAppMessage(sender, `לא מצאתי את "${params.contentName}" בתכנים שאושרו. תנסי שוב.`);
+    await sendTurnReply(sender, `לא מצאתי את "${params.contentName}" בתכנים שאושרו. תנסי שוב.`);
     return res.status(200).json({ status: "monthly_planning_not_found", sender });
   }
 
@@ -1610,7 +1901,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
   if (collision.taken) {
     storePendingQuestion(sender, { questionType: "monthly_planning", context: { month, year, monthName, remainingContent } });
     const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
-    await safeSendWhatsAppMessage(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}". תבחרי תאריך אחר.`);
+    await sendTurnReply(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}". תבחרי תאריך אחר.`);
     return res.status(200).json({ status: "monthly_planning_collision", sender });
   }
 
@@ -1625,7 +1916,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
   if (updatedRemaining.length === 0) {
     clearPendingQuestion(sender);
-    await safeSendWhatsAppMessage(sender, `נשמר. כל התכנים שובצו ב${monthName}.`);
+    await sendTurnReply(sender, `נשמר. כל התכנים שובצו ב${monthName}.`);
     return res.status(200).json({ status: "monthly_planning_complete", sender });
   }
 
@@ -1635,7 +1926,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     ? "תוכן אחד שעוד לא שובץ"
     : `${updatedRemaining.length} תכנים שעוד לא שובצו`;
 
-  await safeSendWhatsAppMessage(sender, `נשמר. יש עוד ${remainingText}. על מה הבא?`);
+  await sendTurnReply(sender, `נשמר. יש עוד ${remainingText}. על מה הבא?`);
   return res.status(200).json({ status: "monthly_planning_item_saved", sender });
 }
     if (pendingQuestion?.questionType === "gantt_upload_time") {
@@ -1644,7 +1935,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       const continueMonthlyPlanning = async (prefixMessage: string) => {
         if (!monthlyPlanning) {
-          await safeSendWhatsAppMessage(sender, prefixMessage);
+          await sendTurnReply(sender, prefixMessage);
           return res.status(200).json({ status: "gantt_upload_time_done", sender });
         }
 
@@ -1656,7 +1947,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         if (updatedRemaining.length === 0) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [
               prefixMessage,
@@ -1682,7 +1973,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           .map((c: any) => `- ${c.name.split(/\s+/).slice(0, 6).join(" ")}`)
           .join("\n");
 
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             prefixMessage,
@@ -1731,7 +2022,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const timeMatch = compactTime || rawTimeInput.match(/(?:^|[^\d])([01]?\d|2[0-3])(?::([0-5]\d))?(?![\d:])/);
 
       if (!timeMatch) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           "לא קלטתי שעה תקינה. אפשר לכתוב פשוט את השעה — למשל 18:00, 8:30, או 11. אם לא רוצה לקבוע שעה עכשיו, כתבי דלגי."
         );
@@ -1790,7 +2081,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const draft = await createContentDraft(ctx.attempted, sender);
         const draftSummary = { ...draft, originalUserInput: ctx.attempted, isFastTrack: true, statusTypes: ctx.statusTypes };
         storePendingConfirmation(sender, draftSummary);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           buildDraftPreviewMessage(draft, {
             intro: ["יופי, אז נוסיף אותו."],
@@ -1803,14 +2094,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       // Otherwise: try to match her reply against the offered names.
-      const replyNorm = removePunctuationForMatching(reply);
-      const picked = (ctx.options || []).find((name: string) => {
-        const n = removePunctuationForMatching(name);
-        return name === reply || n === replyNorm || n.includes(replyNorm) || replyNorm.includes(n);
-      });
+      const picked = pickOfferedOption<string>(reply, ctx.options || [], name=>name);
 
       if (!picked) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           buildAmbiguityQuestion({ kind: "notFound", itemType: "תכנים", location: "בין התכנים שבהפקה", options: ctx.options || [], offerNew: true })
         );
@@ -1821,14 +2108,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       clearPendingQuestion(sender);
       const match = await findProductionTaskByName(spreadsheetId, picked);
       if (!match) {
-        await safeSendWhatsAppMessage(sender, `משהו השתבש במציאת "${picked}". אפשר לנסות שוב.`);
+        await sendTurnReply(sender, `משהו השתבש במציאת "${picked}". אפשר לנסות שוב.`);
         return res.status(200).json({ status: "status_no_match_lookup_failed", sender });
       }
 
       // findProductionTaskByName can return an ambiguous result; the picked
       // name came from our own list, so treat only a direct match as valid.
       if ("ambiguous" in (match as any)) {
-        await safeSendWhatsAppMessage(sender, `נמצאו כמה תכנים בשם "${picked}". אפשר לכתוב את השם המלא?`);
+        await sendTurnReply(sender, `נמצאו כמה תכנים בשם "${picked}". אפשר לכתוב את השם המלא?`);
         return res.status(200).json({ status: "status_no_match_ambiguous", sender });
       }
       const single = match as { rowIndex: number; row: string[] };
@@ -1856,7 +2143,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       const doneList = columnUpdates.map((u: any) => u.columnName).join(", ");
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         `עדכנתי ש"${picked}" ${doneList.replace(/, ([^,]*)$/, " ו$1")}.`
       );
@@ -1883,14 +2170,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (ctx.mode === "otherday") {
         if (isRejectionMessage(incomingText)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו מאוחר יותר, כתבי לי.`);
+          await sendTurnReply(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו מאוחר יותר, כתבי לי.`);
           return res.status(200).json({ status: "trend_otherday_kept", sender });
         }
         const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
         // Only an explicit date or an actual yes may write to the sheet.
         // Anything else re-asks instead of assuming consent (23.7.2026).
         if (!explicit && !isConfirmationMessage(incomingText)) {
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             `לא בטוחה אם לשבץ. אפשר לכתוב כן, תאריך אחר, או לא.`
           );
@@ -1898,13 +2185,13 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         }
         const target = explicit ? normalizeUserDateInput(explicit[0]) : ctx.suggestedDate;
         if (!target) {
-          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב תאריך כמו 29/07/2026.`);
+          await sendTurnReply(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב תאריך כמו 29/07/2026.`);
           return res.status(200).json({ status: "trend_otherday_bad_date", sender });
         }
         const ok = await scheduleTrendAt(target);
         clearPendingQuestion(sender);
         const dn = getHebrewDayName(target);
-        await safeSendWhatsAppMessage(sender, ok
+        await sendTurnReply(sender, ok
           ? [`סידרתי. הטרנד "${ctx.contentName}" נכנס ל-${target} (יום ${dn}).`, "", "כדאי לצלם ולערוך אותו מהר. אני אזכיר לך בבריף."].join("\n")
           : `משהו השתבש. "${ctx.contentName}" נשאר כרגע בלי תאריך. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_scheduled_otherday" : "trend_otherday_failed", sender });
@@ -1917,11 +2204,11 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           const alts = (ctx.altDates || []).filter((d: string) => d !== ctx.suggestedDate).slice(0, 3);
           if (alts.length === 0) {
             clearPendingQuestion(sender);
-            await safeSendWhatsAppMessage(sender, `אין לי כרגע תאריך חלופי פנוי. "${ctx.contentName}" נשאר כרגע בלי תאריך.`);
+            await sendTurnReply(sender, `אין לי כרגע תאריך חלופי פנוי. "${ctx.contentName}" נשאר כרגע בלי תאריך.`);
             return res.status(200).json({ status: "trend_recommend_no_alt", sender });
           }
           storePendingQuestion(sender, { questionType: "trend_make_room", context: { ...ctx, mode: "recommend_alt" } });
-          await safeSendWhatsAppMessage(sender, [
+          await sendTurnReply(sender, [
             `הכול טוב. אפשר להעביר את "${ctx.organic.name}" לאחד מהתאריכים האלה:`,
             "",
             ...alts,
@@ -1936,7 +2223,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const ok = await scheduleTrendAt(ctx.freedDate);
         clearPendingQuestion(sender);
         const freedDay = getHebrewDayName(ctx.freedDate);
-        await safeSendWhatsAppMessage(sender, ok
+        await sendTurnReply(sender, ok
           ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${ctx.suggestedDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
           : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_recommended_done" : "trend_recommend_failed", sender });
@@ -1947,7 +2234,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const explicit = incomingText.match(/(\d{1,2})[./-](\d{1,2})(?:[./-](\d{4}|\d{2}))?/);
         const chosen = explicit ? normalizeUserDateInput(explicit[0]) : (ctx.altDates || []).find((d: string) => incomingText.includes(d));
         if (!chosen) {
-          await safeSendWhatsAppMessage(sender, `לא זיהיתי תאריך. אפשר לכתוב אחד מהתאריכים שהצעתי, או תאריך משלך.`);
+          await sendTurnReply(sender, `לא זיהיתי תאריך. אפשר לכתוב אחד מהתאריכים שהצעתי, או תאריך משלך.`);
           return res.status(200).json({ status: "trend_recommend_alt_unclear", sender });
         }
         const dn = getHebrewDayName(chosen);
@@ -1955,7 +2242,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const ok = await scheduleTrendAt(ctx.freedDate);
         clearPendingQuestion(sender);
         const freedDay = getHebrewDayName(ctx.freedDate);
-        await safeSendWhatsAppMessage(sender, ok
+        await sendTurnReply(sender, ok
           ? [`סידרתי:`, `• "${ctx.organic.name}" עבר ל-${chosen} (יום ${dn}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${ctx.freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
           : `הזזתי את "${ctx.organic.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
         return res.status(200).json({ status: ok ? "trend_recommended_alt_done" : "trend_recommend_alt_failed", sender });
@@ -1964,18 +2251,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       // ---- MODE: choose (several organics) ----
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו, כתבי לי.`);
+        await sendTurnReply(sender, `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך. אם בא לך לתפוס אותו, כתבי לי.`);
         return res.status(200).json({ status: "trend_choose_kept", sender });
       }
       const pick = incomingText.trim();
-      const pickNorm = removePunctuationForMatching(pick);
-      const chosenReel = (ctx.reels || []).find((r: any) => {
-        const nameNorm = removePunctuationForMatching(r.name);
-        return r.name === pick || nameNorm === pickNorm || nameNorm.includes(pickNorm) || pickNorm.includes(nameNorm);
-      });
+      const chosenReel = pickOfferedOption<any>(pick, ctx.reels || [], r=>r.name);
       if (!chosenReel) {
         const reelLines = (ctx.reels || []).map((r: any) => `"${r.name}"`).join("\n");
-        await safeSendWhatsAppMessage(sender, [`לא זיהיתי איזה ריל. אפשר לכתוב את השם של אחד מאלה:`, "", reelLines].join("\n"));
+        await sendTurnReply(sender, [`לא זיהיתי איזה ריל. אפשר לכתוב את השם של אחד מאלה:`, "", reelLines].join("\n"));
         return res.status(200).json({ status: "trend_choose_unclear", sender });
       }
       const now = new Date();
@@ -1988,7 +2271,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       });
       const newReelDate = futureSmartDates.find((d: string) => d !== freedDate) || futureSmartDates[0];
       if (!newReelDate) {
-        await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי להזיז אליו את "${chosenReel.name}". אפשר לנסות מאוחר יותר.`);
+        await sendTurnReply(sender, `לא מצאתי תאריך פנוי להזיז אליו את "${chosenReel.name}". אפשר לנסות מאוחר יותר.`);
         return res.status(200).json({ status: "trend_choose_no_date", sender });
       }
       const newDayName = getHebrewDayName(newReelDate);
@@ -1996,7 +2279,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const ok = await scheduleTrendAt(freedDate);
       clearPendingQuestion(sender);
       const freedDay = getHebrewDayName(freedDate);
-      await safeSendWhatsAppMessage(sender, ok
+      await sendTurnReply(sender, ok
         ? [`סידרתי:`, `• "${chosenReel.name}" עבר ל-${newReelDate} (יום ${newDayName}).`, `• הטרנד "${ctx.contentName}" נכנס ל-${freedDate} (יום ${freedDay}).`, "", "כדאי לצלם ולערוך את הטרנד מהר. אני אזכיר לך בבריף."].join("\n")
         : `הזזתי את "${chosenReel.name}", אבל משהו השתבש בהכנסה לגאנט. אפשר לנסות שוב.`);
       return res.status(200).json({ status: ok ? "trend_made_room" : "trend_choose_failed", sender });
@@ -2012,7 +2295,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const chosen = explicit ? normalizeUserDateInput(explicit[0]) : null;
 
       if (!chosen) {
-        await safeSendWhatsAppMessage(sender, "לא זיהיתי תאריך. אפשר לכתוב למשל 30/7.");
+        await sendTurnReply(sender, "לא זיהיתי תאריך. אפשר לכתוב למשל 30/7.");
         return res.status(200).json({ status: "trend_awaiting_date_unclear", sender });
       }
 
@@ -2021,7 +2304,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       try {
         approveResult = await approveContentForProduction(spreadsheetId, ctx.contentName);
       } catch (approveError) {
-        await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
+        await sendTurnReply(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
         return res.status(200).json({ status: "trend_awaiting_date_approve_failed", sender });
       }
 
@@ -2032,7 +2315,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         questionType: "gantt_upload_time",
         context: { contentId: approveResult.contentId, contentName: ctx.contentName, date: chosen },
       });
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [`סגור, הכנסתי את "${ctx.contentName}" לגאנט ליום ${dn}, ${chosen}.`, "", "באיזו שעה לתכנן את ההעלאה?"].join("\n")
       );
@@ -2044,19 +2327,8 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
 
       if (isRejectionMessage(incomingText)) {
-        // Keep the question open (26.7.2026): the message invites Karen to
-        // "write me when", but clearing the state meant a bare date like "30/7"
-        // arrived with nothing waiting for it and became a new idea. The escape
-        // hatch still releases her if she writes something else entirely.
-        storePendingQuestion(sender, {
-          questionType: "trend_awaiting_date",
-          context: { contentId: ctx.contentId, contentName: ctx.contentName },
-        });
-        await safeSendWhatsAppMessage(sender, [
-          `בסדר, "${ctx.contentName}" נשאר כרגע בלי תאריך.`,
-          "",
-          "רק שתדעי, טרנדים מתקצרים מהר. אם בא לך לתפוס אותו, כתבי לי מתי.",
-        ].join("\n"));
+        clearPendingQuestion(sender);
+        await sendTurnReply(sender,"סגור, שמור בלי תאריך.");
         return res.status(200).json({ status: "trend_schedule_kept", sender });
       }
 
@@ -2075,7 +2347,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         // the sheet. "בסדר תודה" used to fall through here and schedule
         // silently (23.7.2026).
         const opts = ctx.options.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["לא בטוחה אם לשבץ. אפשר לכתוב אחד מאלה:", "", ...opts, "", "או לכתוב לא, ונשאיר את זה."].join("\n")
         );
@@ -2083,27 +2355,28 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       if (!chosenDate) {
-        await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב היום, מחר, או תאריך כמו 29/07/2026.`);
+        await sendTurnReply(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב היום, מחר, או תאריך כמו 29/07/2026.`);
         return res.status(200).json({ status: "trend_schedule_bad_date", sender });
       }
 
+      if (await guardChosenDate(chosenDate)) return res.status(200).json({status:"chosen_date_needs_clarification",sender});
       const taken = (await isGanttDateTaken(spreadsheetId, chosenDate)).taken;
       if (taken && !ctx.isStory) {
-        await safeSendWhatsAppMessage(sender, `ה-${chosenDate} כבר תפוס. אפשר לתת לי תאריך אחר קרוב, ואשבץ שם.`);
+        await sendTurnReply(sender, `ה-${chosenDate} כבר תפוס. אפשר לתת לי תאריך אחר קרוב, ואשבץ שם.`);
         return res.status(200).json({ status: "trend_schedule_taken", sender });
       }
 
       try {
         await approveContentForProduction(spreadsheetId, ctx.contentName);
       } catch (e) {
-        await safeSendWhatsAppMessage(sender, `משהו השתבש. "${ctx.contentName}" נשאר כרגע בלי תאריך. אפשר לנסות שוב.`);
+        await sendTurnReply(sender, `משהו השתבש. "${ctx.contentName}" נשאר כרגע בלי תאריך. אפשר לנסות שוב.`);
         return res.status(200).json({ status: "trend_schedule_approve_failed", sender });
       }
       const dn = getHebrewDayName(chosenDate);
       await addRowToGantt(spreadsheetId, ctx.contentId, ctx.contentName, chosenDate, dn, "", "בתכנון");
       await sortGanttByDate(spreadsheetId);
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [`יאללה, הכנסתי את "${ctx.contentName}" לגאנט ל-${chosenDate} (יום ${dn}).`, "", "כדאי לצלם ולערוך מהר כדי לתפוס את הטרנד. אני אזכיר לך בבריף."].join("\n")
       );
@@ -2113,14 +2386,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
     if (pendingQuestion?.questionType === "approve_pick_idea") {
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "בסדר, לא העברתי כלום. אפשר לחזור לזה מתי שבא לך.");
+        await sendTurnReply(sender, "בסדר, לא העברתי כלום. אפשר לחזור לזה מתי שבא לך.");
         return res.status(200).json({ status: "approve_pick_cancelled", sender });
       }
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       try {
         const picked = await approveContentForProduction(spreadsheetId, incomingText.trim());
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${picked.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
+        await sendTurnReply(sender, `מעולה, העברתי את "${picked.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
         const now = new Date();
         const firstOfMonth = `01/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
         const available = await findSmartGanttDate(spreadsheetId, firstOfMonth, {});
@@ -2133,13 +2406,13 @@ if (pendingQuestion?.questionType === "monthly_planning") {
             questionType: "confirm_gantt_write",
             context: { contentId: picked.contentId, contentName: picked.name, date: suggested, dayName: dn, ganttStatus: "בתכנון" },
           });
-          await safeSendWhatsAppMessage(sender, [`מצאתי לו חור פנוי בגאנט: ${suggested}, יום ${dn}.`, "", `להכניס את "${picked.name}" לתאריך הזה?`].join("\n"));
+          await sendTurnReply(sender, [`מצאתי לו חור פנוי בגאנט: ${suggested}, יום ${dn}.`, "", `להכניס את "${picked.name}" לתאריך הזה?`].join("\n"));
         }
         return res.status(200).json({ status: "approve_pick_done", sender });
       } catch (pickError) {
         const openIdeas = await getOpenContentIdeas(spreadsheetId);
         const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
-        await safeSendWhatsAppMessage(sender, [`עדיין לא מצאתי. אפשר לנסות שוב עם אחד מאלה:`, "", ideaLines].join("\n"));
+        await sendTurnReply(sender, [`עדיין לא מצאתי. אפשר לנסות שוב עם אחד מאלה:`, "", ideaLines].join("\n"));
         return res.status(200).json({ status: "approve_pick_retry", sender });
       }
     }
@@ -2152,20 +2425,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (explicitDate) {
         const normalized = normalizeUserDateInput(explicitDate[0]);
         if (!normalized) {
-          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב אותו כמו 29/07/2026.`);
+          await sendTurnReply(sender, `לא הצלחתי לקרוא את התאריך. אפשר לכתוב אותו כמו 29/07/2026.`);
           return res.status(200).json({ status: "gantt_date_change_retry_bad_date", sender });
         }
         const clash = await isGanttDateTaken(spreadsheetId, normalized);
         if (clash.taken && clash.existingContentId !== ctx.contentId) {
           const shortExisting = clash.existingName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(sender, `גם ה-${normalized} תפוס (${shortExisting}). אפשר לתת לי תאריך אחר, או לכתוב כן ואמצא פנוי.`);
+          await sendTurnReply(sender, `גם ה-${normalized} תפוס (${shortExisting}). אפשר לתת לי תאריך אחר, או לכתוב כן ואמצא פנוי.`);
           return res.status(200).json({ status: "gantt_date_change_still_taken", sender });
         }
         const dn = getHebrewDayName(normalized);
         await updateGanttRowDate(spreadsheetId, ctx.contentId, normalized, dn);
         await sortGanttByDate(spreadsheetId);
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `הזזתי את "${ctx.contentName}" ל-${normalized} (יום ${dn}).`);
+        await sendTurnReply(sender, `הזזתי את "${ctx.contentName}" ל-${normalized} (יום ${dn}).`);
         return res.status(200).json({ status: "gantt_date_changed", sender });
       }
 
@@ -2179,7 +2452,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         });
         if (future.length === 0) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, `לא מצאתי תאריך פנוי החודש. אפשר לתת לי תאריך ספציפי ואבדוק אותו.`);
+          await sendTurnReply(sender, `לא מצאתי תאריך פנוי החודש. אפשר לתת לי תאריך ספציפי ואבדוק אותו.`);
           return res.status(200).json({ status: "gantt_date_change_no_free", sender });
         }
         const chosen = future[0];
@@ -2187,17 +2460,17 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         await updateGanttRowDate(spreadsheetId, ctx.contentId, chosen, dn);
         await sortGanttByDate(spreadsheetId);
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `מצאתי, הזזתי את "${ctx.contentName}" ל-${chosen} (יום ${dn}).`);
+        await sendTurnReply(sender, `מצאתי, הזזתי את "${ctx.contentName}" ל-${chosen} (יום ${dn}).`);
         return res.status(200).json({ status: "gantt_date_changed", sender });
       }
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, `בסדר, השארתי את "${ctx.contentName}" בתאריך הנוכחי.`);
+        await sendTurnReply(sender, `בסדר, השארתי את "${ctx.contentName}" בתאריך הנוכחי.`);
         return res.status(200).json({ status: "gantt_date_change_cancelled", sender });
       }
 
-      await safeSendWhatsAppMessage(sender, `אפשר לענות כן (ואמצא תאריך פנוי), לתת לי תאריך אחר, או לכתוב ביטול.`);
+      await sendTurnReply(sender, `אפשר לענות כן (ואמצא תאריך פנוי), לתת לי תאריך אחר, או לכתוב ביטול.`);
       return res.status(200).json({ status: "gantt_date_change_collision_unclear", sender });
     }
 
@@ -2219,7 +2492,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(reply)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לאחר כך.");
+        await sendTurnReply(sender, "סבבה, נשאיר את זה לאחר כך.");
         return res.status(200).json({ status: "saved_pick_declined", sender });
       }
 
@@ -2230,7 +2503,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           const offset = ctx.offset || 6;
           const next = ideas.slice(offset, offset + 6);
           if (!next.length) {
-            await safeSendWhatsAppMessage(sender, "זה כל מה שיש כרגע. אפשר לבחור אחד מהרשימה.");
+            await sendTurnReply(sender, "זה כל מה שיש כרגע. אפשר לבחור אחד מהרשימה.");
             return res.status(200).json({ status: "saved_pick_no_more", sender });
           }
           storePendingQuestion(sender, {
@@ -2251,25 +2524,21 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           const footer = more
             ? 'אפשר לבחור אחד בשם, או לכתוב "עוד" להמשך.'
             : "איזה מהם תרצי להכניס לגאנט?";
-          await safeSendWhatsAppMessage(sender, ["ואלה הבאים:", "", ...lines, footer].join("\n"));
+          await sendTurnReply(sender, ["ואלה הבאים:", "", ...lines, footer].join("\n"));
           return res.status(200).json({ status: "saved_pick_more_shown", sender });
         } catch (moreError) {
           console.error(`[Saved list] more failed: ${moreError}`);
-          await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את ההמשך. אפשר לבחור מהרשימה שכבר הצגתי.");
+          await sendTurnReply(sender, "לא הצלחתי להביא את ההמשך. אפשר לבחור מהרשימה שכבר הצגתי.");
           return res.status(200).json({ status: "saved_pick_more_failed", sender });
         }
       }
 
       // Match the reply against the offered names.
-      const replyNorm = removePunctuationForMatching(reply);
-      const picked = (ctx.options || []).find((o: any) => {
-        const n = removePunctuationForMatching(o.name);
-        return o.name === reply || n === replyNorm || n.includes(replyNorm) || replyNorm.includes(n);
-      });
+      const picked = pickOfferedOption<any>(reply, ctx.options || [], o=>o.name);
 
       if (!picked) {
         const names = (ctx.options || []).map((o: any) => `"${o.name}"`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["לא זיהיתי איזה רעיון. אפשר לכתוב את השם של אחד מאלה:", "", ...names].join("\n")
         );
@@ -2289,7 +2558,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         if (!futureDates.length) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות שוב מאוחר יותר.");
+          await sendTurnReply(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות שוב מאוחר יותר.");
           return res.status(200).json({ status: "saved_pick_no_dates", sender });
         }
 
@@ -2298,7 +2567,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           context: { contentId: picked.contentId, contentName: picked.name, dates: futureDates },
         });
         const lines = futureDates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [`מעולה, אלה התאריכים הפנויים הקרובים ל"${picked.name}":`, "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
         );
@@ -2306,7 +2575,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       } catch (dateError) {
         console.error(`[Saved list] date lookup failed: ${dateError}`);
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+        await sendTurnReply(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
         return res.status(200).json({ status: "saved_pick_date_failed", sender });
       }
     }
@@ -2321,7 +2590,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (/להשאיר|משאיר|נשאיר|כמו שהוא|בסדר|סבבה/.test(reply)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סגור, השארתי אותו איפה שהוא.");
+        await sendTurnReply(sender, "סגור, השארתי אותו איפה שהוא.");
         return res.status(200).json({ status: "nudge_kept_as_is", sender });
       }
 
@@ -2338,7 +2607,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
           if (!dates.length) {
             clearPendingQuestion(sender);
-            await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב להעביר אליו. אפשר לנסות מאוחר יותר.");
+            await sendTurnReply(sender, "לא מצאתי תאריך פנוי קרוב להעביר אליו. אפשר לנסות מאוחר יותר.");
             return res.status(200).json({ status: "nudge_move_no_dates", sender });
           }
 
@@ -2347,7 +2616,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
             context: { contentId: ctx.contentId, contentName: ctx.contentName, dates, mode: "move" },
           });
           const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [`בסדר. אלה התאריכים הפנויים הקרובים ל"${ctx.contentName}":`, "", ...lines, "", "איזה תאריך מתאים?"].join("\n")
           );
@@ -2355,12 +2624,12 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         } catch (moveError) {
           console.error(`[Nudge] move lookup failed: ${moveError}`);
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+          await sendTurnReply(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
           return res.status(200).json({ status: "nudge_move_failed", sender });
         }
       }
 
-      await safeSendWhatsAppMessage(sender, 'לא בטוחה מה התכוונת. להשאיר אותו איפה שהוא, או להעביר ליום אחר?');
+      await sendTurnReply(sender, 'לא בטוחה מה התכוונת. להשאיר אותו איפה שהוא, או להעביר ליום אחר?');
       return res.status(200).json({ status: "nudge_decision_unclear", sender });
     }
 
@@ -2383,14 +2652,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       }
 
       if (answer === "unclear") {
-        await safeSendWhatsAppMessage(sender, "לא בטוחה מה התכוונת. אפשר לענות כן או לא.");
+        await sendTurnReply(sender, "לא בטוחה מה התכוונת. אפשר לענות כן או לא.");
         return res.status(200).json({ status: "content_lookup_unclear", sender });
       }
 
       clearPendingQuestion(sender);
 
       if (answer === "no") {
-        await safeSendWhatsAppMessage(sender, "סגור, הוא נשאר כרגע כמו שהוא.");
+        await sendTurnReply(sender, "סגור, הוא נשאר כרגע כמו שהוא.");
         return res.status(200).json({ status: "content_lookup_declined", sender });
       }
 
@@ -2402,7 +2671,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         try {
           const ideas = await getOpenContentIdeas(spreadsheetId);
           if (!ideas.length) {
-            await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות שמחכים לתאריך.");
+            await sendTurnReply(sender, "אין כרגע רעיונות שמחכים לתאריך.");
             return res.status(200).json({ status: "content_lookup_list_empty", sender });
           }
           const shown = ideas.slice(0, 6);
@@ -2424,14 +2693,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           const footer = hasMore
             ? 'אפשר לבחור אחד מהם בשם, או לכתוב "עוד" ואציג לך את השאר.'
             : "איזה מהם תרצי להכניס לגאנט?";
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             ["אלה הרעיונות שמחכים לתאריך:", "", ...listLines, footer].join("\n")
           );
           return res.status(200).json({ status: "content_lookup_list_shown", sender });
         } catch (listError) {
           console.error(`[Content lookup] list failed: ${listError}`);
-          await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
+          await sendTurnReply(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
           return res.status(200).json({ status: "content_lookup_list_failed", sender });
         }
       }
@@ -2447,10 +2716,10 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           // Use the id the approve step produced, not the bank one.
           if (approved?.contentId) lookupContentId = approved.contentId;
         } catch (approveError) {
-          await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
+          await sendTurnReply(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`);
           return res.status(200).json({ status: "content_lookup_approve_failed", sender });
         }
-        await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${ctx.contentName}" להפקה.`);
+        await sendTurnReply(sender, `מעולה, העברתי את "${ctx.contentName}" להפקה.`);
       }
 
       // in_production: offer concrete dates, same as the bridge.
@@ -2465,7 +2734,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         }).slice(0, 3);
 
         if (!dates.length) {
-          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות מאוחר יותר.");
+          await sendTurnReply(sender, "לא מצאתי תאריך פנוי קרוב. אפשר לנסות מאוחר יותר.");
           return res.status(200).json({ status: "content_lookup_no_dates", sender });
         }
 
@@ -2474,14 +2743,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           context: { contentId: lookupContentId, contentName: ctx.contentName, dates, alreadyApproved: true },
         });
         const dateLines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["מעולה, אלה התאריכים הפנויים הקרובים:", "", ...dateLines, "", "איזה תאריך מתאים לך?"].join("\n")
         );
         return res.status(200).json({ status: "content_lookup_dates_offered", sender });
       } catch (dateError) {
         console.error(`[Content lookup] date lookup failed: ${dateError}`);
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
+        await sendTurnReply(sender, "לא הצלחתי למצוא תאריכים כרגע. אפשר לנסות שוב עוד רגע.");
         return res.status(200).json({ status: "content_lookup_date_failed", sender });
       }
     }
@@ -2491,15 +2760,20 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סבבה, נשאיר את זה לאחר כך.");
+        await sendTurnReply(sender, "סבבה, נשאיר את זה לאחר כך.");
         return res.status(200).json({ status: "saved_list_declined", sender });
+      }
+
+      if (!isConfirmationMessage(incomingText)) {
+        await sendTurnReply(sender,"להציג את הרעיונות השמורים, או שזה רעיון חדש?");
+        return res.status(200).json({status:"saved_list_offer_unclear",sender});
       }
 
       try {
         const ideas = await getOpenContentIdeas(spreadsheetId);
         if (!ideas.length) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות שמחכים לתאריך.");
+          await sendTurnReply(sender, "אין כרגע רעיונות שמחכים לתאריך.");
           return res.status(200).json({ status: "saved_list_empty", sender });
         }
 
@@ -2528,12 +2802,12 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           ? 'אפשר לבחור אחד מהם בשם, או לכתוב "עוד" ואציג לך את השאר.'
           : "איזה מהם תרצי להכניס לגאנט?";
 
-        await safeSendWhatsAppMessage(sender, [header, "", ...lines, footer].join("\n"));
+        await sendTurnReply(sender, [header, "", ...lines, footer].join("\n"));
         return res.status(200).json({ status: "saved_list_shown", sender });
       } catch (listError) {
         console.error(`[Saved list] failed: ${listError}`);
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
+        await sendTurnReply(sender, "לא הצלחתי להביא את הרשימה כרגע. אפשר לנסות שוב עוד רגע.");
         return res.status(200).json({ status: "saved_list_failed", sender });
       }
     }
@@ -2545,7 +2819,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "בסדר, נשאיר אותם כרגע בלי תאריך.");
+        await sendTurnReply(sender, "בסדר, נשאיר אותם כרגע בלי תאריך.");
         return res.status(200).json({ status: "production_overview_schedule_declined", sender });
       }
 
@@ -2557,7 +2831,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const first = noDateItems[0];
         if (!first) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "לא נשאר תוכן בלי תאריך.");
+          await sendTurnReply(sender, "לא נשאר תוכן בלי תאריך.");
           return res.status(200).json({ status: "production_overview_schedule_empty", sender });
         }
         const now = new Date();
@@ -2586,7 +2860,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         }
         if (!scheduleDates.length) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר לנסות מאוחר יותר.");
+          await sendTurnReply(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר לנסות מאוחר יותר.");
           return res.status(200).json({ status: "production_overview_schedule_no_dates", sender });
         }
         storePendingQuestion(sender, {
@@ -2597,14 +2871,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const askLines = nextMonthNote
           ? [nextMonthNote, "", `מתי להכניס את "${first.name}" לגאנט?`, "", ...dateLines]
           : [`מתי להכניס את "${first.name}" לגאנט?`, "", ...dateLines];
-        await safeSendWhatsAppMessage(sender, askLines.join("\n"));
+        await sendTurnReply(sender, askLines.join("\n"));
         return res.status(200).json({ status: "production_overview_schedule_started", sender });
       }
 
       // Neither yes nor no: let the escape hatch / normal routing handle it by
       // clearing and falling through would lose the question; instead re-ask
       // gently once. (A real command would have been caught by the escape hatch.)
-      await safeSendWhatsAppMessage(sender, "רוצה שנכניס אותם לגאנט? אפשר לענות כן או לא.");
+      await sendTurnReply(sender, "רוצה שנכניס אותם לגאנט? אפשר לענות כן או לא.");
       return res.status(200).json({ status: "production_overview_schedule_unclear", sender });
     }
 
@@ -2616,7 +2890,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (isRejectionMessage(reply)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "סגור, השארתי אותו כרגע בלי תאריך.");
+        await sendTurnReply(sender, "סגור, השארתי אותו כרגע בלי תאריך.");
         return res.status(200).json({ status: "bridge_pick_date_kept", sender });
       }
 
@@ -2626,11 +2900,11 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         "השלישי": 2, "השלישית": 2,
       };
 
-      let chosen: string | null = null;
+      let chosen: string | null = extractExplicitDateFromReply(reply);
 
       // 1. Full or partial numeric date: 24, 24/7, 24/07/2026
       const numMatch = reply.match(/(\d{1,2})(?:[./-](\d{1,2}))?(?:[./-](\d{2,4}))?/);
-      if (numMatch) {
+      if (numMatch && !chosen) {
         const day = parseInt(numMatch[1], 10);
         const month = numMatch[2] ? parseInt(numMatch[2], 10) : null;
         chosen = dates.find((d) => {
@@ -2658,13 +2932,14 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       if (!chosen) {
         const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["לא זיהיתי איזה תאריך. אפשר לבחור אחד מאלה:", "", ...lines].join("\n")
         );
         return res.status(200).json({ status: "bridge_pick_date_unclear", sender });
       }
 
+      if (await guardChosenDate(chosen)) return res.status(200).json({status:"chosen_date_needs_clarification",sender});
       clearPendingQuestion(sender);
 
       // Move mode: the content is already on the gantt, so just change its
@@ -2673,7 +2948,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const movedDayName = getHebrewDayName(chosen);
         await updateGanttRowDate(spreadsheetId, ctx.contentId, chosen, movedDayName);
         await sortGanttByDate(spreadsheetId);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           `סגור, העברתי את "${ctx.contentName}" ליום ${movedDayName}, ${chosen}.`
         );
@@ -2691,7 +2966,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           questionType: "gantt_upload_time",
           context: { contentId: ctx.contentId, contentName: ctx.contentName, date: chosen },
         });
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [`מעולה, הכנסתי את "${ctx.contentName}" לגאנט ליום ${dn2}, ${chosen}.`, "", "באיזו שעה לתכנן את ההעלאה?"].join("\n")
         );
@@ -2702,7 +2977,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       try {
         approveResult = await approveContentForProduction(spreadsheetId, ctx.contentName);
       } catch (approveError) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${ctx.contentName} להפקה`
         );
@@ -2726,7 +3001,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         context: { contentId: approveResult.contentId, contentName: ctx.contentName, date: chosen },
       });
 
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [
           `מעולה, הכנסתי את "${ctx.contentName}" לגאנט ליום ${chosenDayName}, ${chosen}.`,
@@ -2754,13 +3029,13 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (!picked) {
         storePendingQuestion(sender, { questionType: "month_full_pick_reel", context: ctx });
         const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ${r.name}`);
-        await safeSendWhatsAppMessage(sender, ["לא זיהיתי איזה תוכן. אפשר לענות במספר:", "", ...reelLines].join("\n"));
+        await sendTurnReply(sender, ["לא זיהיתי איזה תוכן. אפשר לענות במספר:", "", ...reelLines].join("\n"));
         return res.status(200).json({ status: "month_full_pick_reel_unclear", sender });
       }
       const nextMonthDates: string[] = ctx.nextMonthDates || [];
       if (nextMonthDates.length === 0) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי להזיז אליו. אפשר לנסות שוב.");
+        await sendTurnReply(sender, "לא מצאתי תאריך פנוי להזיז אליו. אפשר לנסות שוב.");
         return res.status(200).json({ status: "month_full_move_no_dates", sender });
       }
       storePendingQuestion(sender, {
@@ -2768,7 +3043,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         context: { contentId: ctx.contentId, contentName: ctx.contentName, movingReel: picked, dates: nextMonthDates },
       });
       const dateLines = nextMonthDates.map((d: string, i: number) => `${i + 1}. יום ${getHebrewDayName(d)}, ${d}`);
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [`לאיזה תאריך להעביר את ”${picked.name}”?`, "", ...dateLines, "", "אפשר לענות במספר או בתאריך."].join("\n")
       );
@@ -2799,7 +3074,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (!chosen) {
         storePendingQuestion(sender, { questionType: "month_full_move_date", context: ctx });
         const dateLines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(sender, ["לא זיהיתי תאריך. אפשר:", "", ...dateLines].join("\n"));
+        await sendTurnReply(sender, ["לא זיהיתי תאריך. אפשר:", "", ...dateLines].join("\n"));
         return res.status(200).json({ status: "month_full_move_date_unclear", sender });
       }
       clearPendingQuestion(sender);
@@ -2813,7 +3088,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       try {
         await updateGanttRowDate(spreadsheetId, movingReel.contentId, chosen, chosenDayName);
       } catch (moveError) {
-        await safeSendWhatsAppMessage(sender, `משהו השתבש בהזזת "${movingReel.name}". לא שיניתי כלום, אפשר לנסות שוב.`);
+        await sendTurnReply(sender, `משהו השתבש בהזזת "${movingReel.name}". לא שיניתי כלום, אפשר לנסות שוב.`);
         return res.status(200).json({ status: "month_full_move_failed", sender });
       }
 
@@ -2821,7 +3096,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       // updateGanttRowDate returns void and no-ops silently if the row is gone.
       const moveVerified = await isGanttDateTaken(spreadsheetId, chosen);
       if (!moveVerified.taken || moveVerified.existingContentId !== movingReel.contentId) {
-        await safeSendWhatsAppMessage(sender, `לא הצלחתי לאמת שההזזה של "${movingReel.name}" נשמרה. עצרתי כדי לא ליצור בלגן בגאנט. אפשר לנסות שוב.`);
+        await sendTurnReply(sender, `לא הצלחתי לאמת שההזזה של "${movingReel.name}" נשמרה. עצרתי כדי לא ליצור בלגן בגאנט. אפשר לנסות שוב.`);
         return res.status(200).json({ status: "month_full_move_unverified", sender });
       }
 
@@ -2830,7 +3105,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       try {
         approveResult = await approveContentForProduction(spreadsheetId, ctx.contentId);
       } catch (approveError) {
-        await safeSendWhatsAppMessage(sender, `הזזתי את "${movingReel.name}", אבל משהו השתבש בהעברת התוכן החדש להפקה. אפשר לנסות: תוסיפי את ${ctx.contentName} להפקה`);
+        await sendTurnReply(sender, `הזזתי את "${movingReel.name}", אבל משהו השתבש בהעברת התוכן החדש להפקה. אפשר לנסות: תוסיפי את ${ctx.contentName} להפקה`);
         return res.status(200).json({ status: "month_full_move_approve_failed", sender });
       }
       const productionDeadline = await addRowToGantt(spreadsheetId, approveResult.contentId, ctx.contentName, freedDate, freedDayName, "", "בתכנון");
@@ -2841,7 +3116,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       });
       const shortNew = ctx.contentName.split(/\s+/).slice(0, 6).join(" ");
       const shortMoved = movingReel.name.split(/\s+/).slice(0, 6).join(" ");
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [
           `העברתי את ”${shortMoved}” ליום ${chosenDayName}, ${chosen}.`,
@@ -2871,7 +3146,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
       if (saysNextMonth) {
         if (nextMonthDates.length === 0) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי גם בחודש הבא. התוכן נשאר בלי תאריך.");
+          await sendTurnReply(sender, "לא מצאתי תאריך פנוי גם בחודש הבא. התוכן נשאר בלי תאריך.");
           return res.status(200).json({ status: "month_full_next_month_empty", sender });
         }
         storePendingQuestion(sender, {
@@ -2879,7 +3154,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           context: { contentId, contentName, dates: nextMonthDates },
         });
         const lines = nextMonthDates.map((d: string, i: number) => `${i + 1}. יום ${getHebrewDayName(d)}, ${d}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["אלה התאריכים הפנויים הקרובים בחודש הבא:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
         );
@@ -2892,11 +3167,11 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         try {
           await approveContentForProduction(spreadsheetId, contentId);
         } catch (approveError) {
-          await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`);
+          await sendTurnReply(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`);
           return res.status(200).json({ status: "month_full_keep_approve_failed", sender });
         }
         const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
-        await safeSendWhatsAppMessage(sender, `העברתי את ”${shortName}” להפקה בלי תאריך. כשיתפנה מקום בגאנט, נוכל לקבוע לו אחד.`);
+        await sendTurnReply(sender, `העברתי את ”${shortName}” להפקה בלי תאריך. כשיתפנה מקום בגאנט, נוכל לקבוע לו אחד.`);
         return res.status(200).json({ status: "month_full_kept_no_date", sender });
       }
 
@@ -2905,7 +3180,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         const shiftableReels: Array<any> = ctx.shiftableReels || [];
         if (shiftableReels.length === 0) {
           storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
-          await safeSendWhatsAppMessage(sender, "אין כרגע ריל אורגני שאפשר להזיז השבוע. אפשר לבחור חודש הבא או להשאיר בלי תאריך.");
+          await sendTurnReply(sender, "אין כרגע ריל אורגני שאפשר להזיז השבוע. אפשר לבחור חודש הבא או להשאיר בלי תאריך.");
           return res.status(200).json({ status: "month_full_no_shiftable", sender });
         }
         storePendingQuestion(sender, {
@@ -2913,7 +3188,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           context: { contentId, contentName, nextMonthDates, shiftableReels },
         });
         const reelLines = shiftableReels.map((r: any, i: number) => `${i + 1}. ”${r.name}”\nיום ${r.dayName}, ${r.date}`);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           ["איזה רילס תרצי להזיז כדי לפנות מקום?", "", ...reelLines, "", "אפשר לענות במספר או בשם."].join("\n")
         );
@@ -2922,7 +3197,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
       // Unclear: re-ask once.
       storePendingQuestion(sender, { questionType: "month_full_choice", context: ctx });
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         ["לא הייתי בטוחה איזו אפשרות בחרת. אפשר לענות:", "", "1. תחילת החודש הבא", "2. להזיז רילס קיים", "3. להעביר להפקה בלי תאריך"].join("\n")
       );
@@ -2945,7 +3220,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         clearPendingQuestion(sender);
         console.log(`[Route Debug] bridge_offer: explicit command detected, falling through`);
       } else {
-        let bridgeAnswer = classifyBridgeOfferAnswer(incomingText);
+        let bridgeAnswer = extractExplicitDateFromReply(incomingText) ? "schedule" as const : classifyBridgeOfferAnswer(incomingText);
         // Karen phrases this freely ("עדיף לא", "בוא נחכה"). When the phrase
         // list cannot decide, ask Claude rather than replying "לא הבנתי".
         if (bridgeAnswer === "unclear") {
@@ -2958,36 +3233,8 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         if (bridgeAnswer === "keep") {
           clearPendingQuestion(sender);
-          // Respect the "no", but hand her the picture: how many organic reels
-          // are still missing, and an easy way to see what is already waiting.
-          let gapLine = "";
-          let offeredList = false;
-          try {
-            const spreadsheetIdForGap = process.env.GOOGLE_SHEETS_ID!;
-            // Pull a window wide enough to cover this week and next.
-            const gapFrom = new Date(); gapFrom.setDate(gapFrom.getDate() - 7);
-            const gapTo = new Date(); gapTo.setDate(gapTo.getDate() + 21);
-            const ganttForGap = await getGanttByDateRange(spreadsheetIdForGap, gapFrom, gapTo);
-            const thisWeek = computeScheduledReelGap(ganttForGap, {});
-            const nextWeekAnchor = new Date();
-            nextWeekAnchor.setDate(nextWeekAnchor.getDate() + 7);
-            const nextWeek = computeScheduledReelGap(ganttForGap, { anchorDate: nextWeekAnchor });
-            const missing = thisWeek.missing > 0 ? thisWeek.missing : nextWeek.missing;
-            const scopeWord = thisWeek.missing > 0 ? "השבוע" : "החודש";
-            if (missing > 0) {
-              const what = missing === 1 ? "חסר רילס אחד" : `חסרים ${missing} רילסים`;
-              gapLine = ` עדיין ${what} כדי לסגור את ${scopeWord}, רוצה לראות מה כבר שמור ולבחור משם?`;
-              offeredList = true;
-              storePendingQuestion(sender, {
-                questionType: "offer_saved_list",
-                context: { missing, scopeWord },
-              });
-            }
-          } catch (gapError) {
-            console.error(`[Bridge] reel gap lookup skipped: ${gapError}`);
-          }
-          await safeSendWhatsAppMessage(sender, `סגור, השארתי אותו כרגע בלי תאריך.${gapLine}`);
-          return res.status(200).json({ status: offeredList ? "bridge_kept_with_gap" : "bridge_offer_kept", sender });
+          await sendTurnReply(sender, "סגור, שמור בלי תאריך.");
+          return res.status(200).json({ status: "bridge_offer_kept", sender });
         }
 
         // bridge_offer explicit date honoured (26.7.2026): "תכניס אותו ב-20/8"
@@ -2998,52 +3245,8 @@ if (pendingQuestion?.questionType === "monthly_planning") {
         if (bridgeAnswer === "schedule" && askedIntentOnly) {
           const explicitDate = extractExplicitDateFromReply(incomingText);
           if (explicitDate) {
-            clearPendingQuestion(sender);
-            const sid = process.env.GOOGLE_SHEETS_ID!;
-            const explicitDay = getHebrewDayName(explicitDate);
-            let approveRes;
-            try {
-              approveRes = await approveContentForProduction(sid, contentName);
-            } catch (e) {
-              await safeSendWhatsAppMessage(sender, `משהו השתבש בהעברה להפקה. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`);
-              return res.status(200).json({ status: "bridge_offer_explicit_approve_failed", sender });
-            }
-            const coll = await isGanttDateTaken(sid, explicitDate);
-            if (coll.taken) {
-              const se = coll.existingName.split(/\s+/).slice(0, 6).join(" ");
-              const sn = contentName.split(/\s+/).slice(0, 6).join(" ");
-              storePendingQuestion(sender, {
-                questionType: "gantt_collision",
-                context: {
-                  newContentId: approveRes.contentId,
-                  newContentName: contentName,
-                  newDate: explicitDate,
-                  newDayName: explicitDay,
-                  existingContentId: coll.existingContentId,
-                  existingName: coll.existingName,
-                  ganttStatus: "בתכנון",
-                },
-              });
-              await safeSendWhatsAppMessage(sender, `העברתי את "${sn}" להפקה, אבל ב-${explicitDate} כבר נתפס "${se}".\nרוצה שאכניס את "${sn}" במקומו ואעביר את "${se}" לתאריך אחר?`);
-              return res.status(200).json({ status: "bridge_offer_explicit_collision", sender });
-            }
-            const pd = await addRowToGantt(sid, approveRes.contentId, contentName, explicitDate, explicitDay, "", "בתכנון");
-            await sortGanttByDate(sid);
-            storePendingQuestion(sender, {
-              questionType: "gantt_upload_time",
-              context: { contentId: approveRes.contentId, contentName, date: explicitDate },
-            });
-            const sc = contentName.split(/\s+/).slice(0, 6).join(" ");
-            await safeSendWhatsAppMessage(
-              sender,
-              [
-                `הכנסתי את "${sc}" לגאנט ליום ${explicitDay}, ${explicitDate}.`,
-                pd ? `הדדליין להפקה הוא ${pd}.` : "",
-                "",
-                "באיזו שעה לתכנן את ההעלאה?",
-              ].filter(Boolean).join("\n")
-            );
-            return res.status(200).json({ status: "bridge_offer_explicit_date", sender });
+            const result = await scheduleSavedContent(sender,contentName,explicitDate,suppliedTime);
+            return res.status(200).json({ status: result, sender });
           }
           // Intent confirmed. Now offer concrete dates and let her choose.
           const dates: string[] = (availableDates || [date]).filter(Boolean);
@@ -3052,7 +3255,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
             context: { contentId: (pendingQuestion.context as any).contentId, contentName, dates },
           });
           const lines = dates.map((d: string) => `${getHebrewDayName(d)}, ${d}`);
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             ["מעולה, אלה התאריכים הפנויים הקרובים:", "", ...lines, "", "איזה תאריך מתאים לך?"].join("\n")
           );
@@ -3067,7 +3270,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           try {
             approveResult = await approveContentForProduction(spreadsheetId, contentName);
           } catch (approveError) {
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               `משהו השתבש בהעברה להפקה. הרעיון נשאר כרגע בלי תאריך. אפשר לנסות שוב עם: תוסיפי את ${contentName} להפקה`
             );
@@ -3092,7 +3295,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
                 ganttStatus: "בתכנון",
               },
             });
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               `העברתי את "${shortNew}" להפקה, אבל בינתיים ב-${date} כבר נתפס "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`
             );
@@ -3117,7 +3320,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
           });
 
           const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [
               `מעולה, העברתי את "${shortConfirmName}" להפקה והכנסתי לגאנט ב-${date} (יום ${dayName}), כבתכנון.`,
@@ -3131,7 +3334,7 @@ if (pendingQuestion?.questionType === "monthly_planning") {
 
         // Unclear: re-ask once (refreshes the modal state and its TTL).
         storePendingQuestion(sender, { questionType: "bridge_offer", context: pendingQuestion.context });
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             "לא בטוחה מה התכוונת.",
@@ -3161,7 +3364,7 @@ if (["לא עכשיו", "אחר כך", "אחכ", "אח\"כ", "בהמשך", "עז
   clearPendingQuestion(sender);
   const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
-  await safeSendWhatsAppMessage(
+  await sendTurnReply(
     sender,
     [
       `סבבה, השארתי את "${shortName}" בהפקה בלי תאריך עלייה.`,
@@ -3180,7 +3383,7 @@ if (isRejectionMessage(incomingText)) {
         // gives one (handled by the explicit-date branch below).
         clearPendingQuestion(sender);
         const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           `השארתי את "${shortName}" בהפקה בלי תאריך. כשתרצי, נוכל לקבוע לו אחד.`
         );
@@ -3206,7 +3409,7 @@ if (isRejectionMessage(incomingText)) {
               ganttStatus,
             },
           });
-          await safeSendWhatsAppMessage(sender, `ב-${date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+          await sendTurnReply(sender, `ב-${date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
           return res.status(200).json({ status: "gantt_collision_detected", sender });
         }
 
@@ -3235,7 +3438,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
     confirmLines.push(`הדדליין להפקה הוא ${deadlineDayName}, ${productionDeadline}.`, "");
   }
   confirmLines.push("באיזו שעה לתכנן את ההעלאה?");
-  await safeSendWhatsAppMessage(sender, confirmLines.join("\n"));
+  await sendTurnReply(sender, confirmLines.join("\n"));
         return res.status(200).json({ status: "gantt_write_confirmed", sender });
       }
 
@@ -3264,7 +3467,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
                 ganttStatus,
               },
             });
-            await safeSendWhatsAppMessage(sender, `ב-${explicitDate} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+            await sendTurnReply(sender, `ב-${explicitDate} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
             return res.status(200).json({ status: "confirm_gantt_write_collision", sender });
           }
           const pd = await addRowToGantt(sid, contentId, contentName, explicitDate, newDay, "", ganttStatus || "בתכנון");
@@ -3274,7 +3477,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
             context: { contentId, contentName, date: explicitDate, monthlyPlanning },
           });
           const shortC = contentName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             [
               `הכנסתי את "${shortC}" לגאנט ליום ${newDay}, ${explicitDate}.`,
@@ -3287,7 +3490,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
         }
       }
       const shortName = contentName.split(/\s+/).slice(0, 6).join(" ");
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         [
           `לא בטוחה אם להכניס את "${shortName}" ב-${date}.`,
@@ -3315,7 +3518,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
       if (isRejectionMessage(incomingText)) {
         clearPendingQuestion(sender);
-        await safeSendWhatsAppMessage(sender, "בסדר, אפשר תמיד להוסיף תאריך אחר כך.");
+        await sendTurnReply(sender, "בסדר, אפשר תמיד להוסיף תאריך אחר כך.");
         return res.status(200).json({ status: "deadline_skipped", sender });
       }
 
@@ -3323,7 +3526,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
       const hasMonthName = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"].some(m => rawDeadline.includes(m));
 
       if (!normalizedDeadline && !hasMonthName) {
-        await safeSendWhatsAppMessage(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
+        await sendTurnReply(sender, "לא קלטתי תאריך תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.");
         return res.status(200).json({ status: "deadline_invalid_date", sender });
       }
 
@@ -3335,9 +3538,9 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
         const rowIndex = await findRowIndexByContentId(spreadsheetId, contentId);
         if (rowIndex) {
           await updateDeadline(spreadsheetId, rowIndex, deadline);
-          await safeSendWhatsAppMessage(sender, `מעולה, עדכנתי את הדדליין ל-${deadline}.`);
+          await sendTurnReply(sender, `מעולה, עדכנתי את הדדליין ל-${deadline}.`);
         } else {
-          await safeSendWhatsAppMessage(sender, "לא מצאתי את המשימה בגיליון, אפשר לעדכן ידנית.");
+          await sendTurnReply(sender, "לא מצאתי את המשימה בגיליון, אפשר לעדכן ידנית.");
         }
       }
       return res.status(200).json({ status: "deadline_set", sender });
@@ -3356,7 +3559,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
       } else {
         if (isRejectionMessage(incomingText)) {
           clearPendingQuestion(sender);
-          await safeSendWhatsAppMessage(sender, "סבבה, לא שמרתי את זה.");
+          await sendTurnReply(sender, "סבבה, לא שמרתי את זה.");
           return res.status(200).json({ status: "duplicate_rejected", sender });
         }
 
@@ -3365,21 +3568,28 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
           const originalInput = pendingQuestion.context?.originalInput as string;
 
           if (!originalInput) {
-            await safeSendWhatsAppMessage(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
+            await sendTurnReply(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
 
           const draft = await createContentDraft(originalInput, sender);
-          const draftSummary = { ...draft, originalUserInput: originalInput };
-          storePendingConfirmation(sender, draftSummary);
+          const requestedAction = pendingQuestion.context?.requestedAction as DraftSummary['requestedAction'];
+          const draftSummary: DraftSummary = { ...draft, originalUserInput: originalInput,requestedAction,
+            ...(pendingQuestion.context?.isTrend ? {category:"טרנד",priority:"גבוה" as const} : {}),
+            approvalScope: requestedAction?.kind === "schedule" && requestedAction.date && parseSchedulingReply(requestedAction.date).kind === "valid" ? "save_schedule":"save" };
+          const parked = activateNewDraft(sender,draftSummary);
+          if (requestedAction?.kind === "schedule" && draftSummary.approvalScope !== "save_schedule") {
+            const parsed = parseSchedulingReply(requestedAction.rawDate || requestedAction.date || "");
+            storePendingQuestion(sender,{questionType:"draft_schedule_date",context:{candidate:'date' in parsed?parsed.date:undefined,time:requestedAction.time}});
+          }
 
           const replyText = buildDraftPreviewMessage(draft);
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
 
           return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
         }
 
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             "לא בטוחה אם לשמור את הרעיון הזה למרות שהוא דומה לרעיון קיים.",
@@ -3394,7 +3604,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
     if (pendingQuestion && isRejectionMessage(incomingText)) {
       clearPendingQuestion(sender);
-      await safeSendWhatsAppMessage(sender, "אין בעיה, עזבתי את הרעיון.");
+      await sendTurnReply(sender, "אין בעיה, עזבתי את הרעיון.");
       return res.status(200).json({ status: "pending_question_rejected", sender });
     }
     if (pendingQuestion && isConfirmationMessage(incomingText)) {
@@ -3403,14 +3613,14 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
           clearPendingQuestion(sender);
           const originalInput = pendingQuestion.context?.originalInput as string;
           if (!originalInput) {
-            await safeSendWhatsAppMessage(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
+            await sendTurnReply(sender, "איבדתי רגע את ההקשר של הרעיון. תשלחי אותו שוב ונמשיך.");
             return res.status(200).json({ status: "duplicate_context_missing", sender });
           }
           const draft = await createContentDraft(originalInput, sender);
           const draftSummary = { ...draft, originalUserInput: originalInput };
           storePendingConfirmation(sender, draftSummary);
           const replyText = buildDraftPreviewMessage(draft);
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
           return res.status(200).json({ status: "duplicate_confirmed_draft_created", sender });
         }
       }
@@ -3424,7 +3634,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
 
       if (!trendText) {
         const replyText = "לא בטוחה איזה טרנד רצית לשמור.\nאפשר לכתוב למשל:\nטרנד: שם הסרטון";
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
         return res.status(200).json({ status: "trend_missing_text", sender });
       }
 
@@ -3446,17 +3656,15 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
         intro: "מעולה, קלטתי את הטרנד.",
         previewLine: "ככה הייתי שומרת אותו כרגע:",
       });
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "trend_started", sender, draft: trendDraft });
     }
     if (isNewIdeaCommand(incomingText)) {
       const newIdeaText = getNewIdeaText(incomingText);
       const requestedContentType = getNewIdeaContentType(incomingText);
-      clearPendingConfirmation(sender);
-
       if (!newIdeaText) {
         const replyText = "כדי לפתוח רעיון חדש, תשלחי לי למשל:\nרעיון חדש: ...\nאו:\nרעיון חדש לריל: ...\nרעיון חדש לפוסט: ...\nואני אמשיך משם.";
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
         return res.status(200).json({ status: "new_idea_command_missing_text", sender });
       }
 
@@ -3472,7 +3680,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
   intro: "יאללה, בניתי טיוטה לרעיון חדש.",
   includeContentType: true,
 });
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "new_idea_started", sender, draft: draftSummary });
     }
 
@@ -3482,7 +3690,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
       clearPendingConfirmation(sender);
 
       const replyText = "אין בעיה, עזבנו את הרעיון הקודם ונמשיך הלאה.";
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "draft_reset", sender, hadPendingDraft: !!pendingDraft });
     }
 
@@ -3490,8 +3698,8 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
     if (isConfirmationMessage(incomingText)) {
       const pendingDraft = getPendingConfirmation(sender);
       if (pendingDraft) {
-        clearPendingConfirmation(sender);
-
+        if (pendingDraft.requestedAction?.kind === "schedule") suppliedTime = pendingDraft.requestedAction.time;
+        // Clear only after the primary write succeeds.
         // Write to Google Sheets
         try {
           const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
@@ -3529,6 +3737,16 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
               (pendingDraft as any).statusTypes || ["filmed", "edited"]
             );
 
+            clearPendingConfirmation(sender);
+            if (pendingDraft.requestedAction?.kind === "keep") {
+              clearPendingQuestion(sender); await sendTurnReply(sender,"שמרתי בלי תאריך.");
+              return res.status(200).json({status:"fast_track_kept",sender,contentId});
+            }
+            if (pendingDraft.approvalScope === "save_schedule" && pendingDraft.requestedAction?.kind === "schedule" && pendingDraft.requestedAction.date) {
+              const result = await scheduleSavedContent(sender,pendingDraft.shortName,pendingDraft.requestedAction.date,pendingDraft.requestedAction.time,contentId);
+              return res.status(200).json({status:result,sender,contentId});
+            }
+
             // חפש חור פנוי בגאנט
             const firstOfMonth = `01/${String(month).padStart(2, "0")}/${year}`;
             const available = await findAvailableDatesInMonth(spreadsheetId, firstOfMonth);
@@ -3541,7 +3759,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
             });
 
             const replyText = `שמרתי את "${pendingDraft.shortName}".`;
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
 
             // Month full: no free future date this month. Look into next month
             // and glide there instead of a dead end, same pattern as the
@@ -3578,7 +3796,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
                 },
               });
               const choiceLine = "מתאים לך התאריך הזה? אפשר לענות כן, לכתוב תאריך אחר, או לא כדי להשאיר אותו בינתיים בלי תאריך.";
-              await safeSendWhatsAppMessage(
+              await sendTurnReply(
                 sender,
                 [
                   `${ftNextMonthNote}מצאתי תאריך פנוי קרוב בגאנט:`,
@@ -3588,7 +3806,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
                 ].join("\n")
               );
             } else {
-              await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר להכניס ידנית עם תאריך.");
+              await sendTurnReply(sender, "לא מצאתי תאריך פנוי קרוב, גם לא בחודש הבא. אפשר להכניס ידנית עם תאריך.");
             }
 
             return res.status(200).json({ status: "fast_track_saved", sender, contentId });
@@ -3605,11 +3823,23 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
               pendingDraft.priority,
               pendingDraft.contentType || "ריל"
             );
+            recordWriteOutcome("idea","succeeded");
             console.log(`[Sprint 6 Workflow] ✅ PRIMARY SHEET (בנק רעיונות) write succeeded`);
           } catch (contentError) {
             const errorMessage = contentError instanceof Error ? contentError.message : "Unknown error";
             console.error(`[Sprint 6 Workflow] ❌ PRIMARY SHEET (בנק רעיונות) write FAILED: ${errorMessage}`);
             throw new Error(`Failed to save content idea: ${errorMessage}`);
+          }
+
+          clearPendingConfirmation(sender);
+          if (pendingDraft.requestedAction?.kind === "keep") {
+            clearPendingQuestion(sender);
+            await sendTurnReply(sender,"שמרתי בלי תאריך.");
+            return res.status(200).json({status:"confirmed_kept",sender,contentId});
+          }
+          if (pendingDraft.approvalScope === "save_schedule" && pendingDraft.requestedAction?.kind === "schedule" && pendingDraft.requestedAction.date) {
+            const result = await scheduleSavedContent(sender,pendingDraft.shortName,pendingDraft.requestedAction.date,pendingDraft.requestedAction.time);
+            return res.status(200).json({status:result,sender,contentId});
           }
 
           // STEP 2: Production task created manually when content is approved for production
@@ -3863,7 +4093,7 @@ const shortConfirmName = contentName.split(/\s+/).slice(0, 6).join(" ");
                     ]),
               ].join("\n");
 
-await safeSendWhatsAppMessage(sender, replyText);
+await sendTurnReply(sender, replyText);
           console.log(`[Sprint 6 Workflow] ✅ WhatsApp confirmation sent`);
 
           console.log(`[Sprint 6 Workflow] ✅ COMPLETE: Content ${contentId} confirmed and saved\n`);
@@ -3881,7 +4111,7 @@ await safeSendWhatsAppMessage(sender, replyText);
           console.error(`[Sprint 6 Workflow] ❌ CRITICAL ERROR: ${errorMessage}\n`);
 
           const replyText = "קיבלתי את האישור, אבל השמירה לא הצליחה. תנסי שוב עוד רגע.";
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
 
           return res.status(500).json({
             status: "confirmed_but_save_failed",
@@ -3891,7 +4121,7 @@ await safeSendWhatsAppMessage(sender, replyText);
         }
       } else {
         const replyText = "כרגע אין רעיון שממתין לאישור.\nאם יש לך רעיון חדש, תשלחי לי ונמשיך משם.";
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
         return res.status(200).json({ status: "no_pending", sender });
       }
     }
@@ -3980,7 +4210,7 @@ if (
         changeLine: previewCopy.changeLine,
       });
 
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "draft_updated", sender, draft: updatedDraft });
     }
 
@@ -4006,13 +4236,13 @@ if (
         changeLine: aiPreviewCopy.changeLine,
       });
 
-      await safeSendWhatsAppMessage(sender, aiReplyText);
+      await sendTurnReply(sender, aiReplyText);
       return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
     }
 
 storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
     const clarificationPrompt = generateClarificationPrompt(true);
-    await safeSendWhatsAppMessage(sender, clarificationPrompt);
+    await sendTurnReply(sender, clarificationPrompt);
     return res.status(200).json({ status: "edit_not_understood", sender });
   }
   // NEW_IDEA_BEATS_EDIT (24.7.2026): isEditRequest matches on very general
@@ -4025,7 +4255,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
     console.log(`[Route Debug] no draft open and the message reads as a new idea, routing onward`);
   } else {
     const clarificationPrompt = generateClarificationPrompt(false);
-    await safeSendWhatsAppMessage(sender, clarificationPrompt);
+    await sendTurnReply(sender, clarificationPrompt);
     return res.status(200).json({ status: "no_pending_for_edit", sender });
   }
   }
@@ -4048,7 +4278,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
       const state = await buildCurrentWeekPlanningSourceRoutingState(spreadsheetId);
 
       if (!state) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           "לא מצאתי כרגע חוסר דחוף בגאנט של שבוע הבא."
         );
@@ -4064,7 +4294,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
         context: state,
       });
 
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         buildPlanningSourceRoutingMessage(state)
       );
@@ -4116,7 +4346,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
           // actually answers her, and offers the step that fits the state.
           const target = extractStatusQueryTarget(incomingText);
           if (!target) {
-            await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין על איזה תוכן שאלת. אפשר לכתוב את השם שלו.");
+            await sendTurnReply(sender, "לא הצלחתי להבין על איזה תוכן שאלת. אפשר לכתוב את השם שלו.");
             return res.status(200).json({ status: "visibility_query_no_target", sender });
           }
 
@@ -4127,7 +4357,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
               questionType: "content_lookup_followup",
               context: { mode: "not_found" },
             });
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               [`לא מצאתי תוכן בשם "${target}".`, "", "רוצה שאציג לך את התכנים ששמורים כרגע?"].join("\n")
             );
@@ -4136,7 +4366,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
 
           if (found.state === "ambiguous") {
             const names = (found.candidates || []).slice(0, 6).map((cd: any) => `"${cd.name}"`);
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", options: names })
             );
@@ -4155,7 +4385,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
               questionType: "content_lookup_followup",
               context: { mode: "waiting", contentId: found.contentId, contentName: found.name },
             });
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               [headline, "", "הוא עדיין מחכה ולא עבר להפקה. רוצה להעביר אותו להפקה?"].join("\n")
             );
@@ -4183,7 +4413,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
                 ? `הוא מתוכנן לעלות ${when} בשעה ${found.uploadTime}.`
                 : `הוא מתוכנן לעלות ${when}.`
             );
-            await safeSendWhatsAppMessage(sender, lookupLines.join("\n"));
+            await sendTurnReply(sender, lookupLines.join("\n"));
             return res.status(200).json({ status: "content_lookup_scheduled", sender });
           }
 
@@ -4202,7 +4432,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
           const noDateLines = [headline, ""];
           if (found.deadline) noDateLines.push(`הדדליין להפקה הוא ${found.deadline}.`, "");
           noDateLines.push(noDateLine);
-          await safeSendWhatsAppMessage(sender, noDateLines.join("\n"));
+          await sendTurnReply(sender, noDateLines.join("\n"));
           return res.status(200).json({ status: "content_lookup_in_production", sender });
         }
 
@@ -4211,14 +4441,14 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
           case "ideas_list": {
             const ideas = await getOpenContentIdeas(spreadsheetId);
             const replyText = formatOpenIdeasResponse(ideas);
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_ideas_list", sender, intent: visibilityIntent, count: ideas.length });
           }
           case "edited_not_uploaded": {
             const readyItems = await getGanttReadyToUpload(spreadsheetId);
 
             if (readyItems.length === 0) {
-              await safeSendWhatsAppMessage(sender, "אין כרגע תכנים שערוכים ומחכים לעלות.");
+              await sendTurnReply(sender, "אין כרגע תכנים שערוכים ומחכים לעלות.");
               return res.status(200).json({ status: "visibility_ready_to_upload_empty", sender, intent: visibilityIntent });
             }
 
@@ -4231,7 +4461,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             const suffix = readyItems.length > 5 ? `\n...ו${readyItems.length - 5} עוד` : "";
             const replyText = `כבר ערוך ומחכה לעלות:\n${lines.join("\n")}${suffix}`;
 
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_ready_to_upload", sender, intent: visibilityIntent });
           }
           case "missing_edit":
@@ -4243,7 +4473,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
           case "not_uploaded": {
             const ganttItems = await getGanttNotPublished(spreadsheetId);
             const replyText = formatGanttResponse(ganttItems, "עדיין לא פורסמו");
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           case "stuck_workflow":
@@ -4257,27 +4487,27 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             const categoryNames = allCategories.map((c) => c.categoryName).sort((a, b) => b.length - a.length);
             const extracted = extractCategoryAndStage(incomingText, categoryNames);
             if (!extracted) {
-              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזו קטגוריה ושלב ביקשת. נסי לכתוב למשל: מה לא צולם בקפריסין");
+              await sendTurnReply(sender, "לא הצלחתי להבין איזו קטגוריה ושלב ביקשת. נסי לכתוב למשל: מה לא צולם בקפריסין");
               return res.status(200).json({ status: "visibility_query", sender });
             }
             const categoryTasks = await getTasksByCategory(spreadsheetId, extracted.category, extracted.stage);
             const replyText = formatCategoryStageResponse(categoryTasks, extracted.category, extracted.stage);
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_category_stage", sender });
           }
             case "content_summary": {
             const keyword = extractSearchKeyword(incomingText);
             if (!keyword) {
-              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין על איזה סרטון את מדברת. תנסי שוב עם השם המדויק.");
+              await sendTurnReply(sender, "לא הצלחתי להבין על איזה סרטון את מדברת. תנסי שוב עם השם המדויק.");
               return res.status(200).json({ status: "visibility_query", sender });
             }
             const summary = await getContentIdeaSummary(spreadsheetId, keyword);
             if (!summary) {
-              await safeSendWhatsAppMessage(sender, "לא מצאתי תוכן שמתאים למה שכתבת. תנסי עם שם קצת יותר מדויק.");
+              await sendTurnReply(sender, "לא מצאתי תוכן שמתאים למה שכתבת. תנסי עם שם קצת יותר מדויק.");
               return res.status(200).json({ status: "visibility_query", sender });
             }
             const replyText = `מצאתי את הסרטון\n"${summary.shortName}"\nהרעיון שלו:\n${summary.idea}`;
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_content_summary", sender });
           }
           case "monthly_planning": {
@@ -4288,7 +4518,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             };
             const monthMatch = incomingText.match(/(ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)/);
             if (!monthMatch) {
-              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין איזה חודש. נסי לכתוב: בואי נתכנן את יולי");
+              await sendTurnReply(sender, "לא הצלחתי להבין איזה חודש. נסי לכתוב: בואי נתכנן את יולי");
               return res.status(200).json({ status: "monthly_planning_parse_error", sender });
             }
             const monthName = monthMatch[1];
@@ -4302,7 +4532,7 @@ storePendingQuestion(sender, { questionType: "edit_or_new_clarification", contex
             ]);
 
             if (unscheduled.length === 0) {
-              await safeSendWhatsAppMessage(sender, `כל התכנים שאושרו כבר משובצים ב${monthName}. אם תרצי להוסיף עוד, תוסיפי קודם לתכנים שאושרו.`);
+              await sendTurnReply(sender, `כל התכנים שאושרו כבר משובצים ב${monthName}. אם תרצי להוסיף עוד, תוסיפי קודם לתכנים שאושרו.`);
               return res.status(200).json({ status: "monthly_planning_nothing_to_schedule", sender });
             }
 
@@ -4346,7 +4576,7 @@ const replyText = [
  "אם מתאים להתחיל ממנו, תכתבי כן.",
 "אפשר גם לכתוב שם של תוכן אחר מהרשימה.",
 ].join("\n");
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "monthly_planning_started", sender });
           }
           case "gantt_holes": {
@@ -4376,7 +4606,7 @@ const replyText = [
     });
 
   const replyText = formatGanttHolesResponse(futureAvailable);
-  await safeSendWhatsAppMessage(sender, replyText);
+  await sendTurnReply(sender, replyText);
   return res.status(200).json({ status: "visibility_gantt_holes", sender });
 }
           case "gantt_write": {
@@ -4385,14 +4615,14 @@ const replyText = [
               const suppliedDate = incomingText.match(/\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?/)?.[0];
 
               if (suppliedDate && !normalizeUserDateInput(suppliedDate)) {
-                await safeSendWhatsAppMessage(
+                await sendTurnReply(
                   sender,
                   `התאריך ${suppliedDate} לא תקין. אפשר לכתוב למשל 17.6, 17-6 או 17/6.`
                 );
                 return res.status(200).json({ status: "gantt_write_invalid_date", sender });
               }
 
-              await safeSendWhatsAppMessage(sender, "לא הצלחתי להבין. נסי לכתוב למשל: תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06");
+              await sendTurnReply(sender, "לא הצלחתי להבין. נסי לכתוב למשל: תוסיפי את זוגיות בתקופת חתונה לגאנט ב-15/06");
               return res.status(200).json({ status: "gantt_write_parse_error", sender });
             }
 
@@ -4408,7 +4638,7 @@ const replyText = [
             const dayName = getHebrewDayNameFromDate(dateObj);
 
             if (!match) {
-              await safeSendWhatsAppMessage(sender, `לא מצאתי תוכן בשם "${params.contentName}" בתכנים שאושרו. תבדקי את השם ותנסי שוב.`);
+              await sendTurnReply(sender, `לא מצאתי תוכן בשם "${params.contentName}" בתכנים שאושרו. תבדקי את השם ותנסי שוב.`);
               return res.status(200).json({ status: "gantt_write_not_found", sender });
             }
 
@@ -4442,7 +4672,7 @@ const replyText = [
                     existingName: collision.existingName,
                   },
                 });
-                await safeSendWhatsAppMessage(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
+                await sendTurnReply(sender, `ב-${params.date} כבר מתוכנן "${shortExisting}".\nרוצה שאכניס את "${shortNew}" במקומו ואעביר את "${shortExisting}" לתאריך אחר?`);
                 return res.status(200).json({ status: "gantt_collision_detected", sender });
               }
 
@@ -4453,7 +4683,7 @@ const replyText = [
                 context: { contentName: match.name, date: params.date },
               });
               const shortName = match.name.split(/\s+/).slice(0, 6).join(" ");
-              await safeSendWhatsAppMessage(sender, `מעולה, הוספתי את "${shortName}" לגאנט ב-${params.date} (יום ${dayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
+              await sendTurnReply(sender, `מעולה, הוספתי את "${shortName}" לגאנט ב-${params.date} (יום ${dayName}).\nבאיזו שעה לתכנן את ההעלאה?`);
               return res.status(200).json({ status: "gantt_write_success", sender });
             }
 
@@ -4462,7 +4692,7 @@ const replyText = [
               questionType: "confirm_gantt_write",
               context: { contentId: match.contentId, contentName: match.name, date: params.date, dayName },
             });
-            await safeSendWhatsAppMessage(sender, `לא מצאתי "${params.contentName}", האם התכוונת ל-"${match.name}"?`);
+            await sendTurnReply(sender, `לא מצאתי "${params.contentName}", האם התכוונת ל-"${match.name}"?`);
             return res.status(200).json({ status: "gantt_write_confirm_needed", sender });
           }
           case "gantt_query": {
@@ -4477,7 +4707,7 @@ const replyText = [
   const activeGanttItems = ganttItems.filter((item) => item.status !== "פורסם");
 
   const replyText = formatGanttResponse(activeGanttItems, "7 הימים הקרובים");
-  await safeSendWhatsAppMessage(sender, replyText);
+  await sendTurnReply(sender, replyText);
   return res.status(200).json({ status: "visibility_gantt", sender });
 }
           case "category_search": {
@@ -4513,19 +4743,19 @@ const replyText = [
                 planningSignals
               );
 
-              await safeSendWhatsAppMessage(sender, replyText);
+              await sendTurnReply(sender, replyText);
 
               return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
             }
           case "priority_filter": {
             const priority = extractPriorityFromQuery(incomingText);
             if (!priority) {
-              await safeSendWhatsAppMessage(sender, "איזו עדיפות תרצי לתת לזה?\nגבוה, בינוני או נמוך?");
+              await sendTurnReply(sender, "איזו עדיפות תרצי לתת לזה?\nגבוה, בינוני או נמוך?");
               return res.status(200).json({ status: "visibility_query", sender });
             }
             const allTasks = await getAllProductionTasksWithPriority(spreadsheetId);
             const replyText = formatPriorityFilterResponse(allTasks, priority);
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             return res.status(200).json({ status: "visibility_query", sender, intent: visibilityIntent });
           }
           case "production_overview": {
@@ -4535,7 +4765,7 @@ const replyText = [
             ]);
             const overviewItems = buildProductionOverviewItems(prodTasks, approvedRows);
             const poReply = formatProductionOverview(overviewItems);
-            await safeSendWhatsAppMessage(sender, poReply);
+            await sendTurnReply(sender, poReply);
             // If any items have no deadline, the reply ends with "רוצה שנכניס
             // אותם לגאנט?". Arm a pending question so a "כן" can start scheduling
             // them. Deadline-empty in the production tab means not-in-gantt
@@ -4556,7 +4786,7 @@ const replyText = [
         }
 
         const replyText = formatVisibilityResponse(tasks, visibilityIntent);
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
 
         console.log(`[Sprint 10] ✅ Visibility query response sent`);
 
@@ -4572,7 +4802,7 @@ const replyText = [
         console.error(`[Sprint 10] Error processing visibility query: ${errorMessage}`);
 
         const replyText = "קרתה שגיאה בעיבוד השאילתה. אנא נסי שוב בעוד רגע.";
-        await safeSendWhatsAppMessage(sender, replyText);
+        await sendTurnReply(sender, replyText);
 
         return res.status(500).json({
           status: "visibility_query_error",
@@ -4621,7 +4851,7 @@ const replyText = [
               rawMessage: incomingText,
             },
           });
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", foundContext: "שאיחרו", options: overdueOptions })
           );
@@ -4638,7 +4868,7 @@ const replyText = [
             clearPendingQuestion(sender);
             await markOverdueItemPublished(spreadsheetId, contentId);
 
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               `סימנתי ש-"${contentName}" עלה. הוא לא יופיע יותר בתזכורות האיחור.`
             );
@@ -4665,7 +4895,7 @@ const replyText = [
               throw new Error(`Failed to mark gantt row as cancelled for contentId: ${contentId}`);
             }
 
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               `סימנתי את "${contentName}" כבוטל. הוא לא יופיע יותר בתזכורות.`
             );
@@ -4677,7 +4907,7 @@ const replyText = [
           }
 
           if (overdueDecisionIntent.type === "undecided") {
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               [
                 "אין בעיה. כדי לסגור את זה, אפשר לבחור אחת משלוש אפשרויות:",
@@ -4700,7 +4930,7 @@ const replyText = [
                 context: { contentId, contentName },
               });
 
-              await safeSendWhatsAppMessage(
+              await sendTurnReply(
                 sender,
                 `לאיזה תאריך להעביר את "${contentName}"?`
               );
@@ -4721,7 +4951,7 @@ const replyText = [
                 context: { contentId, contentName },
               });
 
-              await safeSendWhatsAppMessage(
+              await sendTurnReply(
                 sender,
                 "לא קלטתי תאריך. אפשר לכתוב למשל 18/6."
               );
@@ -4743,7 +4973,7 @@ const replyText = [
                 context: { contentId, contentName },
               });
 
-              await safeSendWhatsAppMessage(
+              await sendTurnReply(
                 sender,
                 `${normalizedDate} כבר תפוס על ידי "${collision.existingName}". לאיזה תאריך אחר להעביר?`
               );
@@ -4763,7 +4993,7 @@ const replyText = [
             );
             await sortGanttByDate(spreadsheetId);
 
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               `סגור, העברתי את "${contentName}" ל-${normalizedDate}.`
             );
@@ -4780,12 +5010,12 @@ const replyText = [
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       const archiveList = await getArchiveList(spreadsheetId);
       if (archiveList.length === 0) {
-        await safeSendWhatsAppMessage(sender, "אין כרגע רעיונות בארכיון.");
+        await sendTurnReply(sender, "אין כרגע רעיונות בארכיון.");
         return res.status(200).json({ status: "archive_empty", sender });
       }
       const listText = archiveList.slice(0, 10).map((item) => `- ${item.idea.split(/\s+/).slice(0, 6).join(" ")}`).join("\n");
       const suffix = archiveList.length > 10 ? `\n...ו${archiveList.length - 10} עוד` : "";
-      await safeSendWhatsAppMessage(sender, `הרעיונות שבצד:\n${listText}${suffix}`);
+      await sendTurnReply(sender, `הרעיונות שבצד:\n${listText}${suffix}`);
       return res.status(200).json({ status: "archive_listed", sender });
     }
 
@@ -4793,7 +5023,7 @@ const replyText = [
     if (isRestoreCommand(incomingText)) {
       const target = extractRestoreTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             "לא בטוחה איזה רעיון להחזיר מהרשימה.",
@@ -4807,16 +5037,16 @@ const replyText = [
       const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
       const result = await restoreFromArchive(spreadsheetId, target);
       if (!result) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון בארכיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
+        await sendTurnReply(sender, "לא מצאתי את הרעיון בארכיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "restore_not_found", sender });
       }
-      await safeSendWhatsAppMessage(sender, `מעולה, החזרתי את הרעיון "${result.restoredName}" לבנק הרעיונות.`);
+      await sendTurnReply(sender, `מעולה, החזרתי את הרעיון "${result.restoredName}" לבנק הרעיונות.`);
       return res.status(200).json({ status: "restored", sender });
     }
     if (isApproveForProductionCommand(incomingText)) {
       const target = extractApproveTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             "לא בטוחה איזה רעיון להוסיף להפקה.",
@@ -4849,7 +5079,7 @@ const replyText = [
               context: { attemptedName: target },
             });
             const lines = partialMatches.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
-            await safeSendWhatsAppMessage(
+            await sendTurnReply(
               sender,
               buildAmbiguityQuestion({ kind: "found", itemType: "רעיונות", searchedName: target, options: [lines] })
             );
@@ -4871,7 +5101,7 @@ const replyText = [
         // with a name and we approve that one. No duplicate is ever created.
         const openIdeas = await getOpenContentIdeas(spreadsheetId);
         if (openIdeas.length === 0) {
-          await safeSendWhatsAppMessage(sender, `לא מצאתי את "${target}" ברעיונות השמורים, ואין כרגע רעיונות פתוחים להעביר.`);
+          await sendTurnReply(sender, `לא מצאתי את "${target}" ברעיונות השמורים, ואין כרגע רעיונות פתוחים להעביר.`);
           return res.status(200).json({ status: "approve_not_found_empty", sender });
         }
         storePendingQuestion(sender, {
@@ -4879,14 +5109,14 @@ const replyText = [
           context: { attemptedName: target },
         });
         const ideaLines = openIdeas.slice(0, 10).map((i: any) => `*${i.idea}*`).join("\n\n");
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           buildAmbiguityQuestion({ kind: "notFound", itemType: "רעיונות", searchedName: target, location: "בין הרעיונות השמורים", options: [ideaLines] })
         );
         return res.status(200).json({ status: "approve_pick_idea_offered", sender });
       }
 
-      await safeSendWhatsAppMessage(sender, `מעולה, העברתי את "${result.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
+      await sendTurnReply(sender, `מעולה, העברתי את "${result.name}" לתכנים שאושרו ופתחתי משימת הפקה.`);
 
       const now = new Date();
       const month = now.getMonth() + 1;
@@ -4920,7 +5150,7 @@ const replyText = [
           },
         });
 
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
   sender,
   [
     "מצאתי לו חור פנוי קרוב בגאנט:",
@@ -4934,7 +5164,7 @@ const replyText = [
   ].join("\n")
 );
       } else {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
+        await sendTurnReply(sender, "לא מצאתי תאריך פנוי החודש בגאנט. אפשר להכניס ידנית.");
       }
 
       return res.status(200).json({ status: "approved_for_production", sender });
@@ -4969,7 +5199,7 @@ const replyText = [
       const unmatched = matchResults.filter((r) => !r.matched);
 
       if (matched.length === 0) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           [
             "לא הצלחתי לזהות אף אחד מהרעיונות ברשימה.",
@@ -5013,7 +5243,7 @@ const replyText = [
           : `להעביר את כל ה-${matched.length} לארכיון? (כן / לא)`
       );
 
-      await safeSendWhatsAppMessage(sender, lines.join("\n"));
+      await sendTurnReply(sender, lines.join("\n"));
       return res.status(200).json({
         status: "bulk_archive_confirm",
         sender,
@@ -5025,7 +5255,7 @@ const replyText = [
 if (isArchiveCommand(incomingText)) {
       const target = extractArchiveTarget(incomingText);
       if (!target) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
         sender,
         [
           "לא בטוחה איזה רעיון לשמור בצד.",
@@ -5041,18 +5271,18 @@ if (isArchiveCommand(incomingText)) {
       const result = await archiveContentIdea(spreadsheetId, target);
 
       if (!result) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הרעיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
+        await sendTurnReply(sender, "לא מצאתי את הרעיון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "archive_not_found", sender });
       }
 
       const replyText = `אין בעיה.\nשמרתי את הרעיון "${result.archivedName}" בצד למקרה שתרצי לחזור אליו.`;
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "archived", sender });
     }
       if (isDeadlineUpdate(incomingText)) {
       const deadlineUpdate = extractDeadlineUpdate(incomingText);
       if (!deadlineUpdate) {
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
         sender,
         [
           "לא בטוחה איזה דדליין לעדכן.",
@@ -5070,7 +5300,7 @@ if (isArchiveCommand(incomingText)) {
         storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
       }
       const clarificationPrompt = generateClarificationPrompt(hasDraftForClarification);
-      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      await sendTurnReply(sender, clarificationPrompt);
       return res.status(200).json({ status: "question_clarification", sender });
     }
 
@@ -5079,12 +5309,12 @@ if (isArchiveCommand(incomingText)) {
       const matchResult = await findProductionTaskByName(spreadsheetId, deadlineUpdate.contentName);
 
       if (!matchResult) {
-        await safeSendWhatsAppMessage(sender, "לא מצאתי את הסרטון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
+        await sendTurnReply(sender, "לא מצאתי את הסרטון. אפשר לשלוח שם קצת יותר מדויק וננסה שוב.");
         return res.status(200).json({ status: "deadline_update_no_match", sender });
       }
 
       if ("ambiguous" in matchResult && matchResult.ambiguous) {
-        await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
+        await sendTurnReply(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
         return res.status(200).json({ status: "deadline_update_ambiguous", sender });
       }
 
@@ -5092,7 +5322,7 @@ if (isArchiveCommand(incomingText)) {
       await updateDeadline(spreadsheetId, exactMatch.rowIndex, deadlineUpdate.deadline);
 
       const replyText = `עדכנתי. הדדליין של "${exactMatch.row[1]}" הוא עכשיו ${deadlineUpdate.deadline}.`;
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "deadline_updated", sender });
     }
 
@@ -5112,16 +5342,16 @@ if (isArchiveCommand(incomingText)) {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
         const normalizedTarget = normalizeUserDateInput(parsed.targetDate);
         if (!normalizedTarget) {
-          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך "${parsed.targetDate}". אפשר לכתוב אותו כמו 20/08/2026.`);
+          await sendTurnReply(sender, `לא הצלחתי לקרוא את התאריך "${parsed.targetDate}". אפשר לכתוב אותו כמו 20/08/2026.`);
           return res.status(200).json({ status: "schedule_by_date_bad_date", sender });
         }
         const matchResult = await findProductionTaskByName(spreadsheetId, parsed.contentName);
         if (!matchResult) {
-          await safeSendWhatsAppMessage(sender, `לא מצאתי תוכן בשם "${parsed.contentName}". אפשר לבדוק מה יש עם: מה בהפקה`);
+          await sendTurnReply(sender, `לא מצאתי תוכן בשם "${parsed.contentName}". אפשר לבדוק מה יש עם: מה בהפקה`);
           return res.status(200).json({ status: "schedule_by_date_not_found", sender });
         }
         if ("ambiguous" in matchResult && matchResult.ambiguous) {
-          await safeSendWhatsAppMessage(sender, "מצאתי כמה תכנים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאדע במה מדובר.");
+          await sendTurnReply(sender, "מצאתי כמה תכנים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאדע במה מדובר.");
           return res.status(200).json({ status: "schedule_by_date_ambiguous", sender });
         }
         const exactMatch = matchResult as ProductionTaskMatch;
@@ -5131,25 +5361,25 @@ if (isArchiveCommand(incomingText)) {
         const ganttEntry = await findGanttEntryByContentId(spreadsheetId, targetContentId);
         // Case A: already on the gantt at exactly this date → nothing to do.
         if (ganttEntry && normalizeUserDateInput(ganttEntry.date) === normalizedTarget) {
-          await safeSendWhatsAppMessage(sender, `"${targetContentName}" כבר משובץ ל-${normalizedTarget}.`);
+          await sendTurnReply(sender, `"${targetContentName}" כבר משובץ ל-${normalizedTarget}.`);
           return res.status(200).json({ status: "schedule_by_date_already_there", sender });
         }
         // Collision check shared by both move and fresh-schedule: never displace.
         const collision = await isGanttDateTaken(spreadsheetId, normalizedTarget);
         if (collision.taken && collision.existingContentId !== targetContentId) {
           const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(sender, `ה-${normalizedTarget} כבר תפוס על ידי "${shortExisting}", אז לא שיבצתי שם. אפשר לתת לי תאריך אחר.`);
+          await sendTurnReply(sender, `ה-${normalizedTarget} כבר תפוס על ידי "${shortExisting}", אז לא שיבצתי שם. אפשר לתת לי תאריך אחר.`);
           return res.status(200).json({ status: "schedule_by_date_collision", sender });
         }
         if (ganttEntry) {
           // Case B: on the gantt at a different date → move it.
           await updateGanttRowDate(spreadsheetId, targetContentId, normalizedTarget, targetDayName);
-          await safeSendWhatsAppMessage(sender, `העברתי את "${targetContentName}" ל-${normalizedTarget}.`);
+          await sendTurnReply(sender, `העברתי את "${targetContentName}" ל-${normalizedTarget}.`);
           return res.status(200).json({ status: "schedule_by_date_moved", sender });
         }
         // Case C: not on the gantt → schedule it fresh.
         await addRowToGantt(spreadsheetId, targetContentId, targetContentName, normalizedTarget, targetDayName);
-        await safeSendWhatsAppMessage(sender, `שיבצתי את "${targetContentName}" ל-${normalizedTarget}.`);
+        await sendTurnReply(sender, `שיבצתי את "${targetContentName}" ל-${normalizedTarget}.`);
         return res.status(200).json({ status: "schedule_by_date_scheduled", sender });
       }
     }
@@ -5159,17 +5389,17 @@ if (isArchiveCommand(incomingText)) {
         const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
         const normalizedTarget = normalizeUserDateInput(change.targetDate);
         if (!normalizedTarget) {
-          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך "${change.targetDate}". אפשר לכתוב אותו כמו 29/07/2026.`);
+          await sendTurnReply(sender, `לא הצלחתי לקרוא את התאריך "${change.targetDate}". אפשר לכתוב אותו כמו 29/07/2026.`);
           return res.status(200).json({ status: "gantt_date_change_bad_date", sender });
         }
 
         const matchResult = await findProductionTaskByName(spreadsheetId, change.contentName);
         if (!matchResult) {
-          await safeSendWhatsAppMessage(sender, `לא מצאתי בגאנט תוכן בשם "${change.contentName}". אפשר לבדוק מה יש עם: מה בגאנט`);
+          await sendTurnReply(sender, `לא מצאתי בגאנט תוכן בשם "${change.contentName}". אפשר לבדוק מה יש עם: מה בגאנט`);
           return res.status(200).json({ status: "gantt_date_change_not_found", sender });
         }
         if ("ambiguous" in matchResult && matchResult.ambiguous) {
-          await safeSendWhatsAppMessage(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
+          await sendTurnReply(sender, "מצאתי כמה סרטונים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאבחר את הנכון.");
           return res.status(200).json({ status: "gantt_date_change_ambiguous", sender });
         }
         const exactMatch = matchResult as ProductionTaskMatch;
@@ -5177,7 +5407,7 @@ if (isArchiveCommand(incomingText)) {
 
         const ganttEntry = await findGanttEntryByContentId(spreadsheetId, targetContentId);
         if (!ganttEntry) {
-          await safeSendWhatsAppMessage(sender, `"${change.contentName}" עדיין לא משובץ בגאנט, אז אין תאריך להזיז. אפשר להכניס אותו קודם.`);
+          await sendTurnReply(sender, `"${change.contentName}" עדיין לא משובץ בגאנט, אז אין תאריך להזיז. אפשר להכניס אותו קודם.`);
           return res.status(200).json({ status: "gantt_date_change_not_scheduled", sender });
         }
 
@@ -5189,7 +5419,7 @@ if (isArchiveCommand(incomingText)) {
             context: { contentId: targetContentId, contentName: ganttEntry.name, targetDate: normalizedTarget },
           });
           const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
-          await safeSendWhatsAppMessage(
+          await sendTurnReply(
             sender,
             `ה-${normalizedTarget} כבר תפוס על ידי "${shortExisting}".\nרוצה שאמצא תאריך פנוי אחר קרוב? אפשר לענות כן, או לתת לי תאריך אחר.`
           );
@@ -5199,7 +5429,7 @@ if (isArchiveCommand(incomingText)) {
         const targetDayName = getHebrewDayName(normalizedTarget);
         await updateGanttRowDate(spreadsheetId, targetContentId, normalizedTarget, targetDayName);
         await sortGanttByDate(spreadsheetId);
-        await safeSendWhatsAppMessage(
+        await sendTurnReply(
           sender,
           `הזזתי את "${ganttEntry.name}" ל-${normalizedTarget} (יום ${targetDayName}).`
         );
@@ -5337,7 +5567,7 @@ if (isArchiveCommand(incomingText)) {
                       options,
                     },
                   });
-                  await safeSendWhatsAppMessage(
+                  await sendTurnReply(
                     sender,
                     buildAmbiguityQuestion({ kind: "found", itemType: "תכנים", options })
                   );
@@ -5388,7 +5618,7 @@ if (isArchiveCommand(incomingText)) {
                       options: pending,
                     },
                   });
-                  await safeSendWhatsAppMessage(
+                  await sendTurnReply(
                     sender,
                     buildAmbiguityQuestion({ kind: "notFound", itemType: "תכנים", searchedName: statusUpdate.contentName, location: "בין התכנים שבהפקה", options: pending, offerNew: true })
                   );
@@ -5412,12 +5642,12 @@ if (isArchiveCommand(incomingText)) {
   ],
 });
 
-await safeSendWhatsAppMessage(sender, replyText);
+await sendTurnReply(sender, replyText);
 return res.status(200).json({ status: "fast_track_draft_created", sender });
 }
 
             const replyText = "לא בטוחה איזה תוכן רצית לעדכן.\nתכתבי לי שוב את שם הסרטון ונמשיך.";
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             console.log(`[Sprint 7 Workflow] No production task found for: ${statusUpdate.contentName}`);
             return res.status(200).json({
               status: "status_update_no_match",
@@ -5428,7 +5658,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 
           if ("ambiguous" in matchResult && matchResult.ambiguous) {
             const replyText = "מצאתי כמה תכנים דומים.\nאיזה מהם התכוונת?";
-            await safeSendWhatsAppMessage(sender, replyText);
+            await sendTurnReply(sender, replyText);
             console.log(`[Sprint 7 Workflow] Multiple or ambiguous matches for: ${statusUpdate.contentName}`);
             return res.status(200).json({
               status: "status_update_ambiguous",
@@ -5534,7 +5764,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
             : isUploaded
               ? `מעולה!\nעדכנתי בגאנט ש"${contentNameDisplay}" עלה.`
               : `עדכנתי ש"${contentNameDisplay}" ${uniqueUpdates.map((u) => u.columnName).join(", ").replace(/, ([^,]*)$/, " ו$1")}.`;
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
 
           console.log(
             `[Sprint 7 Workflow] ✅ Status update complete for: ${contentNameDisplay}` +
@@ -5556,7 +5786,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
           console.error(`[Sprint 7 Workflow] ❌ Error updating status: ${errorMessage}\n`);
 
           const replyText = "לא הצלחתי לעדכן את הסטטוס כרגע. תנסי שוב עוד רגע.";
-          await safeSendWhatsAppMessage(sender, replyText);
+          await sendTurnReply(sender, replyText);
 
           return res.status(500).json({
             status: "status_update_failed",
@@ -5576,7 +5806,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 
     if (!visibilityIntent && likelyVQ) {
      const replyText = "לא הצלחתי להבין על איזה תוכן רצית לבדוק סטטוס.";
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "visibility_unclear", sender });
     }
 
@@ -5593,12 +5823,12 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     // fall through to buildGeneralHelpResponse below.
     if (isPureGreeting(incomingText)) {
       const replyText = await generateConversationalReply(incomingText, sender);
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "conversational_reply", sender, intent: "greeting" });
     }
 
     if (!existingDraft && isGeneralChatOrHelpMessage(incomingText)) {
-      await safeSendWhatsAppMessage(sender, buildGeneralHelpResponse());
+      await sendTurnReply(sender, buildGeneralHelpResponse());
       return res.status(200).json({ status: "general_help", sender });
     }
 
@@ -5607,7 +5837,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
         storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
       }
       const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
-      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      await sendTurnReply(sender, clarificationPrompt);
       return res.status(200).json({ status: "meta_conversation", sender });
     }
 
@@ -5630,7 +5860,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 מה בגאנט השבוע
 מה דחוף
 מה עדיין לא צולם`;
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "question_clarification", sender });
     }
 
@@ -5663,7 +5893,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
         changeLine: "אפשר גם להגיד לי מה עוד לשנות.",
       });
 
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "draft_continuation_updated", sender, draft: updatedDraft });
     }
 
@@ -5679,7 +5909,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
         storePendingQuestion(sender, { questionType: "edit_or_new_clarification", context: {} });
       }
       const clarificationPrompt = generateClarificationPrompt(!!existingDraft);
-      await safeSendWhatsAppMessage(sender, clarificationPrompt);
+      await sendTurnReply(sender, clarificationPrompt);
       return res.status(200).json({ status: "low_confidence_idea", sender });
     }
 
@@ -5705,29 +5935,10 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
             closingQuestion: aiPreviewCopy.closingQuestion,
             changeLine: aiPreviewCopy.changeLine,
           });
-          await safeSendWhatsAppMessage(sender, aiReplyText);
+          await sendTurnReply(sender, aiReplyText);
           return res.status(200).json({ status: "draft_updated_via_ai", sender, draft: aiEditedDraft });
         }
       }
-    }
-
-    // Level-2 conversational intelligence: before we assume the message is a
-    // new content idea, ask Claude what it actually is. Catches greetings,
-    // small talk, and unclear messages that would otherwise get turned into
-    // full drafts. Only fires here — after every specific handler upstream
-    // has passed on the message.
-    {
-      const conversationIntent = await classifyMessageIntent(incomingText, sender);
-      if (conversationIntent === "greeting" || conversationIntent === "small_talk") {
-        const replyText = await generateConversationalReply(incomingText, sender);
-        await safeSendWhatsAppMessage(sender, replyText);
-        return res.status(200).json({ status: "conversational_reply", sender, intent: conversationIntent });
-      }
-      if (conversationIntent === "unclear") {
-        await safeSendWhatsAppMessage(sender, buildGeneralHelpResponse());
-        return res.status(200).json({ status: "unclear_message_help", sender });
-      }
-      // conversationIntent === "new_idea" → fall through to draft creation
     }
 
     // Create new content draft
@@ -5748,7 +5959,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
 "${similar.idea.substring(0, 50)}..."
 
 רוצה לשמור גם את הרעיון החדש?`;
-      await safeSendWhatsAppMessage(sender, replyText);
+      await sendTurnReply(sender, replyText);
       return res.status(200).json({ status: "duplicate_found", sender });
     }
 
@@ -5757,27 +5968,23 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     const draftSummary = {
       ...draft,
       originalUserInput: cleanedUserInput,
+      requestedAction: requestedDraftAction(incomingText),
+      approvalScope: "save" as const,
     };
-    storePendingConfirmation(sender, draftSummary);
-    // Phase B + humanizer consolidation: Claude generates the wrapping copy
-    // (intro, closing question, change-line) in Karen's persona — now inside
-    // the SAME createContentDraft call instead of a second Sonnet call.
-    // Fields inside the preview stay deterministic; only the phrasing around
-    // them varies. Defaults cover the rare parse miss.
-    const previewCopy = draft.previewCopy ?? DEFAULT_NEW_DRAFT_COPY;
-    const replyText = buildDraftPreviewMessage(draft, {
-      intro: previewCopy.intro,
-      closingQuestion: previewCopy.closingQuestion,
-      changeLine: previewCopy.changeLine,
+    const hadPreviousDraft = activateNewDraft(sender, draftSummary);
+    // Creation uses the same concise approval contract as the context route.
+    // Generated wrapping copy must not reintroduce extra questions or actions.
+    const replyText = buildDraftPreviewMessage(draftSummary, {
+      extraBeforeQuestion: hadPreviousDraft ? ["הטיוטה הקודמת נשארה בצד."] : [],
     });
-    await safeSendWhatsAppMessage(sender, replyText);
+    await sendTurnReply(sender, replyText);
     return res.status(200).json({ status: "draft_created", sender, draft: draftSummary });
 
   } catch (error) {
     if (error instanceof GanttDuplicateError) {
       clearPendingQuestion(sender);
 
-      await safeSendWhatsAppMessage(
+      await sendTurnReply(
         sender,
         `"${error.entry.name || error.entry.contentId}" כבר משובץ בגאנט ל-${error.entry.date}. לא הוספתי אותו שוב.`
       );
@@ -5794,7 +6001,7 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     console.error("WhatsApp webhook error:", message);
 
     try {
-      await safeSendWhatsAppMessage(sender, "לא הצלחתי להשלים את זה כרגע. תנסי שוב עוד רגע.");
+      await sendTurnReply(sender, "לא הצלחתי להשלים את זה כרגע. תנסי שוב עוד רגע.");
     } catch (sendError) {
       console.error("Failed to send error message:", sendError);
     }
@@ -5802,3 +6009,10 @@ return res.status(200).json({ status: "fast_track_draft_created", sender });
     return res.status(500).json({ error: "Unable to process message.", details: message });
   }
 };
+
+export const handleWhatsAppWebhook = (req: Request, res: Response) => withRoutingTrace(
+  (req.body.From || req.body.from || "").toString(),
+  (req.body.Body || req.body.body || "").toString(),
+  req.body.MessageSid || req.body.SmsMessageSid,
+  () => handleWhatsAppWebhookInternal(req,res)
+);

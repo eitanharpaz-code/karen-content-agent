@@ -1,13 +1,16 @@
+import { normalizeConversationText } from './conversation-language.service';
+import { randomUUID } from "node:crypto";
+import { parseSchedulingReply } from "./scheduling-reply.service";
 import { normalizeUserDateInput } from "../utils/date-utils";
 import { DraftSummary } from "../types/content.types";
-import { getValue, setValue, deleteValue, StateSection } from "./persistence.service";
+import { getValue, setValue, deleteValue, StateSection, updateUserState } from "./persistence.service";
 
 // Stage G: pending state moved from in-memory Maps to persistence.service
 // (data/agent-state.json) so it survives restarts. Public function
 // signatures are unchanged — only the storage engine was replaced.
 
 // Pending question context - what the agent last asked
-type PendingQuestion = {
+export type PendingQuestion = {
   questionType: string;  // e.g. "show_trends", "confirm_deadline", "show_more"
   context?: Record<string, unknown>;  // optional extra data
 };
@@ -66,7 +69,9 @@ const unwrapTimed = <T>(
   // Unparseable timestamp is treated as expired — a broken envelope must
   // never become immortal modal state.
   if (Number.isNaN(ageMs) || ageMs > PENDING_STATE_TTL_MS) {
-    deleteValue(section, userId);
+    if (section === "pendingConfirmations") {
+      suspendExpiredDraft(userId, envelope.value as DraftSummary, envelope.storedAt);
+    } else deleteValue(section, userId);
     const ageLabel = Number.isNaN(ageMs) ? "unknown" : `${Math.round(ageMs / 60000)} min`;
     console.log(
       `[pending-state TTL] Expired ${section} entry for ${userId} (age: ${ageLabel}). Treating as absent.`
@@ -165,35 +170,13 @@ export const displayPlatform = (platform: string): string => {
 };
 
 export const isConfirmationMessage = (text: string): boolean => {
-  const normalized = text.trim().toLowerCase();
-
-  // Exact-match yes messages — original behavior preserved.
-  // "לשמור ככה" is the exact wording our own question offers, so Karen
-  // naturally echoes it back (24.7.2026). It used to route to the edit path.
-  const exactYes = ["כן", "מאשרת", "תאשר", "תעשה את זה", "סגור", "בסדר", "טוב", "אישור",
-    "לשמור ככה", "לשמור", "תשמרי ככה", "שמרי ככה", "ככה זה טוב", "זה טוב"];
-  if (exactYes.includes(normalized)) return true;
-
-  // Natural confirmation phrasings. Prefix matches (not substring) so
-  // that a negation like "לא, בעצם כן" cannot false-positive — the
-  // negation would come first, so startsWith rules it out.
-  const confirmationPrefixes = [
-    "בעצם כן",       // "בעצם כן, בואי נשמור"
-    "כן ",           // "כן תשמרי" / "כן שמרי"
-    "כן,",           // "כן, בואי נשמור"
-    "כן.",           // "כן. תשמרי"
-    "כן!",
-    "בואי נשמור",
-    "בוא נשמור",
-    "תשמרי בבקשה",
-    "תשמור בבקשה",
-  ];
-  return confirmationPrefixes.some((prefix) => normalized.startsWith(prefix));
+  const value = normalizeConversationText(text);
+  // Approval is bounded to the action just offered. Additional words may be
+  // a correction, a negation or a condition, and must not silently authorize it.
+  return /^(?:(?:כן|בעצם כן|סבבה|סגור|בסדר|טוב|מעולה|אחלה|יאללה|בטח|מאשרת|מאשר|אישור)(?: (?:תשמרי|שמרי|לשמור|בואי נשמור|ככה|בבקשה|תודה|לתאריך שעבר))*|(?:לשמור|תשמרי|שמרי|תשמור|תאשר|תעשה את זה|בואי נשמור|בוא נשמור)(?: (?:ככה|בבקשה|תודה))*|ככה זה טוב|זה טוב)$/.test(value);
 };
 export const isRejectionMessage = (text: string): boolean => {
-  const normalized = text.trim().toLowerCase();
-  const noWords = ["לא", "לא תודה", "בטלי", "אל תשמרי", "עזבי את זה"];
-  return noWords.includes(normalized);
+  return /^(?:לא|לא תודה|בטלי|אל תשמרי|עזבי את זה)$/.test(normalizeConversationText(text));
 };
 export const isResetRequest = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
@@ -759,7 +742,9 @@ const BRIDGE_SCHEDULE_PHRASES = [
 export const classifyBridgeOfferAnswer = (message: string): BridgeOfferAnswer => {
   const raw = message.trim().toLowerCase();
 
-  if (raw.startsWith("לא") || isRejectionMessage(message)) return "keep";
+  if (/^לא(?:\s+(?:עכשיו|לשבץ|לקבוע(?: תאריך)?))?[.!]?\s*$/.test(raw) || isRejectionMessage(message)) return "keep";
+  if (/(?:^|\s)(?:אל|לא)\s+(?:תשבצי|שבצי|לשבץ|תקבעי|לקבוע)/.test(raw)) return "keep";
+  if (/^(?:מה|למה|איך|לא הבנתי|רגע)|(?:^|\s)אם(?:\s|$)/.test(raw)) return "unclear";
   if (BRIDGE_KEEP_PHRASES.some((phrase) => raw.includes(phrase))) return "keep";
   if (isConfirmationMessage(message) || BRIDGE_SCHEDULE_PHRASES.some((phrase) => raw.includes(phrase))) {
     return "schedule";
@@ -792,10 +777,8 @@ export const isGanttDateChange = (message: string): boolean => {
 // ב-20/8"), writing a default instead. This returns the normalized date so
 // both flows can honour it, or null when there is none.
 export const extractExplicitDateFromReply = (message: string): string | null => {
-  const raw = (message || "").trim();
-  const m = raw.match(GANTT_DATE_PATTERN);
-  if (!m) return null;
-  return normalizeUserDateInput(m[0]);
+  const parsed = parseSchedulingReply(message);
+  return 'date' in parsed ? parsed.date : null;
 };
 
 // Schedule-by-date detection (11.8.2026): Karen writes "ביזנס יעלה ב-20/8",
@@ -866,4 +849,33 @@ export const extractGanttDateChange = (
 
   if (!name) return null;
   return { contentName: name, targetDate };
+};
+
+export type SuspendedDraft = { id: string; draft: DraftSummary; originalText: string; createdAt: string; suspendedAt: string };
+export const getSuspendedDrafts = (userId: string): SuspendedDraft[] => getValue<SuspendedDraft[]>("suspendedDrafts", userId) || [];
+const parkedDraft = (draft: DraftSummary, createdAt = new Date().toISOString()): SuspendedDraft => ({
+  id: randomUUID(), draft, originalText: draft.originalUserInput,
+  createdAt, suspendedAt: new Date().toISOString(),
+});
+const suspendExpiredDraft = (userId: string, draft: DraftSummary, createdAt: string): void => {
+  updateUserState(userId, { suspendedDrafts: [...getSuspendedDrafts(userId), parkedDraft(draft, createdAt)], pendingConfirmations: undefined });
+};
+export const activateNewDraft = (userId: string, draft: DraftSummary): boolean => {
+  const previous = getPendingConfirmation(userId);
+  const parked = getSuspendedDrafts(userId);
+  updateUserState(userId, {
+    suspendedDrafts: previous ? [...parked, parkedDraft(previous, getValue<TimedEnvelope<DraftSummary>>("pendingConfirmations",userId)?.storedAt)] : parked,
+    pendingConfirmations: wrapTimed(draft), pendingQuestions: undefined,
+  });
+  return !!previous;
+};
+export const resumeSuspendedDraft = (userId: string, id?: string): DraftSummary | undefined => {
+  const active = getPendingConfirmation(userId);
+  const parked = getSuspendedDrafts(userId);
+  const index = id ? parked.findIndex(item => item.id === id) : parked.length - 1;
+  if (index < 0) return undefined;
+  const selected = parked[index].draft;
+  updateUserState(userId, { suspendedDrafts: [...parked.filter((_, i) => i !== index), ...(active ? [parkedDraft(active, getValue<TimedEnvelope<DraftSummary>>("pendingConfirmations",userId)?.storedAt)] : [])],
+    pendingConfirmations: wrapTimed(selected), pendingQuestions: undefined });
+  return selected;
 };

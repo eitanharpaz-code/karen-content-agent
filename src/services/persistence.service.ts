@@ -31,7 +31,8 @@ export type StateSection =
   | "interactionLog"
   | "conversationHistory"
   | "silenceNudge"
-  | "briefContext";
+  | "briefContext"
+  | "suspendedDrafts";
 
 type PersistedState = {
   silenceNudge: Record<string, unknown>;
@@ -40,6 +41,7 @@ type PersistedState = {
   interactionLog: Record<string, unknown>;
   conversationHistory: Record<string, unknown>;
   briefContext: Record<string, unknown>;
+  suspendedDrafts: Record<string, unknown>;
   savedAt: string;
 };
 
@@ -54,6 +56,7 @@ const emptyState = (): PersistedState => ({
   interactionLog: {},
   conversationHistory: {},
   briefContext: {},
+  suspendedDrafts: {},
   savedAt: new Date().toISOString(),
 });
 
@@ -75,6 +78,7 @@ const loadStateFromDisk = (): PersistedState => {
       "interactionLog",
       "conversationHistory",
       "briefContext",
+      "suspendedDrafts",
     ];
     const state = emptyState();
     for (const section of sections) {
@@ -108,7 +112,7 @@ const loadStateFromDisk = (): PersistedState => {
   }
 };
 
-const saveStateToDisk = (): void => {
+const saveStateToDisk = (): boolean => {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -118,10 +122,12 @@ const saveStateToDisk = (): void => {
     // atomic, so readers can never observe a half-written file.
     fs.writeFileSync(TMP_FILE, JSON.stringify(state, null, 2), "utf-8");
     fs.renameSync(TMP_FILE, STATE_FILE);
+    return true;
   } catch (error) {
     // A failed save must never crash the request that triggered it.
     // Worst case we degrade to pre-Stage-G behavior (state lost on restart).
     console.error(`[Persistence] Failed to save state: ${error}`);
+    return false;
   }
 };
 
@@ -152,4 +158,24 @@ export const __reloadFromDiskForTests = (): void => {
   state.pendingQuestions = fresh.pendingQuestions;
   state.interactionLog = fresh.interactionLog;
   state.conversationHistory = fresh.conversationHistory;
+  state.suspendedDrafts = fresh.suspendedDrafts;
+  state.briefContext = fresh.briefContext;
+  state.silenceNudge = fresh.silenceNudge;
+};
+
+// One disk commit for transitions involving multiple sections. Roll back memory
+// if persistence fails: an unapproved draft must not silently disappear.
+export const updateUserState = (userId: string, updates: Partial<Record<StateSection, unknown>>): void => {
+  const before = Object.fromEntries(Object.keys(updates).map(section => [section, state[section as StateSection][userId]]));
+  for (const [section, value] of Object.entries(updates)) {
+    if (value === undefined) delete state[section as StateSection][userId];
+    else state[section as StateSection][userId] = value;
+  }
+  if (!saveStateToDisk()) {
+    for (const [section, value] of Object.entries(before)) {
+      if (value === undefined) delete state[section as StateSection][userId];
+      else state[section as StateSection][userId] = value;
+    }
+    throw new Error("Unable to persist conversation transition");
+  }
 };

@@ -1,81 +1,23 @@
-// Routing trace — Stage 2 of the routing audit plan.
-//
-// Goal: one uniform log line per inbound WhatsApp message that answers the
-// two diagnostic questions from the audit:
-//   1. Which handler caught the message? (the `status` field every controller
-//      exit already returns via res.json)
-//   2. How many Claude calls did it cost, on which model tier?
-//
-// This turns Karen's real usage into concrete routing examples — the missing
-// evidence for validating the audit fixes and for the future decision about
-// Claude-based intent routing.
-//
-// Design notes:
-// - Claude calls are counted via recordClaudeCall(), invoked from
-//   claude.service.ts (askClaude + askClaudeForMatching). The counter is
-//   module-level and reset at trace start. Karen is a single pilot user and
-//   messages are processed one at a time in practice; if two messages ever
-//   overlap, counts may mix between their trace lines — acceptable for a
-//   diagnostic log, noted here for honesty.
-// - No behavior changes: this module only observes and logs.
-
-type ClaudeCallRecord = {
-  model: string;
-  withPersona: boolean;
+import { AsyncLocalStorage } from 'node:async_hooks';
+type ActiveTrace = { sender:string; messageSid?:string; startedAt:number; finished:boolean;
+ claudeCalls:Array<{model:string;withPersona:boolean}>; writes:Array<{operation:string;outcome:string}>;
+ pendingBefore?:string;pendingAfter?:string;routeReason?:string;sendOutcome?:string };
+const traces = new AsyncLocalStorage<ActiveTrace>();
+const makeTrace = (sender:string,messageSid?:string):ActiveTrace => ({sender,messageSid,startedAt:Date.now(),finished:false,claudeCalls:[],writes:[]});
+export const withRoutingTrace = <T>(sender:string,_text:string,messageSid:string|undefined,fn:()=>T):T => traces.run(makeTrace(sender,messageSid),fn);
+export const startRoutingTrace = (sender:string,_text:string,messageSid?:string):void => {
+ if (!traces.getStore()) traces.enterWith(makeTrace(sender,messageSid));
 };
-
-type ActiveTrace = {
-  sender: string;
-  text: string;
-  startedAt: number;
-  claudeCalls: ClaudeCallRecord[];
+export const updateRoutingTrace = (fields:Partial<Pick<ActiveTrace,'pendingBefore'|'pendingAfter'|'routeReason'|'sendOutcome'>>):void => {
+ const trace=traces.getStore(); if(trace) Object.assign(trace,fields);
 };
-
-let activeTrace: ActiveTrace | null = null;
-
-export const startRoutingTrace = (sender: string, text: string): void => {
-  activeTrace = {
-    sender,
-    text,
-    startedAt: Date.now(),
-    claudeCalls: [],
-  };
-};
-
-// Called from claude.service.ts on every outgoing Claude call.
-export const recordClaudeCall = (model: string, withPersona: boolean): void => {
-  if (!activeTrace) return;
-  activeTrace.claudeCalls.push({ model, withPersona });
-};
-
-const summarizeCalls = (calls: ClaudeCallRecord[]): string => {
-  if (calls.length === 0) return "none";
-  const byModel = new Map<string, number>();
-  for (const call of calls) {
-    const tier = call.model.includes("haiku")
-      ? "haiku"
-      : call.model.includes("sonnet")
-        ? "sonnet"
-        : call.model;
-    byModel.set(tier, (byModel.get(tier) || 0) + 1);
-  }
-  return Array.from(byModel.entries())
-    .map(([tier, count]) => `${tier}:${count}`)
-    .join(", ");
-};
-
-export const finishRoutingTrace = (handlerStatus: string | undefined): void => {
-  if (!activeTrace) return;
-  const trace = activeTrace;
-  activeTrace = null;
-
-  const durationMs = Date.now() - trace.startedAt;
-  const textPreview =
-    trace.text.length > 60 ? `${trace.text.slice(0, 60)}…` : trace.text;
-
-  console.log(
-    `[Routing Trace] handler=${handlerStatus || "unknown"} ` +
-      `claudeCalls=${trace.claudeCalls.length} (${summarizeCalls(trace.claudeCalls)}) ` +
-      `durationMs=${durationMs} text="${textPreview}"`
-  );
+export const recordWriteOutcome = (operation:string,outcome:string):void => {traces.getStore()?.writes.push({operation,outcome});};
+export const recordClaudeCall = (model:string,withPersona:boolean):void => {traces.getStore()?.claudeCalls.push({model,withPersona});};
+export const finishRoutingTrace = (handlerStatus:string|undefined,fields:Partial<Pick<ActiveTrace,'pendingAfter'>>={}):void => {
+ const trace=traces.getStore();if(!trace || trace.finished)return;trace.finished=true;
+ Object.assign(trace,fields);
+ console.log('[Routing Trace] '+JSON.stringify({messageSid:trace.messageSid,handler:handlerStatus||'unknown',
+  pendingBefore:trace.pendingBefore,pendingAfter:trace.pendingAfter,reason:trace.routeReason,
+  claudeCalls:trace.claudeCalls.length,models:trace.claudeCalls.map(c=>c.model),durationMs:Date.now()-trace.startedAt,
+  writes:trace.writes,sendOutcome:trace.sendOutcome}));
 };

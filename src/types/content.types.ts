@@ -32,4 +32,7 @@ export interface DraftPreviewCopy {
 
 export interface DraftSummary extends ContentIdeaDraft {
   originalUserInput: string;
+  requestedAction?: { kind: "keep" } | { kind: "schedule"; date?: string; time?: string; rawDate?: string; allowPast?: boolean };
+  // Exactly the operations presented by the last preview, never inferred from "yes".
+  approvalScope?: "save" | "save_schedule";
 }
