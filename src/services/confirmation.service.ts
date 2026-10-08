@@ -798,6 +798,50 @@ export const extractExplicitDateFromReply = (message: string): string | null => 
   return normalizeUserDateInput(m[0]);
 };
 
+// Schedule-by-date detection (11.8.2026): Karen writes "ביזנס יעלה ב-20/8",
+// meaning "put this content on the gantt for that date". Distinct from a move
+// (GANTT_MOVE_VERBS), which assumes the item is already scheduled. Here the
+// verb is an upload verb ("יעלה"/"תעלה"), and the controller decides afterwards
+// whether the content is already on the gantt (move) or not (fresh schedule).
+// Requires an upload verb, a numeric date, and some remaining text (the name).
+const GANTT_UPLOAD_VERBS = ["יעלה", "תעלה", "יעלו", "להעלות", "יעלה", "מעלה"];
+export const isScheduleByDate = (message: string): boolean => {
+  const raw = (message || "").trim();
+  const hasUploadVerb = GANTT_UPLOAD_VERBS.some((v) => raw.includes(v));
+  const hasDate = GANTT_DATE_PATTERN.test(raw);
+  if (!hasUploadVerb || !hasDate) return false;
+  // There must be text beyond the verb and date — that leftover is the name.
+  let leftover = raw;
+  for (const v of GANTT_UPLOAD_VERBS) leftover = leftover.split(v).join(" ");
+  leftover = leftover.replace(GANTT_DATE_PATTERN, " ").replace(/ב[-\s]?/g, " ").replace(/\s+/g, " ").trim();
+  return leftover.length > 1;
+};
+// Extract the content name and target date from a schedule-by-date message
+// like "ביזנס יעלה ב-20/8". Mirrors extractGanttDateChange but for upload
+// verbs. Returns null if there is no date or nothing left as a name.
+export const extractScheduleByDate = (
+  message: string
+): { contentName: string; targetDate: string } | null => {
+  const raw = (message || "").trim();
+  const dateMatch = raw.match(GANTT_DATE_PATTERN);
+  if (!dateMatch) return null;
+  const targetDate = dateMatch[0];
+  let name = raw;
+  name = name.replace(new RegExp(`ב[-\\s]?${targetDate.replace(/[.]/g, "\\.")}`), " ");
+  name = name.replace(targetDate, " ");
+  for (const verb of GANTT_UPLOAD_VERBS) name = name.split(verb).join(" ");
+  name = name
+    .replace(/תאריך/g, " ")
+    .replace(/בגאנט/g, " ")
+    .replace(/גאנט/g, " ")
+    .replace(/(^|\s)של(\s|$)/g, " ")
+    .replace(/(^|\s)את(\s|$)/g, " ")
+    .replace(/(^|\s)ב(\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!name) return null;
+  return { contentName: name, targetDate };
+};
 export const extractGanttDateChange = (
   message: string
 ): { contentName: string; targetDate: string } | null => {

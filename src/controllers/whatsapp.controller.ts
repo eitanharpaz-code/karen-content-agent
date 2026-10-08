@@ -49,6 +49,8 @@ import {
   isApproveForProductionCommand,
   isGanttDateChange,
   extractGanttDateChange,
+  isScheduleByDate,
+  extractScheduleByDate,
   extractApproveTarget,
   classifyBridgeOfferAnswer,
   extractExplicitDateFromReply,
@@ -5099,6 +5101,58 @@ if (isArchiveCommand(incomingText)) {
     // date means "move a scheduled item". Reuses findProductionTaskByName,
     // isGanttDateTaken, updateGanttRowDate + sortGanttByDate. On a taken
     // target it STOPS and asks — never auto-displaces (that's step B).
+    // Schedule-by-date (11.8.2026): "ביזנס יעלה ב-20/8". Karen names a content
+    // and a date. Behave by the content's actual state: already on that date →
+    // just say so; on a different date → move it; not on the gantt → schedule
+    // it fresh. Direct action, no confirmation — she already asked for it.
+    // Placed before the move route and before the new-idea classifier.
+    if (isScheduleByDate(incomingText)) {
+      const parsed = extractScheduleByDate(incomingText);
+      if (parsed) {
+        const spreadsheetId = process.env.GOOGLE_SHEETS_ID!;
+        const normalizedTarget = normalizeUserDateInput(parsed.targetDate);
+        if (!normalizedTarget) {
+          await safeSendWhatsAppMessage(sender, `לא הצלחתי לקרוא את התאריך "${parsed.targetDate}". אפשר לכתוב אותו כמו 20/08/2026.`);
+          return res.status(200).json({ status: "schedule_by_date_bad_date", sender });
+        }
+        const matchResult = await findProductionTaskByName(spreadsheetId, parsed.contentName);
+        if (!matchResult) {
+          await safeSendWhatsAppMessage(sender, `לא מצאתי תוכן בשם "${parsed.contentName}". אפשר לבדוק מה יש עם: מה בהפקה`);
+          return res.status(200).json({ status: "schedule_by_date_not_found", sender });
+        }
+        if ("ambiguous" in matchResult && matchResult.ambiguous) {
+          await safeSendWhatsAppMessage(sender, "מצאתי כמה תכנים דומים. אפשר לשלוח שם קצת יותר מדויק כדי שאדע במה מדובר.");
+          return res.status(200).json({ status: "schedule_by_date_ambiguous", sender });
+        }
+        const exactMatch = matchResult as ProductionTaskMatch;
+        const targetContentId = (exactMatch.row[0] || "").toString().trim();
+        const targetContentName = (exactMatch.row[1] || parsed.contentName).toString().trim();
+        const targetDayName = getHebrewDayName(normalizedTarget);
+        const ganttEntry = await findGanttEntryByContentId(spreadsheetId, targetContentId);
+        // Case A: already on the gantt at exactly this date → nothing to do.
+        if (ganttEntry && normalizeUserDateInput(ganttEntry.date) === normalizedTarget) {
+          await safeSendWhatsAppMessage(sender, `"${targetContentName}" כבר משובץ ל-${normalizedTarget}.`);
+          return res.status(200).json({ status: "schedule_by_date_already_there", sender });
+        }
+        // Collision check shared by both move and fresh-schedule: never displace.
+        const collision = await isGanttDateTaken(spreadsheetId, normalizedTarget);
+        if (collision.taken && collision.existingContentId !== targetContentId) {
+          const shortExisting = collision.existingName.split(/\s+/).slice(0, 6).join(" ");
+          await safeSendWhatsAppMessage(sender, `ה-${normalizedTarget} כבר תפוס על ידי "${shortExisting}", אז לא שיבצתי שם. אפשר לתת לי תאריך אחר.`);
+          return res.status(200).json({ status: "schedule_by_date_collision", sender });
+        }
+        if (ganttEntry) {
+          // Case B: on the gantt at a different date → move it.
+          await updateGanttRowDate(spreadsheetId, targetContentId, normalizedTarget, targetDayName);
+          await safeSendWhatsAppMessage(sender, `העברתי את "${targetContentName}" ל-${normalizedTarget}.`);
+          return res.status(200).json({ status: "schedule_by_date_moved", sender });
+        }
+        // Case C: not on the gantt → schedule it fresh.
+        await addRowToGantt(spreadsheetId, targetContentId, targetContentName, normalizedTarget, targetDayName);
+        await safeSendWhatsAppMessage(sender, `שיבצתי את "${targetContentName}" ל-${normalizedTarget}.`);
+        return res.status(200).json({ status: "schedule_by_date_scheduled", sender });
+      }
+    }
     if (isGanttDateChange(incomingText)) {
       const change = extractGanttDateChange(incomingText);
       if (change) {

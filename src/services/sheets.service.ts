@@ -97,13 +97,36 @@ export const appendRowToSheet = async (
 
   try {
     const quotedSheetName = `'${sheetName.replace(/'/g, "''")}'`;
+    // For the gantt, do NOT use values.append. Google detects a "table"
+    // that can start mid-sheet (observed at column J) and appends there,
+    // shifting every new row right. Same fix as בנק רעיונות: read the
+    // rows, find the next empty row, write explicitly to A:M. (12.8.2026)
+    if (sheetName === SHEET_NAMES.monthlyGantt) {
+      const existingResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${quotedSheetName}!A:M`,
+      });
+      const existingRows = existingResponse.data.values || [];
+      const lastNonEmptyIndex = existingRows.reduce((lastIndex, row, index) => {
+        const hasAnyValue = row.some((cell) => String(cell || "").trim() !== "");
+        return hasAnyValue ? index : lastIndex;
+      }, 0);
+      const nextRow = lastNonEmptyIndex + 2;
+      const targetRange = `${quotedSheetName}!A${nextRow}:M${nextRow}`;
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: targetRange,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [values] },
+      });
+      console.log(`[Sheets] ✅ Wrote to "${sheetName}" at explicit range: ${targetRange}`);
+      return;
+    }
     const appendRange =
       sheetName === SHEET_NAMES.contentLibrary
         ? `${quotedSheetName}!A:K`
         : sheetName;
-
     console.log(`[Sheets] Append range: "${appendRange}"`);
-
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: appendRange,
